@@ -2,6 +2,7 @@ use axum::{Json, http::StatusCode, response};
 use serde_json::json;
 use thiserror::Error;
 
+#[allow(unused)] // TODO: Remove this in the end
 #[derive(Error, Debug)]
 pub enum SvmIndexerError {
     #[error("Provided PublicKey has invalid format! {0}")]
