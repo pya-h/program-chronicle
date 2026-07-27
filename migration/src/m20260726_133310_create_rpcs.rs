@@ -1,4 +1,4 @@
-use sea_orm_migration::{prelude::*, schema::*};
+use sea_orm_migration::{prelude::*};
 
 pub struct Migration;
 
@@ -10,33 +10,55 @@ impl MigrationName for Migration {
 
 #[derive(DeriveIden)]
 enum RPCs {
+    #[sea_orm(iden = "rpcs")]
     Table,
     Id,
     HttpUrl,
     WsUrl,
+    LastProcessedSlot,
+    LastProcessedAt,
 }
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.create_table(
-            Table::create()
-                .table(RPCs::Table)
-                .if_not_exists()
-                .col(
-                    ColumnDef::new(RPCs::Id)
-                        .integer()
-                        .primary_key()
-                        .auto_increment()
-                        .not_null(),
-                )
-                .col(ColumnDef::new(RPCs::HttpUrl).string_len(1024_u32))
-                .col(ColumnDef::new(RPCs::WsUrl).string_len(1024_u32))
-                .to_owned()
-        ).await
+        manager
+            .create_table(
+                Table::create()
+                    .table(RPCs::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(RPCs::Id)
+                            .integer()
+                            .primary_key()
+                            .auto_increment()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RPCs::HttpUrl)
+                            .string_len(1024_u32)
+                            .unique_key(),
+                    )
+                    .col(
+                        ColumnDef::new(RPCs::WsUrl)
+                            .string_len(1024_u32)
+                            .unique_key(),
+                    )
+                    .col(ColumnDef::new(RPCs::LastProcessedAt).timestamp().null())
+                    .col(
+                        ColumnDef::new(RPCs::LastProcessedSlot)
+                            .big_integer()
+                            .default(0),
+                    )
+                    .check(Expr::col(RPCs::LastProcessedSlot).gte(0))
+                    .to_owned(),
+            )
+            .await
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.drop_table(Table::drop().table(RPCs::Table).if_exists().to_owned()).await
+        manager
+            .drop_table(Table::drop().table(RPCs::Table).if_exists().to_owned())
+            .await
     }
 }
