@@ -3052,6 +3052,7 @@ dependencies = [
  "tracing",
  "tracing-panic",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

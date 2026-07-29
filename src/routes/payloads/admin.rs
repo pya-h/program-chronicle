@@ -1,5 +1,5 @@
 
 pub struct AddRpcPayload {
-    http_url: String,
-    ws_url: Option<String>
+    pub http_url: String,
+    pub ws_url: Option<String>
 }
