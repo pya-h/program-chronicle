@@ -1,47 +1,34 @@
 use axum::{Json, http::StatusCode, response};
-use serde_json::json;
-use thiserror::Error;
+use serde::Serialize;
+use super::error::SvmIndexerError;
 
-#[allow(unused)] // TODO: Remove this in the end
-#[derive(Error, Debug)]
-pub enum SvmIndexerError {
-    #[error("Provided PublicKey has invalid format! {0}")]
-    InvalidPublicKey(String),
+pub struct ApiResponse<T: Serialize>(pub StatusCode, pub Json<T>);
 
-    #[error("Something went wrong in Serialization step! {0}")]
-    SerializationError(String),
+pub type FinalResponse<T> = Result<ApiResponse<T>, SvmIndexerError>;
 
-    #[error("Account not found! {0}")]
-    AccountNotFound(String),
+// shortcuts:
+impl<T: Serialize> ApiResponse<T> {
+    pub fn new(status: StatusCode, body: T) -> Self {
+        Self(status, Json(body))
+    }
+    // some useful shortcuts
+    pub fn ok(body: T) -> Self {
+        Self(StatusCode::OK, Json(body))
+    }
 
-    #[error("Client Error! {0}")]
-    ProgramFailure(String),
-
-    #[error("Client Error! {0}")]
-    SolanaClientFailure(String),
-
-    #[error("Unknown Client error! {0}")]
-    UnknownSolanaClientError(String),
-
-    #[error("Invalid URL input! {0}")]
-    InvalidURL(String),
-
-    #[error("Internal Error happened: {0}")]
-    InternalError(String),
+    pub fn created(body: T) -> Self {
+        Self(StatusCode::CREATED, Json(body))
+    }
 }
 
-pub type FinalResponse<T> = Result<Json<T>, SvmIndexerError>;
-
-impl response::IntoResponse for SvmIndexerError {
+impl<T: Serialize> response::IntoResponse for ApiResponse<T> {
     fn into_response(self) -> response::Response {
-        let (status, message) = match &self {
-            SvmIndexerError::InvalidPublicKey(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            SvmIndexerError::AccountNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
-            SvmIndexerError::ProgramFailure(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
-            SvmIndexerError::InvalidURL(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            SvmIndexerError::InternalError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-        };
-        (status, Json(json!({"message": message}))).into_response()
+        (self.0, self.1).into_response()
+    }
+}
+
+impl<T:Serialize> From<T> for ApiResponse<T> {
+    fn from(body: T) -> Self {
+        Self::ok(body)
     }
 }

@@ -1,12 +1,14 @@
 use super::payloads::admin::*;
+use crate::middlewares::admin_guard::admin_guard;
 use crate::{
     core::{
-        response::{FinalResponse, SvmIndexerError},
+        error::SvmIndexerError,
+        response::{ApiResponse, FinalResponse},
         state::AppState,
     },
     db::entities::rpcs,
 };
-use axum::{Json, extract::State};
+use axum::{Json, Router, extract::State, routing::post};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use serde_json::{Value, json};
 use url::Url;
@@ -72,5 +74,12 @@ async fn add_rpc_handler(
     )
     .await?;
 
-    Ok(json!({}).into())
+    Ok(ApiResponse::created(json!({ "rpc": new_rpc })))
+}
+
+pub fn routes(state: AppState) -> Router<AppState> {
+    Router::new().route(
+        "/rpcs",
+        post(add_rpc_handler).route_layer(axum::middleware::from_fn_with_state(state, admin_guard)),
+    )
 }
