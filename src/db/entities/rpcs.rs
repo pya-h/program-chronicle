@@ -10,11 +10,9 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     #[sea_orm(unique)]
-    pub http_url: Option<String>,
+    pub http_url: String,
     #[sea_orm(unique)]
-    pub ws_url: Option<String>,
-    pub last_processed_at: Option<DateTime>,
-    pub last_processed_slot: Option<i64>,
+    pub ws_url: String,
     #[sea_orm(has_many)]
     pub programs: HasMany<super::programs::Entity>,
 }
