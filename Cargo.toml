@@ -18,6 +18,7 @@ tracing = "0.1"
 tracing-panic = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "json"]}
 sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
+subtle = "2.6.1"
 
 [dev-dependencies]
 httpc-test = "0.1.10"

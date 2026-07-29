@@ -1,9 +1,11 @@
 use crate::core::state::AppState;
 use axum::Router;
-use std::{env, net::SocketAddr};
+use sea_orm::Database;
+use std::{env, net::SocketAddr, panic};
 
 mod core;
 mod db;
+mod middlewares;
 mod routes;
 
 #[tokio::main]
@@ -13,7 +15,18 @@ async fn main() {
         panic!("Logger setup failed: {}", err);
     }
 
-    let state = AppState::new();
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL not set!");
+    let database_connection = match Database::connect(&database_url).await {
+        Ok(conn) => conn,
+        Err(err) => {
+            panic!(
+                "Database connection failed: {}",
+                err.sql_err().expect("Unknown error happened!")
+            );
+        }
+    };
+
+    let state = AppState::new(database_connection);
     let router = Router::new()
         .merge(routes::root::routes())
         .with_state(state)
