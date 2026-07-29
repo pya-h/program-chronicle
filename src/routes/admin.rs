@@ -1,6 +1,13 @@
 use super::payloads::admin::*;
-use crate::core::{response::FinalResponse, response::SvmIndexerError, state::AppState};
+use crate::{
+    core::{
+        response::{FinalResponse, SvmIndexerError},
+        state::AppState,
+    },
+    db::entities::rpcs,
+};
 use axum::{Json, extract::State};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -8,7 +15,7 @@ async fn add_rpc(
     state: &AppState,
     http_url: String,
     ws_url: Option<String>,
-) -> Result<(), SvmIndexerError> {
+) -> Result<rpcs::Model, SvmIndexerError> {
     if http_url.is_empty() {
         return Err(SvmIndexerError::InvalidURL(String::from(
             "RPC's http_url not provided!",
@@ -42,18 +49,28 @@ async fn add_rpc(
             err
         )));
     }
-    Ok(())
+
+    let new_rpc = rpcs::ActiveModel {
+        http_url: Set(http_url),
+        ws_url: Set(ws_url),
+        ..Default::default()
+    };
+
+    Ok(new_rpc.insert(&state.db).await.map_err(|err| {
+        SvmIndexerError::InternalError(format!("Failed adding the new RPC: {}", err))
+    })?)
 }
 
 async fn add_rpc_handler(
     State(state): State<AppState>,
     Json(payload): Json<AddRpcPayload>,
 ) -> FinalResponse<Value> {
-    add_rpc(
+    let new_rpc = add_rpc(
         &state,
         payload.http_url.trim().to_string(),
         payload.ws_url.map(|u| u.trim().to_string()),
     )
     .await?;
+
     Ok(json!({}).into())
 }
