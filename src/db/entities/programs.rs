@@ -14,6 +14,8 @@ pub struct Model {
     #[sea_orm(column_type = "VarBinary(StringLen::None)", unique_key = "rpcid")]
     pub address: Vec<u8>,
     pub name: Option<String>,
+    pub last_processed_at: Option<DateTime>,
+    pub last_processed_slot: Option<i64>,
     #[sea_orm(
         belongs_to,
         from = "rpc_id",

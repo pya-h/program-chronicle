@@ -15,6 +15,8 @@ enum Programs {
     RpcId,
     Address,
     Name,
+    LastProcessedSlot,
+    LastProcessedAt,
 }
 
 #[derive(DeriveIden)]
@@ -42,6 +44,13 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Programs::Address).binary().not_null())
                     .check(Expr::cust(r#"octet_length("address") = 32"#))
                     .col(ColumnDef::new(Programs::Name).string_len(64).null())
+                    .col(ColumnDef::new(Programs::LastProcessedAt).timestamp().null())
+                    .col(
+                        ColumnDef::new(Programs::LastProcessedSlot)
+                            .big_integer()
+                            .default(0),
+                    )
+                    .check(Expr::col(Programs::LastProcessedSlot).gte(0))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-programs-rpc-id")
