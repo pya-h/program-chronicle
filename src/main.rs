@@ -29,6 +29,7 @@ async fn main() {
     let state = AppState::new(database_connection);
     let router = Router::new()
         .merge(routes::root::routes())
+        .merge(routes::admin::routes(state.clone()))
         .with_state(state)
         .fallback(routes::root::not_found_handler);
 

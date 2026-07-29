@@ -1,0 +1,59 @@
+# REST Client requests for svm-indexer
+# VS Code extension: humao.rest-client
+
+@baseUrl = http://localhost:3000
+@adminPasskey = test
+
+### Health check
+GET {{baseUrl}}/
+
+
+### Add RPC with explicit http and ws URLs
+POST {{baseUrl}}/admin/rpcs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "http_url": "https://api.mainnet-beta.solana.com",
+  "ws_url": "wss://api.mainnet-beta.solana.com"
+}
+
+
+### Add RPC with minimal payload (ws_url auto-generated)
+POST {{baseUrl}}/admin/rpcs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "http_url": "https://solana-mainnet.g.alchemy.com"
+}
+
+
+### Add RPC without protocol prefix (https:// auto-added)
+POST {{baseUrl}}/admin/rpcs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "http_url": "solana-mainnet.g.alchemy1.com",
+  "ws_url": "api.mainnet-beta.solana1.com"
+}
+
+
+### Add RPC - missing http_url (should return 400)
+POST {{baseUrl}}/admin/rpcs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "ws_url": "wss://example.com"
+}
+
+
+### Add RPC without auth header (should return 401)
+POST {{baseUrl}}/admin/rpcs
+Content-Type: application/json
+
+{
+  "http_url": "https://example.com"
+}

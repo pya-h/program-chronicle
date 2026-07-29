@@ -11,7 +11,8 @@ use crate::{
 use axum::{Json, Router, extract::State, routing::post};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use serde_json::{Value, json};
-use url::Url;
+use tracing::error;
+use url::{ParseError, Url};
 
 async fn add_rpc(
     state: &AppState,
@@ -23,29 +24,38 @@ async fn add_rpc(
             "RPC's http_url not provided!",
         )));
     }
-    let http_url = if ["http://", "https://"]
-        .iter()
-        .any(|prefix| http_url.starts_with(prefix))
-    {
+    let http_url = if http_url.contains("://") {
         http_url
     } else {
         format!("https://{}", http_url).to_string()
     };
 
-    if let Err(err) = Url::parse(&http_url) {
+    if let Err(err) = Url::parse(&http_url).and_then(|h| {
+        if matches!(h.scheme(), "http" | "https") {
+            Ok(())
+        } else {
+            Err(ParseError::InvalidIpv4Address)
+        }
+    }) {
         return Err(SvmIndexerError::InvalidURL(format!(
             "Invalid http RPC provided: {}",
             err
         )));
     }
     let ws_url = ws_url.map_or(http_url.replace("http", "ws"), |input| {
-        if ["ws", "wss"].iter().any(|prefix| input.starts_with(prefix)) {
+        if input.contains("://") {
             input
         } else {
             format!("wss://{}", input)
         }
     });
-    if let Err(err) = Url::parse(&ws_url) {
+    if let Err(err) = Url::parse(&ws_url).and_then(|w| {
+        if matches!(w.scheme(), "ws" | "wss") {
+            Ok(())
+        } else {
+            Err(ParseError::InvalidIpv4Address)
+        }
+    }) {
         return Err(SvmIndexerError::InvalidURL(format!(
             "Invalid web socket RPC provided! {}",
             err
@@ -79,7 +89,7 @@ async fn add_rpc_handler(
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new().route(
-        "/rpcs",
+        "/admin/rpcs",
         post(add_rpc_handler).route_layer(axum::middleware::from_fn_with_state(state, admin_guard)),
     )
 }
