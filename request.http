@@ -75,5 +75,5 @@ x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "http_url": "https://example.com"
+  "http_url": "example.com"
 }
