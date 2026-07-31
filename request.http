@@ -59,6 +59,11 @@ Content-Type: application/json
 }
 
 ### Add RPC without protocol prefix (https:// auto-added)
-GET {{baseUrl}}/admin/rpcs?per_page=2&page=2
+GET {{baseUrl}}/admin/rpcs?per_page=2&page=1
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+### Get specific rpc
+GET {{baseUrl}}/admin/rpcs/3
 x-security: {{adminPasskey}}
 Content-Type: application/json
