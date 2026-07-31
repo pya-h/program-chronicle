@@ -12,10 +12,12 @@ use crate::{
     },
     db::entities::rpcs,
 };
+use axum::extract::Path;
 use axum::extract::Query;
 use axum::{Json, Router, extract::State, routing::get, routing::post};
 use sea_orm::EntityTrait;
 use sea_orm::LoaderTrait;
+use sea_orm::ModelTrait;
 use sea_orm::QueryOrder;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use url::{ParseError, Url};
@@ -131,10 +133,38 @@ async fn get_rpcs(
     };
     Ok(ApiResponse::ok(GetRpcsResponse::new(rpcs, total, pages)))
 }
+
+async fn get_single_rpc(
+    State(state): State<AppState>,
+    Path(rpc_id): Path<u16>,
+) -> FinalResponse<RpcWithProgramsResponse> {
+    let possible_rpc = rpcs::Entity::find_by_id(rpc_id)
+        .one(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::new_db_error("Failed fetching the specific RPC!", err))?;
+    match possible_rpc {
+        Some(rpc) => {
+            let programs = rpc
+                .find_related(programs::Entity)
+                .all(&state.db)
+                .await
+                .map_err(|err| {
+                    SvmIndexerError::new_db_error(
+                        "There was a problem while fetching related programs to this rpc!",
+                        err,
+                    )
+                })?;
+            Ok(ApiResponse::ok(RpcWithProgramsResponse { rpc, programs }))
+        }
+        _ => Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!"))),
+    }
+}
+
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/admin/rpcs", get(get_rpcs))
         .route("/admin/rpcs", post(add_rpc_handler))
+        .route("/admin/rpcs/{rpc_id}", get(get_single_rpc))
         // add routes here
         .route_layer(axum::middleware::from_fn_with_state(state, admin_guard))
 }
