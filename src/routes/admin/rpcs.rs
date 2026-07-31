@@ -13,7 +13,8 @@ use crate::{
 };
 use axum::extract::Path;
 use axum::extract::Query;
-use axum::{Json, Router, extract::State, routing::get, routing::post};
+use axum::{Json, Router, extract::State, routing::get};
+use sea_orm::ActiveValue::NotSet;
 use sea_orm::EntityTrait;
 use sea_orm::LoaderTrait;
 use sea_orm::ModelTrait;
@@ -95,7 +96,7 @@ async fn add_rpc_handler(
     Ok(ApiResponse::created(new_rpc))
 }
 
-async fn get_rpcs(
+async fn get_rpcs_handler(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationQuery>,
 ) -> FinalResponse<GetRpcsResponse> {
@@ -133,7 +134,7 @@ async fn get_rpcs(
     Ok(ApiResponse::ok(GetRpcsResponse::new(rpcs, total, pages)))
 }
 
-async fn get_single_rpc(
+async fn get_single_rpc_handler(
     State(state): State<AppState>,
     Path(rpc_id): Path<u16>,
 ) -> FinalResponse<RpcWithProgramsResponse> {
@@ -159,10 +160,16 @@ async fn get_single_rpc(
     }
 }
 
-async fn update_rpc(
+async fn update_rpc_handler(
     State(state): State<AppState>,
     Path(rpc_id): Path<u16>,
-) -> FinalResponse<RpcWithProgramsResponse> {
+    Json(payload): Json<UpdateRpcPayload>,
+) -> FinalResponse<RpcModel> {
+    if payload.http_url.is_none() && payload.ws_url.is_none() {
+        return Err(SvmIndexerError::BadInput(String::from(
+            "You must at least provide one field to change!",
+        )));
+    }
     if rpcs::Entity::find_by_id(rpc_id)
         .one(&state.db)
         .await
@@ -171,12 +178,21 @@ async fn update_rpc(
     {
         return Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!")));
     }
-    todo!()
+    let updated_rpc = rpcs::ActiveModel {
+        id: Set(rpc_id as i32),
+        http_url: payload.http_url.map_or(NotSet, |hu| Set(hu)),
+        ws_url: payload.ws_url.map_or(NotSet, |wu| Set(wu)),
+    };
+
+    Ok(ApiResponse::ok(
+        updated_rpc.update(&state.db).await.map_err(|err| {
+            SvmIndexerError::new_db_error("Something went wrong while updating rpc info!", err)
+        })?,
+    ))
 }
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/", get(get_rpcs))
-        .route("/", post(add_rpc_handler))
-        .route("/{rpc_id}", get(get_single_rpc))
+        .route("/", get(get_rpcs_handler).post(add_rpc_handler))
+        .route("/{rpc_id}", get(get_single_rpc_handler).patch(update_rpc_handler))
 }

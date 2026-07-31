@@ -13,6 +13,9 @@ pub enum SvmIndexerError {
     #[error("Item not found! {0}")]
     ItemNotFound(String),
 
+    #[error("Invalid Parameters! {0}")]
+    BadInput(String),
+
     #[error("Client Error! {0}")]
     ProgramFailure(String),
 
@@ -50,6 +53,7 @@ impl response::IntoResponse for SvmIndexerError {
                 tracing::error!(error = %seaorm_err, message = %public_message);
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
             }
+            SvmIndexerError::BadInput(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(serde_json::json!({"message": message}))).into_response()

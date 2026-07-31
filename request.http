@@ -64,6 +64,16 @@ x-security: {{adminPasskey}}
 Content-Type: application/json
 
 ### Get specific rpc
-GET {{baseUrl}}/admin/rpcs/3
+GET {{baseUrl}}/admin/rpcs/1
 x-security: {{adminPasskey}}
 Content-Type: application/json
+
+
+### Update rpc data
+PATCH {{baseUrl}}/admin/rpcs/1
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "http_url": "https://example.com"
+}
