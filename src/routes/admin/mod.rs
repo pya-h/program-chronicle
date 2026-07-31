@@ -3,6 +3,7 @@ use axum::Router;
 use crate::{core::state::AppState, middlewares::admin_guard::admin_guard};
 
 mod rpcs;
+pub mod common;
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
