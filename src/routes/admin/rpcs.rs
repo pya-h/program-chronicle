@@ -169,11 +169,31 @@ async fn update_rpc_handler(
     ))
 }
 
+async fn delete_rpc_handler(
+    State(state): State<AppState>,
+    Path(rpc_id): Path<u16>,
+) -> FinalResponse<()> {
+    if rpcs::Entity::delete_by_id(rpc_id)
+        .exec(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::new_db_error("Failed to delete the specified RPC!", err))?
+        .rows_affected
+        == 0
+    {
+        return Err(SvmIndexerError::ItemNotFound(String::from(
+            "No such rpc found to delete!",
+        )));
+    }
+    Ok(ApiResponse::ok(()))
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(get_rpcs_handler).post(add_rpc_handler))
         .route(
             "/{rpc_id}",
-            get(get_single_rpc_handler).patch(update_rpc_handler),
+            get(get_single_rpc_handler)
+                .patch(update_rpc_handler)
+                .delete(delete_rpc_handler),
         )
 }

@@ -77,3 +77,9 @@ Content-Type: application/json
 {
   "http_url": "example.com"
 }
+
+### Delete specific rpc data
+DELETE {{baseUrl}}/admin/rpcs/1
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
