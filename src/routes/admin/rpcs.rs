@@ -1,9 +1,8 @@
-use super::payloads::admin::*;
-use super::payloads::common::*;
-use super::responses::admin::*;
-use crate::db::entities::programs::{self, Model as ProgramModel};
+use super::super::payloads::admin::*;
+use super::super::payloads::common::*;
+use super::super::responses::admin::*;
+use crate::db::entities::programs;
 use crate::db::entities::rpcs::Model as RpcModel;
-use crate::middlewares::admin_guard::admin_guard;
 use crate::{
     core::{
         error::SvmIndexerError,
@@ -160,11 +159,24 @@ async fn get_single_rpc(
     }
 }
 
-pub fn routes(state: AppState) -> Router<AppState> {
+async fn update_rpc(
+    State(state): State<AppState>,
+    Path(rpc_id): Path<u16>,
+) -> FinalResponse<RpcWithProgramsResponse> {
+    if rpcs::Entity::find_by_id(rpc_id)
+        .one(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::new_db_error("Failed accessing the target RPC!", err))?
+        .is_none()
+    {
+        return Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!")));
+    }
+    todo!()
+}
+
+pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/admin/rpcs", get(get_rpcs))
-        .route("/admin/rpcs", post(add_rpc_handler))
-        .route("/admin/rpcs/{rpc_id}", get(get_single_rpc))
-        // add routes here
-        .route_layer(axum::middleware::from_fn_with_state(state, admin_guard))
+        .route("/", get(get_rpcs))
+        .route("/", post(add_rpc_handler))
+        .route("/{rpc_id}", get(get_single_rpc))
 }
