@@ -35,8 +35,8 @@ x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "http_url": "solana-mainnet.g.alchemy1.com",
-  "ws_url": "api.mainnet-beta.solana1.com"
+  "http_url": "solana-mainnet.g.alchemy2.com",
+  "ws_url": "api.mainnet-beta.solana2.com"
 }
 
 

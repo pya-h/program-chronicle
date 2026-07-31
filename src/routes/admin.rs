@@ -1,5 +1,10 @@
-use super::payloads::admin::*;
+use crate::db::entities::programs::{self, Model as ProgramModel};
+use crate::db::entities::{rpcs::Model as RpcModel};
 use crate::middlewares::admin_guard::admin_guard;
+use super::payloads::admin::*;
+use super::payloads::common::*;
+use super::responses::admin::*;
+
 use crate::{
     core::{
         error::SvmIndexerError,
@@ -9,16 +14,15 @@ use crate::{
     db::entities::rpcs,
 };
 use axum::{Json, Router, extract::State, routing::post};
+use sea_orm::EntityTrait;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
-use serde_json::{Value, json};
-use tracing::error;
 use url::{ParseError, Url};
 
 async fn add_rpc(
     state: &AppState,
     http_url: String,
     ws_url: Option<String>,
-) -> Result<rpcs::Model, SvmIndexerError> {
+) -> Result<RpcModel, SvmIndexerError> {
     if http_url.is_empty() {
         return Err(SvmIndexerError::InvalidURL(String::from(
             "RPC's http_url not provided!",
@@ -76,7 +80,7 @@ async fn add_rpc(
 async fn add_rpc_handler(
     State(state): State<AppState>,
     Json(payload): Json<AddRpcPayload>,
-) -> FinalResponse<Value> {
+) -> FinalResponse<RpcModel> {
     let new_rpc = add_rpc(
         &state,
         payload.http_url.trim().to_string(),
@@ -84,9 +88,17 @@ async fn add_rpc_handler(
     )
     .await?;
 
-    Ok(ApiResponse::created(json!({ "rpc": new_rpc })))
+    Ok(ApiResponse::created(new_rpc))
 }
 
+async fn get_rpcs(
+    State(state): State<AppState>,
+    Json(pagination): Json<PaginationPayload>,
+) -> FinalResponse<GetRpcsResponse> {
+    let rpcs = rpcs::Entity::find().find_with_related(programs::Entity).all(&state.db).await?;
+
+    Ok(ApiResponse::ok(GetRpcsResponse::new(rpcs)))
+}
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new().route(
         "/admin/rpcs",
