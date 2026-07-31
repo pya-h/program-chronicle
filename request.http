@@ -14,8 +14,8 @@ x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "http_url": "https://api.mainnet-beta.solana.com",
-  "ws_url": "wss://api.mainnet-beta.solana.com"
+  "http_url": "https://api.mainnet-beta.solanax.com",
+  "ws_url": "wss://api.mainnet-beta.solanax.com"
 }
 
 

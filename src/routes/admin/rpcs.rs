@@ -159,10 +159,24 @@ async fn get_single_rpc(
     }
 }
 
+async fn update_rpc(
+    State(state): State<AppState>,
+    Path(rpc_id): Path<u16>,
+) -> FinalResponse<RpcWithProgramsResponse> {
+    if rpcs::Entity::find_by_id(rpc_id)
+        .one(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::new_db_error("Failed accessing the target RPC!", err))?
+        .is_none()
+    {
+        return Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!")));
+    }
+    todo!()
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/admin/rpcs", get(get_rpcs))
-        .route("/admin/rpcs", post(add_rpc_handler))
-        .route("/admin/rpcs/{rpc_id}", get(get_single_rpc))
-
+        .route("/", get(get_rpcs))
+        .route("/", post(add_rpc_handler))
+        .route("/{rpc_id}", get(get_single_rpc))
 }
