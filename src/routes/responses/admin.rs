@@ -4,16 +4,16 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct RpcWithProgramsResponse {
     #[serde(flatten)]
-    rpc: RpcModel,
+    pub rpc: RpcModel,
 
-    programs: Vec<ProgramModel>,
+    pub programs: Vec<ProgramModel>,
 }
 
 #[derive(Serialize)]
 pub struct GetRpcsResponse {
-    data: Vec<RpcWithProgramsResponse>,
-    total: u16,
-    pages: u16,
+    pub data: Vec<RpcWithProgramsResponse>,
+    pub total: u16,
+    pub pages: u16,
 }
 
 impl GetRpcsResponse {

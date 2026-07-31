@@ -10,8 +10,8 @@ pub enum SvmIndexerError {
     #[error("Something went wrong in Serialization step! {0}")]
     SerializationError(String),
 
-    #[error("Account not found! {0}")]
-    AccountNotFound(String),
+    #[error("Item not found! {0}")]
+    ItemNotFound(String),
 
     #[error("Client Error! {0}")]
     ProgramFailure(String),
@@ -39,7 +39,7 @@ impl response::IntoResponse for SvmIndexerError {
     fn into_response(self) -> response::Response {
         let (status, message) = match &self {
             SvmIndexerError::InvalidPublicKey(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            SvmIndexerError::AccountNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            SvmIndexerError::ItemNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             SvmIndexerError::ProgramFailure(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             SvmIndexerError::InvalidURL(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             SvmIndexerError::InternalError(_) => {
