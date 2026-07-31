@@ -1,9 +1,9 @@
-use crate::db::entities::programs::{self, Model as ProgramModel};
-use crate::db::entities::{rpcs::Model as RpcModel};
-use crate::middlewares::admin_guard::admin_guard;
 use super::payloads::admin::*;
 use super::payloads::common::*;
 use super::responses::admin::*;
+use crate::db::entities::programs::{self, Model as ProgramModel};
+use crate::db::entities::rpcs::Model as RpcModel;
+use crate::middlewares::admin_guard::admin_guard;
 
 use crate::{
     core::{
@@ -72,9 +72,10 @@ async fn add_rpc(
         ..Default::default()
     };
 
-    Ok(new_rpc.insert(&state.db).await.map_err(|err| {
-        SvmIndexerError::InternalError(format!("Failed adding the new RPC: {}", err))
-    })?)
+    Ok(new_rpc
+        .insert(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::new_db_error("Failed adding the new RPC: {}", err))?)
 }
 
 async fn add_rpc_handler(
@@ -95,7 +96,10 @@ async fn get_rpcs(
     State(state): State<AppState>,
     Json(pagination): Json<PaginationPayload>,
 ) -> FinalResponse<GetRpcsResponse> {
-    let rpcs = rpcs::Entity::find().find_with_related(programs::Entity).all(&state.db).await?;
+    let rpcs = rpcs::Entity::find()
+        .find_with_related(programs::Entity)
+        .all(&state.db)
+        .await.map_err(|err| SvmIndexerError::new_db_error("Failed fetching rpcs!", err))?;
 
     Ok(ApiResponse::ok(GetRpcsResponse::new(rpcs)))
 }
