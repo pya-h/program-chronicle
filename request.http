@@ -57,3 +57,8 @@ Content-Type: application/json
 {
   "http_url": "https://example.com"
 }
+
+### Add RPC without protocol prefix (https:// auto-added)
+GET {{baseUrl}}/admin/rpcs
+x-security: {{adminPasskey}}
+Content-Type: application/json

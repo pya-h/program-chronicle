@@ -13,13 +13,14 @@ pub struct RpcWithProgramsResponse {
 pub struct GetRpcsResponse {
     data: Vec<RpcWithProgramsResponse>,
     total: u16,
+    pages: u16,
 }
 
 impl GetRpcsResponse {
-    pub fn new(rpcs: Vec<(RpcModel, Vec<ProgramModel>)>) -> Self {
-        let total = rpcs.len() as u16;
+    pub fn new(rpcs: Vec<(RpcModel, Vec<ProgramModel>)>, total: u16, pages: u16) -> Self {
         Self {
             total,
+            pages,
             data: rpcs
                 .into_iter()
                 .map(|(rpc, programs)| RpcWithProgramsResponse { rpc, programs })
