@@ -4,7 +4,7 @@ use thiserror::Error;
 #[allow(unused)] // TODO: Remove this in the end
 #[derive(Error, Debug)]
 pub enum SvmIndexerError {
-    #[error("Provided PublicKey has invalid format! {0}")]
+    #[error("Invalid PublicKey format! {0}")]
     InvalidPublicKey(String),
 
     #[error("Something went wrong in Serialization step! {0}")]

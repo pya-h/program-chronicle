@@ -59,7 +59,7 @@ Content-Type: application/json
 }
 
 ### Add RPC without protocol prefix (https:// auto-added)
-GET {{baseUrl}}/admin/rpcs
+GET {{baseUrl}}/admin/rpcs/3
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
@@ -111,7 +111,7 @@ x-security: {{adminPasskey}}
 Content-Type: application/json
 
 ### Get programs paginated
-GET {{baseUrl}}/admin/programs?page=3&per_page=2
+GET {{baseUrl}}/admin/programs?page=1&per_page=4
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
@@ -119,3 +119,13 @@ Content-Type: application/json
 DELETE {{baseUrl}}/admin/programs/7
 x-security: {{adminPasskey}}
 Content-Type: application/json
+
+### Update rpc data
+PATCH {{baseUrl}}/admin/programs/1
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "rpc_id": 10,
+  "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+}
