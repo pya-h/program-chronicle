@@ -8,14 +8,17 @@ use crate::{
     routes::{
         admin::rpcs::add_rpc,
         payloads::{
-            admin::{AddProgramPayload, GetSingleProgramPayload},
+            admin::{AddProgramPayload, AddRpcPayload, GetSingleProgramPayload},
             common::PaginationQuery,
         },
         responses::admin::{GetProgramsResponse, ProgramWithRpcResponse},
     },
 };
 use axum::{
-    Json, Router, extract::{Path, Query, State}, response::NoContent, routing::get,
+    Json, Router,
+    extract::{Path, Query, State},
+    response::NoContent,
+    routing::get,
 };
 use sea_orm::{
     ActiveModelTrait,
@@ -24,11 +27,12 @@ use sea_orm::{
 };
 use solana_sdk::pubkey::Pubkey;
 
-async fn add_program_handler(
-    State(state): State<AppState>,
-    Json(payload): Json<AddProgramPayload>,
-) -> FinalResponse<ProgramWithRpcResponse> {
-    let rpc = if let Some(rpc_id) = payload.rpc_id {
+async fn get_or_add_rpc(
+    state: &AppState,
+    rpc_id: &Option<u16>,
+    rpc_url: &Option<AddRpcPayload>,
+) -> Result<Option<rpcs::Model>, SvmIndexerError> {
+    if let Some(rpc_id) = *rpc_id {
         let rpc = rpcs::Entity::find_by_id(rpc_id)
             .one(&state.db)
             .await
@@ -40,8 +44,8 @@ async fn add_program_handler(
                 "No RPC found with such id!",
             )));
         };
-        rpc
-    } else if let Some(rpc) = payload.rpc_url {
+        Ok(Some(rpc))
+    } else if let Some(rpc) = rpc_url {
         let mut conditions = Condition::all().add(rpcs::Column::HttpUrl.ilike(&rpc.http_url));
 
         if let Some(ws_url) = &rpc.ws_url {
@@ -59,11 +63,20 @@ async fn add_program_handler(
                 // and the rpc may actually existed in db! So proceeding despite the error is not a good idea!
             })?;
 
-        match maybe_found_rpc {
+        Ok(Some(match maybe_found_rpc {
             Some(found_rpc) => found_rpc,
-            _ => add_rpc(&state, rpc.http_url, rpc.ws_url).await?,
-        }
+            _ => add_rpc(&state, rpc.http_url.clone(), rpc.ws_url.clone()).await?,
+        }))
     } else {
+        Ok(None)
+    }
+}
+
+async fn add_program_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<AddProgramPayload>,
+) -> FinalResponse<ProgramWithRpcResponse> {
+    let Some(rpc) = get_or_add_rpc(&state, &payload.rpc_id, &payload.rpc_url).await? else {
         return Err(SvmIndexerError::BadInput(String::from(
             "You must either specify the rpc_id or rpc url!",
         )));
@@ -153,6 +166,12 @@ async fn get_programs_handler(
         total as u16,
         pages,
     )))
+}
+
+async fn update_program_handler(
+    State(state): State<AppState>,
+) -> FinalResponse<ProgramWithRpcResponse> {
+    todo!()
 }
 
 async fn delete_program_handler(

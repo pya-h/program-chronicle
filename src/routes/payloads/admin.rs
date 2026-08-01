@@ -26,3 +26,11 @@ pub struct AddProgramPayload {
 pub struct GetSingleProgramPayload {
     pub ignore_unknown_rpc: Option<bool> // In case rpc data failed loading, due to any reason
 }
+
+#[derive(Deserialize)]
+pub struct UpdateProgramPayload {
+    pub rpc_id: Option<u16>,
+    pub rpc_url: Option<AddRpcPayload>,
+    pub address: String,
+    pub name: Option<String>,
+}
