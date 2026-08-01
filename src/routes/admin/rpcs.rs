@@ -160,7 +160,7 @@ async fn update_rpc_handler(
             "You must at least provide one field to change!".to_owned(),
         ));
     }
-    if rpcs::Entity::find_by_id(rpc_id)
+    if !rpcs::Entity::find_by_id(rpc_id)
         .exists(&state.db)
         .await
         .map_err(|err| SvmIndexerError::db_error_with_id("Failed accessing the target RPC!", err, rpc_id as u64))?

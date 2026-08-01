@@ -59,7 +59,7 @@ async fn add_rpc_invalid_url_is_bad_request() -> httpc_test::Result<()> {
 
     let res = server()
         .authed_client()
-        .do_post("/admin/rpcs", json!({"http_url": "not-a-url"}))
+        .do_post("/admin/rpcs", json!({"http_url": "ht!tp://[bad"}))
         .await?;
     assert_eq!(res.status(), 400);
     Ok(())
