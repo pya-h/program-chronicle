@@ -49,7 +49,7 @@ async fn add_rpc_missing_http_url_is_bad_request() -> httpc_test::Result<()> {
         .authed_client()
         .do_post("/admin/rpcs", json!({"ws_url": "wss://rpc.example.com"}))
         .await?;
-    assert_eq!(res.status(), 400);
+    assert_eq!(res.status(), 422);
     Ok(())
 }
 
