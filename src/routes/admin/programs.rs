@@ -263,14 +263,14 @@ async fn update_program_handler(
                 tracing::error!(
                     error = %err,
                     message = "Updating program data was successful, but loading rpc info failed!",
-                    program_id = %program_id,
-                    rpc_id = %final_rpc_id
+                    program_id = program_id,
+                    rpc_id = final_rpc_id
                 );
             } else {
                 tracing::error!(
                     message = "Updating program data was successful, but rpc not found!",
-                    program_id = %program_id,
-                    rpc_id = %final_rpc_id
+                    program_id = program_id,
+                    rpc_id = final_rpc_id
                 );
             }
             unknown_rpc!()
