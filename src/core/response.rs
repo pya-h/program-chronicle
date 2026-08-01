@@ -1,4 +1,4 @@
-use axum::{Json, http::StatusCode, response};
+use axum::{Json, http::StatusCode, response::{self, NoContent}};
 use serde::Serialize;
 use super::error::SvmIndexerError;
 
@@ -7,6 +7,8 @@ pub struct ApiResponse<T: Serialize>(pub StatusCode, pub Json<T>);
 pub type FinalResponse<T> = Result<ApiResponse<T>, SvmIndexerError>;
 
 // shortcuts:
+pub type NoContentResponse = Result<NoContent, SvmIndexerError>;
+
 impl<T: Serialize> ApiResponse<T> {
     pub fn new(status: StatusCode, body: T) -> Self {
         Self(status, Json(body))

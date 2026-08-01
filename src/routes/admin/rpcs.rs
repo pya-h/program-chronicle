@@ -1,6 +1,7 @@
 use super::super::payloads::admin::*;
 use super::super::payloads::common::*;
 use super::super::responses::admin::*;
+use crate::core::response::NoContentResponse;
 use crate::db::entities::programs;
 use crate::db::entities::rpcs::Model as RpcModel;
 use crate::routes::admin::common;
@@ -14,23 +15,24 @@ use crate::{
 };
 use axum::extract::Path;
 use axum::extract::Query;
+use axum::response;
 use axum::{Json, Router, extract::State, routing::get};
 use sea_orm::ActiveValue::NotSet;
 use sea_orm::EntityTrait;
 use sea_orm::LoaderTrait;
 use sea_orm::ModelTrait;
 use sea_orm::QueryOrder;
+use sea_orm::SelectExt;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
-async fn add_rpc(
+pub async fn add_rpc(
     state: &AppState,
     http_url: String,
     ws_url: Option<String>,
 ) -> Result<RpcModel, SvmIndexerError> {
     if http_url.is_empty() {
-        return Err(SvmIndexerError::InvalidURL(String::from(
-            "RPC's http_url not provided!",
-        )));
+        return Err(SvmIndexerError::InvalidURL(
+            "RPC's http_url not provided!".to_owned()));
     }
     let http_url = common::validate_http_url(http_url)?;
     let ws_url = if let Some(ws_url) = ws_url {
@@ -44,10 +46,12 @@ async fn add_rpc(
         ..Default::default()
     };
 
-    Ok(new_rpc
-        .insert(&state.db)
-        .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed adding the new RPC!", err))?)
+    Ok(new_rpc.insert(&state.db).await.map_err(|err| {
+        SvmIndexerError::new_db_error(
+            "Failed adding the new RPC! Maybe http_url or ws_url is already existing?",
+            err,
+        )
+    })?)
 }
 
 async fn add_rpc_handler(
@@ -124,7 +128,7 @@ async fn get_single_rpc_handler(
                 })?;
             Ok(ApiResponse::ok(RpcWithProgramsResponse { rpc, programs }))
         }
-        _ => Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!"))),
+        _ => Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned())),
     }
 }
 
@@ -144,17 +148,15 @@ async fn update_rpc_handler(
         None
     };
     if new_http_url.is_none() && new_ws_url.is_none() {
-        return Err(SvmIndexerError::BadInput(String::from(
-            "You must at least provide one field to change!",
-        )));
+        return Err(SvmIndexerError::BadInput(
+            "You must at least provide one field to change!".to_owned()));
     }
     if rpcs::Entity::find_by_id(rpc_id)
-        .one(&state.db)
+        .exists(&state.db)
         .await
         .map_err(|err| SvmIndexerError::new_db_error("Failed accessing the target RPC!", err))?
-        .is_none()
     {
-        return Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!")));
+        return Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned()));
     }
     let updated_rpc = rpcs::ActiveModel {
         id: Set(rpc_id as i32),
@@ -172,19 +174,21 @@ async fn update_rpc_handler(
 async fn delete_rpc_handler(
     State(state): State<AppState>,
     Path(rpc_id): Path<u16>,
-) -> FinalResponse<()> {
+) -> NoContentResponse {
     if rpcs::Entity::delete_by_id(rpc_id)
         .exec(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed to delete the specified RPC!", err))?
+        .map_err(|err| SvmIndexerError::new_db_error(
+            "Failed to delete this RPC! Make sure no program is tied to this RPC before removal.",
+            err
+        ))?
         .rows_affected
         == 0
     {
-        return Err(SvmIndexerError::ItemNotFound(String::from(
-            "No such rpc found to delete!",
-        )));
+        return Err(SvmIndexerError::ItemNotFound(
+            "No such rpc found to delete!".to_owned()));
     }
-    Ok(ApiResponse::ok(()))
+    Ok(response::NoContent)
 }
 
 pub fn routes() -> Router<AppState> {

@@ -59,12 +59,12 @@ Content-Type: application/json
 }
 
 ### Add RPC without protocol prefix (https:// auto-added)
-GET {{baseUrl}}/admin/rpcs?per_page=2&page=1
+GET {{baseUrl}}/admin/rpcs
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
 ### Get specific rpc
-GET {{baseUrl}}/admin/rpcs/1
+GET {{baseUrl}}/admin/rpcs?page=3&per_page=3
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
@@ -79,7 +79,43 @@ Content-Type: application/json
 }
 
 ### Delete specific rpc data
-DELETE {{baseUrl}}/admin/rpcs/1
+DELETE {{baseUrl}}/admin/rpcs/12
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
+### Add new program and new rpc
+POST {{baseUrl}}/admin/programs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "rpc_url": {"http_url": "https://new_sprsogram.com", "ws_url": "wss://swahtever.com"},
+  "name": "dekant",
+  "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+}
+
+### Add new program with previous rpc
+POST {{baseUrl}}/admin/programs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "rpc_id": 12,
+  "name": "dekant",
+  "address": "9oFYVPXLVyv3YchXnULcVuwGcTggK5nC4VkqjyRmSuAx"
+}
+
+### Get all programs
+GET {{baseUrl}}/admin/programs?page=4&per_page=2
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+### Get programs paginated
+GET {{baseUrl}}/admin/programs?page=3&per_page=2
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+### Delete specific rpc data
+DELETE {{baseUrl}}/admin/programs/7
+x-security: {{adminPasskey}}
+Content-Type: application/json
