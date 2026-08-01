@@ -1,72 +1,90 @@
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use httpc_test::Client;
 use migration::MigratorTrait;
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
-use tokio::sync::{Mutex, OnceCell};
+use sea_orm::{ConnectionTrait, ConnectOptions, Database};
+use tokio::runtime::Runtime;
 
-static TEST_STATE: OnceCell<Mutex<TestState>> = OnceCell::const_new();
+static SERVER: OnceLock<ServerInfo> = OnceLock::new();
 
-pub struct TestState {
-    pub db: DatabaseConnection,
-    pub authed_client: Client,
-    pub unauthed_client: Client,
+pub struct ServerInfo {
+    pub base_url: String,
+    pub admin_passkey: String,
 }
 
-pub async fn setup() -> &'static Mutex<TestState> {
-    TEST_STATE
-        .get_or_init(|| async {
-            dotenvy::dotenv().ok();
-            let db_url =
-                std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
-            let admin_passkey =
-                std::env::var("ADMIN_PASSKEY").unwrap_or_else(|_| "test".to_string());
+impl ServerInfo {
+    pub fn authed_client(&self) -> Client {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "x-security",
+            reqwest::header::HeaderValue::from_str(&self.admin_passkey).unwrap(),
+        );
+        httpc_test::new_client_with_reqwest(
+            self.base_url.clone(),
+            reqwest::Client::builder().default_headers(headers),
+        )
+        .expect("failed to create authed test client")
+    }
 
-            let db = Database::connect(&db_url)
-                .await
-                .expect("failed to connect to test database");
-            migration::Migrator::refresh(&db)
-                .await
-                .expect("failed to refresh test database schema");
+    pub fn unauthed_client(&self) -> Client {
+        httpc_test::new_client(self.base_url.clone())
+            .expect("failed to create unauthed test client")
+    }
+}
 
-            let app = svm_indexer::app(db.clone(), admin_passkey.clone());
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .expect("failed to bind test server");
-            let port = listener.local_addr().unwrap().port();
+fn setup_server() -> ServerInfo {
+    dotenvy::dotenv().ok();
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+    let admin_passkey = std::env::var("ADMIN_PASSKEY").unwrap_or_else(|_| "test".to_string());
 
-            tokio::spawn(async move {
-                axum::serve(listener, app).await.unwrap();
-            });
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let rt = Runtime::new().expect("failed to create test server runtime");
+    let port = rt.block_on(async {
+        let mut opts = ConnectOptions::new(&db_url);
+        opts.max_connections(10);
+        let db = Database::connect(opts)
+            .await
+            .expect("failed to connect app database");
 
-            let base_url = format!("http://127.0.0.1:{}", port);
+        migration::Migrator::refresh(&db)
+            .await
+            .expect("failed to refresh test database schema");
 
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                "x-security",
-                reqwest::header::HeaderValue::from_str(&admin_passkey).unwrap(),
-            );
-            let authed_client = httpc_test::new_client_with_reqwest(
-                base_url.clone(),
-                reqwest::Client::builder().default_headers(headers),
-            )
-            .expect("failed to create authed test client");
+        let app = svm_indexer::app(db, admin_passkey.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("failed to bind test server");
+        let port = listener.local_addr().unwrap().port();
 
-            let unauthed_client =
-                httpc_test::new_client(base_url).expect("failed to create unauthed test client");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-            Mutex::new(TestState {
-                db,
-                authed_client,
-                unauthed_client,
-            })
-        })
+        port
+    });
+
+    // Keep the server runtime alive for the whole test process.
+    std::thread::spawn(move || {
+        rt.block_on(std::future::pending::<()>());
+    });
+
+    ServerInfo {
+        base_url: format!("http://127.0.0.1:{}", port),
+        admin_passkey,
+    }
+}
+
+pub fn server() -> &'static ServerInfo {
+    SERVER.get_or_init(setup_server)
+}
+
+pub async fn reset_db() {
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+    let db = Database::connect(db_url)
         .await
-}
-
-pub async fn reset_db(state: &TestState) {
-    state
-        .db
-        .execute_unprepared("TRUNCATE TABLE programs, rpcs RESTART IDENTITY CASCADE")
+        .expect("failed to connect to test database for reset");
+    db.execute_unprepared("DELETE FROM programs; DELETE FROM rpcs;")
         .await
         .expect("failed to reset test tables");
 }
