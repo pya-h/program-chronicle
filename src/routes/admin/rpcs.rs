@@ -22,6 +22,7 @@ use sea_orm::EntityTrait;
 use sea_orm::LoaderTrait;
 use sea_orm::ModelTrait;
 use sea_orm::QueryOrder;
+use sea_orm::SelectExt;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
 pub async fn add_rpc(
@@ -30,9 +31,8 @@ pub async fn add_rpc(
     ws_url: Option<String>,
 ) -> Result<RpcModel, SvmIndexerError> {
     if http_url.is_empty() {
-        return Err(SvmIndexerError::InvalidURL(String::from(
-            "RPC's http_url not provided!",
-        )));
+        return Err(SvmIndexerError::InvalidURL(
+            "RPC's http_url not provided!".to_owned()));
     }
     let http_url = common::validate_http_url(http_url)?;
     let ws_url = if let Some(ws_url) = ws_url {
@@ -128,7 +128,7 @@ async fn get_single_rpc_handler(
                 })?;
             Ok(ApiResponse::ok(RpcWithProgramsResponse { rpc, programs }))
         }
-        _ => Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!"))),
+        _ => Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned())),
     }
 }
 
@@ -148,17 +148,15 @@ async fn update_rpc_handler(
         None
     };
     if new_http_url.is_none() && new_ws_url.is_none() {
-        return Err(SvmIndexerError::BadInput(String::from(
-            "You must at least provide one field to change!",
-        )));
+        return Err(SvmIndexerError::BadInput(
+            "You must at least provide one field to change!".to_owned()));
     }
     if rpcs::Entity::find_by_id(rpc_id)
-        .one(&state.db)
+        .exists(&state.db)
         .await
         .map_err(|err| SvmIndexerError::new_db_error("Failed accessing the target RPC!", err))?
-        .is_none()
     {
-        return Err(SvmIndexerError::ItemNotFound(String::from("No such RPC!")));
+        return Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned()));
     }
     let updated_rpc = rpcs::ActiveModel {
         id: Set(rpc_id as i32),
@@ -187,9 +185,8 @@ async fn delete_rpc_handler(
         .rows_affected
         == 0
     {
-        return Err(SvmIndexerError::ItemNotFound(String::from(
-            "No such rpc found to delete!",
-        )));
+        return Err(SvmIndexerError::ItemNotFound(
+            "No such rpc found to delete!".to_owned()));
     }
     Ok(response::NoContent)
 }

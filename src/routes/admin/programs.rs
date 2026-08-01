@@ -8,7 +8,9 @@ use crate::{
     routes::{
         admin::rpcs::add_rpc,
         payloads::{
-            admin::{AddProgramPayload, AddRpcPayload, GetSingleProgramPayload},
+            admin::{
+                AddProgramPayload, AddRpcPayload, GetSingleProgramPayload, UpdateProgramPayload,
+            },
             common::PaginationQuery,
         },
         responses::admin::{GetProgramsResponse, ProgramWithRpcResponse},
@@ -23,7 +25,7 @@ use axum::{
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::{NotSet, Set},
-    ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, SelectExt,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -170,7 +172,26 @@ async fn get_programs_handler(
 
 async fn update_program_handler(
     State(state): State<AppState>,
+    Json(payload): Json<UpdateProgramPayload>,
+    Path(program_id): Path<u16>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
+    if payload.is_empty() {
+        return Err(SvmIndexerError::BadInput(String::from(
+            "At least one field of program should be changed!",
+        )));
+    }
+
+    if !programs::Entity::find_by_id(program_id)
+        .exists(&state.db)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::new_db_error("Failed accessing the target program data!", err)
+        })?
+    {
+        return Err(SvmIndexerError::ItemNotFound(
+            "Program not found!".to_owned(),
+        ));
+    }
     todo!()
 }
 

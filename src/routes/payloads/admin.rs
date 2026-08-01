@@ -31,6 +31,12 @@ pub struct GetSingleProgramPayload {
 pub struct UpdateProgramPayload {
     pub rpc_id: Option<u16>,
     pub rpc_url: Option<AddRpcPayload>,
-    pub address: String,
+    pub address: Option<String>,
     pub name: Option<String>,
+}
+
+impl UpdateProgramPayload {
+    pub fn is_empty(&self) -> bool {
+        self.rpc_id.is_none() && self.rpc_url.is_none() && self.address.is_none() && self.name.is_none()
+    }
 }
