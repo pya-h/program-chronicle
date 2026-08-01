@@ -1,0 +1,361 @@
+use serde_json::json;
+
+use crate::common::{reset_db, setup};
+
+async fn create_rpc(state: &crate::common::TestState, http_url: &str) -> u64 {
+    state
+        .authed_client
+        .do_post("/admin/rpcs", json!({"http_url": http_url, "ws_url": format!("wss://{}", http_url.trim_start_matches("https://"))}))
+        .await
+        .unwrap()
+        .json_body_as::<serde_json::Value>()
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn add_program_with_rpc_id_happy() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-rpc.example.com").await;
+
+    let res = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "name": "test-program",
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 201);
+
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["name"], "test-program");
+    assert_eq!(body["rpc_id"], rpc_id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_with_rpc_url_creates_rpc() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let res = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_url": {
+                    "http_url": "https://new-rpc-for-program.example.com",
+                    "ws_url": "wss://new-rpc-for-program.example.com"
+                },
+                "address": "9oFYVPXLVyv3YchXnULcVuwGcTggK5nC4VkqjyRmSuAx"
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 201);
+
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert!(body["rpc"]["id"].is_number());
+    assert_eq!(body["rpc"]["http_url"], "https://new-rpc-for-program.example.com");
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_without_rpc_is_bad_request() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let res = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({"address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_invalid_address_is_bad_request() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-rpc-invalid.example.com").await;
+
+    let res = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": "not-a-valid-address"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_rpc_id_not_found() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let res = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": 9999,
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_duplicate_address_on_same_rpc_fails() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-dup.example.com").await;
+    let address = "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P";
+
+    state
+        .authed_client
+        .do_post("/admin/programs", json!({"rpc_id": rpc_id, "address": address}))
+        .await?;
+
+    let res = state
+        .authed_client
+        .do_post("/admin/programs", json!({"rpc_id": rpc_id, "address": address}))
+        .await?;
+    assert_eq!(res.status(), 500);
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_without_auth_is_unauthorized() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let res = state
+        .unauthed_client
+        .do_post(
+            "/admin/programs",
+            json!({"address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 401);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_programs_with_pagination() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-list.example.com").await;
+    for i in 0..5 {
+        state
+            .authed_client
+            .do_post(
+                "/admin/programs",
+                json!({
+                    "rpc_id": rpc_id,
+                    "address": format!(
+                        "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A{:02}",
+                        i
+                    )
+                }),
+            )
+            .await?;
+    }
+
+    let res = state
+        .authed_client
+        .do_get("/admin/programs?page=1&per_page=2")
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["total"], 5);
+    assert_eq!(body["pages"], 3);
+    assert_eq!(body["data"].as_array().unwrap().len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_single_program_and_not_found() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-single.example.com").await;
+    let created = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = state
+        .authed_client
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    let res = state.authed_client.do_get("/admin/programs/9999").await?;
+    assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_happy() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-update.example.com").await;
+    let created = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "name": "old-name",
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = state
+        .authed_client
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"name": "new-name"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["name"], "new-name");
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_no_fields_is_bad_request() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-update-bad.example.com").await;
+    let created = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = state
+        .authed_client
+        .do_patch(&format!("/admin/programs/{}", id), json!({}))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_invalid_address_is_bad_request() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-update-addr.example.com").await;
+    let created = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = state
+        .authed_client
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"address": "bad-address"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_program_happy() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let rpc_id = create_rpc(&state, "https://program-delete.example.com").await;
+    let created = state
+        .authed_client
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = state
+        .authed_client
+        .do_delete(&format!("/admin/programs/{}", id))
+        .await?;
+    assert_eq!(res.status(), 204);
+
+    let res = state
+        .authed_client
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_program_not_found() -> httpc_test::Result<()> {
+    let state = setup().await.lock().await;
+    reset_db(&state).await;
+
+    let res = state.authed_client.do_delete("/admin/programs/9999").await?;
+    assert_eq!(res.status(), 404);
+    Ok(())
+}
