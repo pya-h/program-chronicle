@@ -9,11 +9,15 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: DatabaseConnection) -> Self {
-        let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
+    pub fn new_with_passkey(db: DatabaseConnection, admin_passkey: String) -> Self {
         AppState {
             admin_passkey,
             db,
         }
+    }
+
+    pub fn new(db: DatabaseConnection) -> Self {
+        let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
+        Self::new_with_passkey(db, admin_passkey)
     }
 }

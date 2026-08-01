@@ -4528,6 +4528,8 @@ dependencies = [
  "axum",
  "dotenvy",
  "httpc-test",
+ "migration",
+ "reqwest",
  "sea-orm",
  "serde",
  "serde_json",

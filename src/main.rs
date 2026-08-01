@@ -1,17 +1,11 @@
-use crate::core::state::AppState;
-use axum::Router;
-use sea_orm::Database;
-use std::{env, net::SocketAddr, panic};
+use std::{env, net::SocketAddr};
 
-mod core;
-mod db;
-mod middlewares;
-mod routes;
+use sea_orm::Database;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
-    if let Err(err) = core::logging::setup() {
+    if let Err(err) = svm_indexer::core::logging::setup() {
         panic!("Logger setup failed: {}", err);
     }
 
@@ -26,12 +20,8 @@ async fn main() {
         }
     };
 
-    let state = AppState::new(database_connection);
-    let router = Router::new()
-        .nest("/admin", routes::admin::routes(state.clone()))
-        .merge(routes::root::routes())
-        .with_state(state)
-        .fallback(routes::root::not_found_handler);
+    let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
+    let router = svm_indexer::app(database_connection, admin_passkey);
 
     let app_port = {
         let port = env::var("APP_PORT").unwrap_or_default().trim().to_string();
