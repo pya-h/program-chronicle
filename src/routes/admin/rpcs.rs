@@ -1,6 +1,7 @@
 use super::super::payloads::admin::*;
 use super::super::payloads::common::*;
 use super::super::responses::admin::*;
+use crate::core::response::NoContentResponse;
 use crate::db::entities::programs;
 use crate::db::entities::rpcs::Model as RpcModel;
 use crate::routes::admin::common;
@@ -14,6 +15,7 @@ use crate::{
 };
 use axum::extract::Path;
 use axum::extract::Query;
+use axum::response;
 use axum::{Json, Router, extract::State, routing::get};
 use sea_orm::ActiveValue::NotSet;
 use sea_orm::EntityTrait;
@@ -174,12 +176,12 @@ async fn update_rpc_handler(
 async fn delete_rpc_handler(
     State(state): State<AppState>,
     Path(rpc_id): Path<u16>,
-) -> FinalResponse<()> {
+) -> NoContentResponse {
     if rpcs::Entity::delete_by_id(rpc_id)
         .exec(&state.db)
         .await
         .map_err(|err| SvmIndexerError::new_db_error(
-            "Failed to delete this RPC! Make sure no programs are tied to this RPC before removal.",
+            "Failed to delete this RPC! Make sure no program is tied to this RPC before removal.",
             err
         ))?
         .rows_affected
@@ -189,7 +191,7 @@ async fn delete_rpc_handler(
             "No such rpc found to delete!",
         )));
     }
-    Ok(ApiResponse::ok(()))
+    Ok(response::NoContent)
 }
 
 pub fn routes() -> Router<AppState> {

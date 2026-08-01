@@ -111,6 +111,11 @@ x-security: {{adminPasskey}}
 Content-Type: application/json
 
 ### Get programs paginated
-GET {{baseUrl}}/admin/programs?page=4&per_page=2
+GET {{baseUrl}}/admin/programs?page=3&per_page=2
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+### Delete specific rpc data
+DELETE {{baseUrl}}/admin/programs/7
 x-security: {{adminPasskey}}
 Content-Type: application/json

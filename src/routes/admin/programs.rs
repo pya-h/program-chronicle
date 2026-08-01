@@ -1,7 +1,7 @@
 use crate::{
     core::{
         error::SvmIndexerError,
-        response::{ApiResponse, FinalResponse},
+        response::{ApiResponse, FinalResponse, NoContentResponse},
         state::AppState,
     },
     db::entities::{programs, rpcs},
@@ -15,9 +15,7 @@ use crate::{
     },
 };
 use axum::{
-    Json, Router,
-    extract::{Path, Query, State},
-    routing::get,
+    Json, Router, extract::{Path, Query, State}, response::NoContent, routing::get,
 };
 use sea_orm::{
     ActiveModelTrait,
@@ -157,8 +155,31 @@ async fn get_programs_handler(
     )))
 }
 
+async fn delete_program_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+) -> NoContentResponse {
+    if programs::Entity::delete_by_id(program_id)
+        .exec(&state.db)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::new_db_error("Something went wrong while deleting this program.", err)
+        })?
+        .rows_affected
+        == 0
+    {
+        return Err(SvmIndexerError::ItemNotFound(
+            "No such program found to delete".to_owned(),
+        ));
+    }
+    Ok(NoContent)
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(get_programs_handler).post(add_program_handler))
-        .route("/{program_id}", get(get_single_program_handler))
+        .route(
+            "/{program_id}",
+            get(get_single_program_handler).delete(delete_program_handler),
+        )
 }
