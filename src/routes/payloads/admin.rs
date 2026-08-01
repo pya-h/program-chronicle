@@ -21,3 +21,8 @@ pub struct AddProgramPayload {
     pub name: Option<String>,
     pub start_slot: Option<u64>,
 }
+
+#[derive(Deserialize)]
+pub struct GetSingleProgramPayload {
+    pub ignore_unknown_rpc: Option<bool> // In case rpc data failed loading, due to any reason
+}

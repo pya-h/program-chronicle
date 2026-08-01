@@ -6,15 +6,18 @@ use crate::{
     },
     db::entities::{programs, rpcs},
     routes::{
-        admin::rpcs::add_rpc, payloads::admin::AddProgramPayload,
-        responses::admin::ProgramWithRpcResponse,
+        admin::rpcs::add_rpc,
+        payloads::{
+            admin::{AddProgramPayload, GetSingleProgramPayload},
+            common::PaginationQuery,
+        },
+        responses::admin::{GetProgramsResponse, ProgramWithRpcResponse},
     },
 };
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    routing::get,
-    routing::post,
+    extract::{Path, Query, State},
+    routing::{get, post},
 };
 use sea_orm::{
     ActiveModelTrait,
@@ -95,6 +98,7 @@ async fn add_program_handler(
 async fn get_single_program_handler(
     State(state): State<AppState>,
     Path(program_id): Path<u16>,
+    Query(GetSingleProgramPayload { ignore_unknown_rpc }): Query<GetSingleProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     let possible_program = programs::Entity::find_by_id(program_id)
         .find_also_related(rpcs::Entity)
@@ -107,9 +111,15 @@ async fn get_single_program_handler(
             if let Some(rpc) = possible_rpc {
                 Ok(ApiResponse::ok(ProgramWithRpcResponse { program, rpc }))
             } else {
-                Err(SvmIndexerError::InternalError(String::from(
-                    "It seems there was a conflict while trying to fetch program's RPC info!",
-                )))
+                if let Some(unknown_rpc) = ignore_unknown_rpc
+                    && unknown_rpc
+                {
+                    Ok(ApiResponse::ok(ProgramWithRpcResponse::new_no_rpc(program)))
+                } else {
+                    Err(SvmIndexerError::InternalError(String::from(
+                        "It seems there was a conflict while trying to fetch program's RPC info!",
+                    )))
+                }
             }
         }
         _ => Err(SvmIndexerError::ItemNotFound(String::from(
@@ -118,6 +128,12 @@ async fn get_single_program_handler(
     }
 }
 
+async fn get_programs(
+    State(state): State<AppState>,
+    Query(pagination): Query<PaginationQuery>,
+) -> FinalResponse<GetProgramsResponse> {
+    todo!()
+}
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", post(add_program_handler))
