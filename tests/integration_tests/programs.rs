@@ -2,6 +2,20 @@ use serde_json::json;
 
 use crate::common::{reset_db, setup};
 
+fn address(idx: usize) -> &'static str {
+    const ADDRESSES: &[&str] = &[
+        "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P",
+        "9oFYVPXLVyv3YchXnULcVuwGcTggK5nC4VkqjyRmSuAx",
+        "11111111111111111111111111111111",
+        "So11111111111111111111111111111111111111112",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "SysvarC1ock11111111111111111111111111111111",
+        "Vote111111111111111111111111111111111111111",
+    ];
+    ADDRESSES[idx % ADDRESSES.len()]
+}
+
 async fn create_rpc(state: &crate::common::TestState, http_url: &str) -> u64 {
     state
         .authed_client
@@ -28,7 +42,7 @@ async fn add_program_with_rpc_id_happy() -> httpc_test::Result<()> {
             json!({
                 "rpc_id": rpc_id,
                 "name": "test-program",
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;
@@ -54,7 +68,7 @@ async fn add_program_with_rpc_url_creates_rpc() -> httpc_test::Result<()> {
                     "http_url": "https://new-rpc-for-program.example.com",
                     "ws_url": "wss://new-rpc-for-program.example.com"
                 },
-                "address": "9oFYVPXLVyv3YchXnULcVuwGcTggK5nC4VkqjyRmSuAx"
+                "address": address(1)
             }),
         )
         .await?;
@@ -75,7 +89,7 @@ async fn add_program_without_rpc_is_bad_request() -> httpc_test::Result<()> {
         .authed_client
         .do_post(
             "/admin/programs",
-            json!({"address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"}),
+            json!({"address": address(0)}),
         )
         .await?;
     assert_eq!(res.status(), 400);
@@ -111,7 +125,7 @@ async fn add_program_rpc_id_not_found() -> httpc_test::Result<()> {
             "/admin/programs",
             json!({
                 "rpc_id": 9999,
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;
@@ -149,7 +163,7 @@ async fn add_program_without_auth_is_unauthorized() -> httpc_test::Result<()> {
         .unauthed_client
         .do_post(
             "/admin/programs",
-            json!({"address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"}),
+            json!({"address": address(0)}),
         )
         .await?;
     assert_eq!(res.status(), 401);
@@ -169,10 +183,7 @@ async fn list_programs_with_pagination() -> httpc_test::Result<()> {
                 "/admin/programs",
                 json!({
                     "rpc_id": rpc_id,
-                    "address": format!(
-                        "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A{:02}",
-                        i
-                    )
+                    "address": address(i)
                 }),
             )
             .await?;
@@ -203,7 +214,7 @@ async fn get_single_program_and_not_found() -> httpc_test::Result<()> {
             "/admin/programs",
             json!({
                 "rpc_id": rpc_id,
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;
@@ -235,7 +246,7 @@ async fn update_program_happy() -> httpc_test::Result<()> {
             json!({
                 "rpc_id": rpc_id,
                 "name": "old-name",
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;
@@ -269,7 +280,7 @@ async fn update_program_no_fields_is_bad_request() -> httpc_test::Result<()> {
             "/admin/programs",
             json!({
                 "rpc_id": rpc_id,
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;
@@ -297,7 +308,7 @@ async fn update_program_invalid_address_is_bad_request() -> httpc_test::Result<(
             "/admin/programs",
             json!({
                 "rpc_id": rpc_id,
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;
@@ -328,7 +339,7 @@ async fn delete_program_happy() -> httpc_test::Result<()> {
             "/admin/programs",
             json!({
                 "rpc_id": rpc_id,
-                "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
+                "address": address(0)
             }),
         )
         .await?;

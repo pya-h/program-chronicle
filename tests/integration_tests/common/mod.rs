@@ -1,4 +1,5 @@
 use httpc_test::Client;
+use migration::MigratorTrait;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use tokio::sync::{Mutex, OnceCell};
 
@@ -13,6 +14,7 @@ pub struct TestState {
 pub async fn setup() -> &'static Mutex<TestState> {
     TEST_STATE
         .get_or_init(|| async {
+            dotenvy::dotenv().ok();
             let db_url =
                 std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
             let admin_passkey =
