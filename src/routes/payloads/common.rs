@@ -39,18 +39,18 @@ impl PaginationQuery {
         let paginator = query.paginate(db, per_page as u64);
 
         let total = paginator.num_items().await.map_err(|err| {
-            SvmIndexerError::new_db_error("Failed while fetching pagination info!", err)
+            SvmIndexerError::db_error("Failed while fetching pagination info!", err)
         })? as u16;
 
         let total_pages = paginator.num_pages().await.map_err(|err| {
-            SvmIndexerError::new_db_error("Failed while fetching pagination info!", err)
+            SvmIndexerError::db_error("Failed while fetching pagination info!", err)
         })? as u16;
 
         let items = paginator
             .fetch_page((page - 1) as u64)
             .await
             .map_err(|err| {
-                SvmIndexerError::new_db_error(
+                SvmIndexerError::db_error(
                     if let Some(msg) = specific_error_message {
                         msg
                     } else {

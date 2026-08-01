@@ -47,7 +47,7 @@ pub async fn add_rpc(
     };
 
     Ok(new_rpc.insert(&state.db).await.map_err(|err| {
-        SvmIndexerError::new_db_error(
+        SvmIndexerError::db_error(
             "Failed adding the new RPC! Maybe http_url or ws_url is already existing?",
             err,
         )
@@ -83,7 +83,7 @@ async fn get_rpcs_handler(
                 rpcs.load_many(programs::Entity, &state.db)
                     .await
                     .map_err(|err| {
-                        SvmIndexerError::new_db_error(
+                        SvmIndexerError::db_error(
                             "Failed populating and loading related programs data!",
                             err,
                         )
@@ -99,7 +99,7 @@ async fn get_rpcs_handler(
                 .find_with_related(programs::Entity)
                 .all(&state.db)
                 .await
-                .map_err(|err| SvmIndexerError::new_db_error("Failed fetching rpcs!", err))?;
+                .map_err(|err| SvmIndexerError::db_error("Failed fetching rpcs!", err))?;
             (result.len() as u16, 1_u16, result)
         }
     };
@@ -113,7 +113,7 @@ async fn get_single_rpc_handler(
     let possible_rpc = rpcs::Entity::find_by_id(rpc_id)
         .one(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed fetching the specific RPC!", err))?;
+        .map_err(|err| SvmIndexerError::db_error("Failed fetching the specific RPC!", err))?;
     match possible_rpc {
         Some(rpc) => {
             let programs = rpc
@@ -121,7 +121,7 @@ async fn get_single_rpc_handler(
                 .all(&state.db)
                 .await
                 .map_err(|err| {
-                    SvmIndexerError::new_db_error(
+                    SvmIndexerError::db_error(
                         "There was a problem while fetching related programs to this rpc!",
                         err,
                     )
@@ -154,7 +154,7 @@ async fn update_rpc_handler(
     if rpcs::Entity::find_by_id(rpc_id)
         .exists(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed accessing the target RPC!", err))?
+        .map_err(|err| SvmIndexerError::db_error("Failed accessing the target RPC!", err))?
     {
         return Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned()));
     }
@@ -166,7 +166,7 @@ async fn update_rpc_handler(
 
     Ok(ApiResponse::ok(
         updated_rpc.update(&state.db).await.map_err(|err| {
-            SvmIndexerError::new_db_error("Something went wrong while updating rpc info!", err)
+            SvmIndexerError::db_error("Something went wrong while updating rpc info!", err)
         })?,
     ))
 }
@@ -178,7 +178,7 @@ async fn delete_rpc_handler(
     if rpcs::Entity::delete_by_id(rpc_id)
         .exec(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::new_db_error(
+        .map_err(|err| SvmIndexerError::db_error(
             "Failed to delete this RPC! Make sure no program is tied to this RPC before removal.",
             err
         ))?
