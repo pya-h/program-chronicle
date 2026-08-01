@@ -4,7 +4,10 @@ use crate::{
         response::{ApiResponse, FinalResponse, NoContentResponse},
         state::AppState,
     },
-    db::entities::{programs, rpcs},
+    db::entities::{
+        programs,
+        rpcs::{self, Model as RpcModel},
+    },
     routes::{
         admin::rpcs::add_rpc,
         payloads::{
@@ -15,6 +18,7 @@ use crate::{
         },
         responses::admin::{GetProgramsResponse, ProgramWithRpcResponse},
     },
+    unknown_rpc,
 };
 use axum::{
     Json, Router,
@@ -24,8 +28,8 @@ use axum::{
 };
 use sea_orm::{
     ActiveModelTrait,
-    ActiveValue::{NotSet, Set},
-    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, SelectExt,
+    ActiveValue::{NotSet, Set, Unchanged},
+    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QueryOrder, SelectExt,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -172,8 +176,8 @@ async fn get_programs_handler(
 
 async fn update_program_handler(
     State(state): State<AppState>,
-    Json(payload): Json<UpdateProgramPayload>,
     Path(program_id): Path<u16>,
+    Json(payload): Json<UpdateProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     if payload.is_empty() {
         return Err(SvmIndexerError::BadInput(String::from(
@@ -192,7 +196,68 @@ async fn update_program_handler(
             "Program not found!".to_owned(),
         ));
     }
-    todo!()
+    let address = if let Some(address) = payload.address {
+        Set(address
+            .parse::<Pubkey>()
+            .map_err(|_| {
+                SvmIndexerError::InvalidPublicKey(
+                    "Provided address is not a standard solana address!".to_owned(),
+                )
+            })?
+            .to_bytes()
+            .to_vec())
+    } else {
+        NotSet
+    };
+    let changed_rpc = get_or_add_rpc(&state, &payload.rpc_id, &payload.rpc_url).await?;
+    let program = programs::ActiveModel {
+        id: Unchanged(program_id as i32),
+        address,
+        name: payload.name.map_or(NotSet, |name| {
+            let new_name = name.trim().to_owned();
+            if new_name.is_empty() {
+                Set(None) // User wants to clear previousely set name.
+            } else {
+                Set(Some(new_name))
+            }
+        }),
+        rpc_id: changed_rpc.clone().map_or(NotSet, |nr| Set(nr.id)),
+        ..Default::default()
+    }
+    .update(&state.db)
+    .await
+    .map_err(|err| SvmIndexerError::new_db_error("Failed updating the program data!", err))?;
+
+    if let Some(rpc) = changed_rpc {
+        return Ok(ApiResponse::ok(ProgramWithRpcResponse { program, rpc }));
+    }
+    let rpc_loaded = program.find_related(rpcs::Entity).one(&state.db).await;
+    // Since the update action has already happened successfully, throwing error status doesnt seem rational
+    let final_rpc_id = (&program).rpc_id.clone(); // prevent move errors on error handling section below!
+    Ok(ApiResponse::ok(ProgramWithRpcResponse {
+        program,
+        rpc: if let Ok(rpc_maybe) = &rpc_loaded
+            && let Some(rpc) = rpc_maybe
+        {
+            rpc.clone()
+        } else {
+            if let Err(err) = &rpc_loaded {
+                tracing::error!(
+                    error = %err,
+                    message = "Updating program data was successful, but loading rpc info failed!",
+                    program_id = %program_id,
+                    rpc_id = %final_rpc_id
+                );
+            } else {
+                tracing::error!(
+                    message = "Updating program data was successful, but rpc not found!",
+                    program_id = %program_id,
+                    rpc_id = %final_rpc_id
+                );
+            }
+            unknown_rpc!()
+        },
+    }))
 }
 
 async fn delete_program_handler(
@@ -220,6 +285,8 @@ pub fn routes() -> Router<AppState> {
         .route("/", get(get_programs_handler).post(add_program_handler))
         .route(
             "/{program_id}",
-            get(get_single_program_handler).delete(delete_program_handler),
+            get(get_single_program_handler)
+                .patch(update_program_handler)
+                .delete(delete_program_handler),
         )
 }
