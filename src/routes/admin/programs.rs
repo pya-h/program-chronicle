@@ -1,14 +1,28 @@
 use crate::{
-    core::{error::SvmIndexerError, response::FinalResponse, state::AppState}, db::entities::rpcs, routes::{admin::rpcs::add_rpc, payloads::admin::AddProgramPayload, responses::admin::ProgramWithRpcResponse},
+    core::{
+        error::SvmIndexerError,
+        response::{ApiResponse, FinalResponse},
+        state::AppState,
+    },
+    db::entities::{programs, rpcs},
+    routes::{
+        admin::rpcs::add_rpc, payloads::admin::AddProgramPayload,
+        responses::admin::ProgramWithRpcResponse,
+    },
 };
-use axum::{Json, Router, extract::State};
-use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
+use axum::{Json, Router, extract::State, routing::post};
+use sea_orm::{
+    ActiveModelTrait,
+    ActiveValue::{NotSet, Set},
+    ColumnTrait, Condition, EntityTrait, QueryFilter,
+};
+use solana_sdk::pubkey::Pubkey;
 
 async fn add_program_handler(
     State(state): State<AppState>,
     Json(payload): Json<AddProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
-    let rpc = if let Some(rpc_id) = payload.rcp_id {
+    let rpc = if let Some(rpc_id) = payload.rpc_id {
         let rpc = rpcs::Entity::find_by_id(rpc_id)
             .one(&state.db)
             .await
@@ -41,16 +55,35 @@ async fn add_program_handler(
 
         match maybe_found_rpc {
             Some(found_rpc) => found_rpc,
-            _ => add_rpc(&state, rpc.http_url, rpc.ws_url).await?
+            _ => add_rpc(&state, rpc.http_url, rpc.ws_url).await?,
         }
     } else {
         return Err(SvmIndexerError::BadInput(String::from(
             "You must either specify the rpc_id or rpc url!",
         )));
     };
-    todo!()
+    let address = payload.address.parse::<Pubkey>().map_err(|_| {
+        SvmIndexerError::InvalidPublicKey(String::from(
+            "Provided address is not a standard solana address!",
+        ))
+    })?;
+    let program = programs::ActiveModel {
+        rpc_id: Set(rpc.id),
+        address: Set(address.to_bytes().to_vec()),
+        last_processed_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
+        name: payload.name.map_or(NotSet, |name| Set(Some(name))),
+        ..Default::default()
+    };
+
+    Ok(ApiResponse::created(ProgramWithRpcResponse {
+        program: program.insert(&state.db).await.map_err(|err| {
+            SvmIndexerError::new_db_error(r#"Adding the new program failed at last step! 
+                Maybe you've already registered this program on this rpc?"#, err)
+        })?,
+        rpc,
+    }))
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
+    Router::new().route("/", post(add_program_handler))
 }

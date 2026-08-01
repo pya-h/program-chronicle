@@ -44,10 +44,12 @@ pub async fn add_rpc(
         ..Default::default()
     };
 
-    Ok(new_rpc
-        .insert(&state.db)
-        .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed adding the new RPC!", err))?)
+    Ok(new_rpc.insert(&state.db).await.map_err(|err| {
+        SvmIndexerError::new_db_error(
+            "Failed adding the new RPC! Maybe http_url or ws_url is already existing?",
+            err,
+        )
+    })?)
 }
 
 async fn add_rpc_handler(

@@ -15,7 +15,7 @@ pub struct UpdateRpcPayload {
 
 #[derive(Deserialize)]
 pub struct AddProgramPayload {
-    pub rcp_id: Option<u16>,
+    pub rpc_id: Option<u16>,
     pub rpc_url: Option<AddRpcPayload>,
     pub address: String,
     pub name: Option<String>,

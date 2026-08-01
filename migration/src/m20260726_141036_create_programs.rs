@@ -38,6 +38,7 @@ impl MigrationTrait for Migration {
                         ColumnDef::new(Programs::Id)
                             .primary_key()
                             .integer()
+                            .auto_increment()
                             .not_null(),
                     )
                     .col(ColumnDef::new(Programs::RpcId).integer().not_null())
