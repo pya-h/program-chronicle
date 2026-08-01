@@ -24,3 +24,5 @@ solana-sdk="4.1.0"
 
 [dev-dependencies]
 httpc-test = "0.1.10"
+migration = { path = "migration" }
+reqwest = "0.12"

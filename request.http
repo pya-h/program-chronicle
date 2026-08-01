@@ -8,14 +8,16 @@
 GET {{baseUrl}}/
 
 
+### ---------- RPCs ----------
+
 ### Add RPC with explicit http and ws URLs
 POST {{baseUrl}}/admin/rpcs
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "http_url": "https://api.mainnet-beta.solanax.com",
-  "ws_url": "wss://api.mainnet-beta.solanax.com"
+  "http_url": "https://api.mainnet-beta.solana.com",
+  "ws_url": "wss://api.mainnet-beta.solana.com"
 }
 
 
@@ -58,74 +60,103 @@ Content-Type: application/json
   "http_url": "https://example.com"
 }
 
-### Add RPC without protocol prefix (https:// auto-added)
-GET {{baseUrl}}/admin/rpcs/3
+
+### List all RPCs
+GET {{baseUrl}}/admin/rpcs
 x-security: {{adminPasskey}}
-Content-Type: application/json
 
-### Get specific rpc
-GET {{baseUrl}}/admin/rpcs?page=3&per_page=3
+
+### List RPCs paginated
+GET {{baseUrl}}/admin/rpcs?page=1&per_page=3
 x-security: {{adminPasskey}}
-Content-Type: application/json
 
 
-### Update rpc data
+### Get single RPC (replace 1 with an existing id)
+GET {{baseUrl}}/admin/rpcs/1
+x-security: {{adminPasskey}}
+
+
+### Update RPC (replace 1 with an existing id)
 PATCH {{baseUrl}}/admin/rpcs/1
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "http_url": "example.com"
+  "http_url": "https://updated.example.com"
 }
 
-### Delete specific rpc data
-DELETE {{baseUrl}}/admin/rpcs/12
-x-security: {{adminPasskey}}
-Content-Type: application/json
 
-### Add new program and new rpc
+### Delete RPC (replace 1 with an existing id)
+DELETE {{baseUrl}}/admin/rpcs/1
+x-security: {{adminPasskey}}
+
+
+### ---------- Programs ----------
+
+### Add program with a new RPC (rpc_url)
 POST {{baseUrl}}/admin/programs
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "rpc_url": {"http_url": "https://new_sprsogram.com", "ws_url": "wss://swahtever.com"},
-  "name": "dekant",
+  "rpc_url": {
+    "http_url": "https://new-program-rpc.com",
+    "ws_url": "wss://new-program-rpc.com"
+  },
+  "name": "my-program",
   "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
 }
 
-### Add new program with previous rpc
+
+### Add program tied to an existing RPC (replace rpc_id)
 POST {{baseUrl}}/admin/programs
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "rpc_id": 12,
-  "name": "dekant",
+  "rpc_id": 1,
+  "name": "my-program",
   "address": "9oFYVPXLVyv3YchXnULcVuwGcTggK5nC4VkqjyRmSuAx"
 }
 
-### Get all programs
-GET {{baseUrl}}/admin/programs?page=4&per_page=2
+
+### Add program - invalid address (should return 400)
+POST {{baseUrl}}/admin/programs
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
-### Get programs paginated
+{
+  "rpc_id": 1,
+  "address": "not-a-valid-solana-address"
+}
+
+
+### List all programs
+GET {{baseUrl}}/admin/programs
+x-security: {{adminPasskey}}
+
+
+### List programs paginated
 GET {{baseUrl}}/admin/programs?page=1&per_page=4
 x-security: {{adminPasskey}}
-Content-Type: application/json
 
-### Delete specific rpc data
-DELETE {{baseUrl}}/admin/programs/7
+
+### Get single program (replace 1 with an existing id)
+GET {{baseUrl}}/admin/programs/1
 x-security: {{adminPasskey}}
-Content-Type: application/json
 
-### Update rpc data
+
+### Update program (replace 1 with an existing id)
 PATCH {{baseUrl}}/admin/programs/1
 x-security: {{adminPasskey}}
 Content-Type: application/json
 
 {
-  "rpc_id": 10,
+  "rpc_id": 1,
   "address": "4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P"
 }
+
+
+### Delete program (replace 1 with an existing id)
+DELETE {{baseUrl}}/admin/programs/1
+x-security: {{adminPasskey}}
