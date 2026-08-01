@@ -22,7 +22,7 @@ use sea_orm::ModelTrait;
 use sea_orm::QueryOrder;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
-async fn add_rpc(
+pub async fn add_rpc(
     state: &AppState,
     http_url: String,
     ws_url: Option<String>,

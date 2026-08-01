@@ -28,3 +28,12 @@ impl GetRpcsResponse {
         }
     }
 }
+
+
+#[derive(Serialize)]
+pub struct ProgramWithRpcResponse {
+    #[serde(flatten)]
+    pub program: ProgramModel,
+
+    pub rpc: RpcModel,
+}
