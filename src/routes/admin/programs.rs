@@ -10,11 +10,16 @@ use crate::{
         responses::admin::ProgramWithRpcResponse,
     },
 };
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    routing::get,
+    routing::post,
+};
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::{NotSet, Set},
-    ColumnTrait, Condition, EntityTrait, QueryFilter,
+    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -77,13 +82,44 @@ async fn add_program_handler(
 
     Ok(ApiResponse::created(ProgramWithRpcResponse {
         program: program.insert(&state.db).await.map_err(|err| {
-            SvmIndexerError::new_db_error(r#"Adding the new program failed at last step! 
-                Maybe you've already registered this program on this rpc?"#, err)
+            SvmIndexerError::new_db_error(
+                r#"Adding the new program failed at last step! 
+                Maybe you've already registered this program on this rpc?"#,
+                err,
+            )
         })?,
         rpc,
     }))
 }
 
+async fn get_single_program_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+) -> FinalResponse<ProgramWithRpcResponse> {
+    let possible_program = programs::Entity::find_by_id(program_id)
+        .find_also_related(rpcs::Entity)
+        .one(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::new_db_error("Failed fetching program info!", err))?;
+
+    match possible_program {
+        Some((program, possible_rpc)) => {
+            if let Some(rpc) = possible_rpc {
+                Ok(ApiResponse::ok(ProgramWithRpcResponse { program, rpc }))
+            } else {
+                Err(SvmIndexerError::InternalError(String::from(
+                    "It seems there was a conflict while trying to fetch program's RPC info!",
+                )))
+            }
+        }
+        _ => Err(SvmIndexerError::ItemNotFound(String::from(
+            "No such program!",
+        ))),
+    }
+}
+
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/", post(add_program_handler))
+    Router::new()
+        .route("/", post(add_program_handler))
+        .route("/{program_id}", get(get_single_program_handler))
 }

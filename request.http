@@ -104,3 +104,8 @@ Content-Type: application/json
   "name": "dekant",
   "address": "9oFYVPXLVyv3YchXnULcVuwGcTggK5nC4VkqjyRmSuAx"
 }
+
+### Get specific program
+GET {{baseUrl}}/admin/programs/4
+x-security: {{adminPasskey}}
+Content-Type: application/json
