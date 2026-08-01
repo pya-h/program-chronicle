@@ -17,12 +17,12 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::get,
 };
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::{NotSet, Set},
-    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter,
+    ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -128,14 +128,38 @@ async fn get_single_program_handler(
     }
 }
 
-async fn get_programs(
+async fn get_programs_handler(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationQuery>,
 ) -> FinalResponse<GetProgramsResponse> {
-    todo!()
+    let programs_query = programs::Entity::find()
+        .find_also_related(rpcs::Entity)
+        .order_by_asc(programs::Column::Id);
+
+    let (programs, total, pages) = match (pagination.per_page, pagination.page) {
+        (Some(_), Some(_)) => {
+            pagination
+                .paginate(programs_query, &state.db, Some("Failed fetching programs!"))
+                .await?
+        }
+        _ => {
+            let programs = programs_query
+                .all(&state.db)
+                .await
+                .map_err(|err| SvmIndexerError::new_db_error("Failed fetching programs!", err))?;
+            let total = programs.len() as u16;
+            (programs, total, 1_u16)
+        }
+    };
+    Ok(ApiResponse::ok(GetProgramsResponse::new(
+        programs,
+        total as u16,
+        pages,
+    )))
 }
+
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/", post(add_program_handler))
+        .route("/", get(get_programs_handler).post(add_program_handler))
         .route("/{program_id}", get(get_single_program_handler))
 }

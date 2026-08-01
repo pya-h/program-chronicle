@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, EntityTrait, PaginatorTrait};
+use sea_orm::{DatabaseConnection, PaginatorTrait, SelectorTrait};
 use serde::Deserialize;
 
 use crate::core::error::SvmIndexerError;
@@ -10,15 +10,21 @@ pub struct PaginationQuery {
 }
 
 impl PaginationQuery {
-    pub async fn paginate<E>(
+    pub async fn paginate<'db, Q>(
         &self,
-        query: sea_orm::Select<E>,
-        db: &DatabaseConnection,
+        query: Q,
+        db: &'db DatabaseConnection,
         specific_error_message: Option<&str>,
-    ) -> Result<(Vec<E::Model>, u16, u16), SvmIndexerError>
+    ) -> Result<
+        (
+            Vec<<<Q as PaginatorTrait<'db, DatabaseConnection>>::Selector as SelectorTrait>::Item>,
+            u16,
+            u16,
+        ),
+        SvmIndexerError,
+    >
     where
-        E: EntityTrait,
-        E::Model: sea_orm::FromQueryResult + Send + Sync,
+        Q: PaginatorTrait<'db, DatabaseConnection>,
     {
         let page = if let Some(page) = self.page {
             page.max(1)
