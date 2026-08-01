@@ -43,7 +43,11 @@ async fn get_or_add_rpc(
             .one(&state.db)
             .await
             .map_err(|err| {
-                SvmIndexerError::new_db_error("Failre when trying to fetch RPC info!", err)
+                SvmIndexerError::db_error_with_id(
+                    "Failre when trying to fetch RPC info!",
+                    err,
+                    rpc_id as u64,
+                )
             })?;
         let Some(rpc) = rpc else {
             return Err(SvmIndexerError::ItemNotFound(String::from(
@@ -62,10 +66,7 @@ async fn get_or_add_rpc(
             .one(&state.db)
             .await
             .map_err(|err| {
-                SvmIndexerError::new_db_error(
-                    "Something went wrong while checking the rpc info!",
-                    err,
-                ) // This is not the same with not finding the element! this may be caused by an error, 
+                SvmIndexerError::db_error("Something went wrong while checking the rpc info!", err) // This is not the same with not finding the element! this may be caused by an error, 
                 // and the rpc may actually existed in db! So proceeding despite the error is not a good idea!
             })?;
 
@@ -102,9 +103,10 @@ async fn add_program_handler(
 
     Ok(ApiResponse::created(ProgramWithRpcResponse {
         program: program.insert(&state.db).await.map_err(|err| {
-            SvmIndexerError::new_db_error(
+            SvmIndexerError::db_error_with_id(
                 "Adding the new program failed at last step! Maybe the program already registered on this rpc?",
                 err,
+                rpc.id as u64
             )
         })?,
         rpc,
@@ -120,7 +122,13 @@ async fn get_single_program_handler(
         .find_also_related(rpcs::Entity)
         .one(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed fetching program info!", err))?;
+        .map_err(|err| {
+            SvmIndexerError::db_error_with_id(
+                "Failed fetching program info!",
+                err,
+                program_id as u64,
+            )
+        })?;
 
     match possible_program {
         Some((program, possible_rpc)) => {
@@ -162,7 +170,7 @@ async fn get_programs_handler(
             let programs = programs_query
                 .all(&state.db)
                 .await
-                .map_err(|err| SvmIndexerError::new_db_error("Failed fetching programs!", err))?;
+                .map_err(|err| SvmIndexerError::db_error("Failed fetching programs!", err))?;
             let total = programs.len() as u16;
             (programs, total, 1_u16)
         }
@@ -189,7 +197,11 @@ async fn update_program_handler(
         .exists(&state.db)
         .await
         .map_err(|err| {
-            SvmIndexerError::new_db_error("Failed accessing the target program data!", err)
+            SvmIndexerError::db_error_with_id(
+                "Failed accessing the target program data!",
+                err,
+                program_id as u64,
+            )
         })?
     {
         return Err(SvmIndexerError::ItemNotFound(
@@ -226,7 +238,13 @@ async fn update_program_handler(
     }
     .update(&state.db)
     .await
-    .map_err(|err| SvmIndexerError::new_db_error("Failed updating the program data!", err))?;
+    .map_err(|err| {
+        SvmIndexerError::db_error_with_id(
+            "Failed updating the program data!",
+            err,
+            program_id as u64,
+        )
+    })?;
 
     if let Some(rpc) = changed_rpc {
         return Ok(ApiResponse::ok(ProgramWithRpcResponse { program, rpc }));
@@ -268,7 +286,11 @@ async fn delete_program_handler(
         .exec(&state.db)
         .await
         .map_err(|err| {
-            SvmIndexerError::new_db_error("Something went wrong while deleting this program.", err)
+            SvmIndexerError::db_error_with_id(
+                "Something went wrong while deleting this program.",
+                err,
+                program_id as u64,
+            )
         })?
         .rows_affected
         == 0
