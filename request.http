@@ -79,7 +79,7 @@ Content-Type: application/json
 }
 
 ### Delete specific rpc data
-DELETE {{baseUrl}}/admin/rpcs/1
+DELETE {{baseUrl}}/admin/rpcs/12
 x-security: {{adminPasskey}}
 Content-Type: application/json
 

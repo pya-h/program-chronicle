@@ -86,8 +86,7 @@ async fn add_program_handler(
     Ok(ApiResponse::created(ProgramWithRpcResponse {
         program: program.insert(&state.db).await.map_err(|err| {
             SvmIndexerError::new_db_error(
-                r#"Adding the new program failed at last step! 
-                Maybe you've already registered this program on this rpc?"#,
+                "Adding the new program failed at last step! Maybe the program already registered on this rpc?",
                 err,
             )
         })?,

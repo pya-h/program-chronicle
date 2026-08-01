@@ -178,7 +178,10 @@ async fn delete_rpc_handler(
     if rpcs::Entity::delete_by_id(rpc_id)
         .exec(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::new_db_error("Failed to delete the specified RPC!", err))?
+        .map_err(|err| SvmIndexerError::new_db_error(
+            "Failed to delete this RPC! Make sure no programs are tied to this RPC before removal.",
+            err
+        ))?
         .rows_affected
         == 0
     {
