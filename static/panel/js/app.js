@@ -18,6 +18,88 @@ document.addEventListener('DOMContentLoaded', () => {
     let overlay = null;
     let isUnlocking = false;
 
+    // Persisted appearance preferences (theme / accent / animations), applied to
+    // the document root and reflected into the Settings controls when present.
+    const Prefs = (() => {
+        const KEYS = { theme: 'umbra-theme', accent: 'umbra-accent', anim: 'umbra-anim' };
+        const DEFAULTS = { theme: 'dark', accent: 'blue', anim: 'on' };
+        const ACCENTS = {
+            blue:    { rgb: '59, 130, 246',  c400: '#60a5fa', c500: '#3b82f6', c600: '#2563eb', c700: '#1d4ed8' },
+            violet:  { rgb: '139, 92, 246',  c400: '#a78bfa', c500: '#8b5cf6', c600: '#7c3aed', c700: '#6d28d9' },
+            emerald: { rgb: '16, 185, 129',  c400: '#34d399', c500: '#10b981', c600: '#059669', c700: '#047857' },
+            rose:    { rgb: '244, 63, 94',   c400: '#fb7185', c500: '#f43f5e', c600: '#e11d48', c700: '#be123c' },
+            amber:   { rgb: '245, 158, 11',  c400: '#fbbf24', c500: '#f59e0b', c600: '#d97706', c700: '#b45309' },
+            cyan:    { rgb: '6, 182, 212',   c400: '#22d3ee', c500: '#06b6d4', c600: '#0891b2', c700: '#0e7490' }
+        };
+        const root = document.documentElement;
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+        const get = (k) => localStorage.getItem(KEYS[k]) || DEFAULTS[k];
+
+        function applyTheme() {
+            const pref = get('theme');
+            root.setAttribute('data-theme', pref === 'system' ? (media.matches ? 'dark' : 'light') : pref);
+        }
+
+        function applyAccent() {
+            const a = ACCENTS[get('accent')] || ACCENTS.blue;
+            root.style.setProperty('--accent-rgb', a.rgb);
+            root.style.setProperty('--accent-400', a.c400);
+            root.style.setProperty('--accent-500', a.c500);
+            root.style.setProperty('--accent-600', a.c600);
+            root.style.setProperty('--accent-700', a.c700);
+        }
+
+        function applyAnim() {
+            root.classList.toggle('no-anim', get('anim') === 'off');
+        }
+
+        function applyAll() { applyTheme(); applyAccent(); applyAnim(); }
+
+        function reflect() {
+            const panel = document.getElementById('settings-panel');
+            if (!panel) return;
+            panel.querySelectorAll('[data-set-theme]').forEach(b =>
+                b.classList.toggle('active', b.dataset.setTheme === get('theme')));
+            panel.querySelectorAll('[data-set-accent]').forEach(b =>
+                b.classList.toggle('active', b.dataset.setAccent === get('accent')));
+            const sw = panel.querySelector('[data-toggle-anim]');
+            if (sw) {
+                const on = get('anim') !== 'off';
+                sw.classList.toggle('on', on);
+                sw.setAttribute('aria-checked', String(on));
+            }
+        }
+
+        function setTheme(v) { localStorage.setItem(KEYS.theme, v); applyTheme(); reflect(); }
+        function setAccent(v) { localStorage.setItem(KEYS.accent, v); applyAccent(); reflect(); }
+        function setAnim(on) { localStorage.setItem(KEYS.anim, on ? 'on' : 'off'); applyAnim(); reflect(); }
+        function toggleTheme() { setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
+        function reset() { Object.values(KEYS).forEach(k => localStorage.removeItem(k)); applyAll(); reflect(); }
+
+        media.addEventListener('change', () => { if (get('theme') === 'system') applyTheme(); });
+
+        return { setTheme, setAccent, setAnim, toggleTheme, reset, applyAll, reflect };
+    })();
+
+    Prefs.applyAll();
+
+    document.body.addEventListener('click', (e) => {
+        const themeBtn = e.target.closest('[data-set-theme]');
+        if (themeBtn) return Prefs.setTheme(themeBtn.dataset.setTheme);
+
+        const accentBtn = e.target.closest('[data-set-accent]');
+        if (accentBtn) return Prefs.setAccent(accentBtn.dataset.setAccent);
+
+        const animBtn = e.target.closest('[data-toggle-anim]');
+        if (animBtn) return Prefs.setAnim(!animBtn.classList.contains('on'));
+
+        const resetBtn = e.target.closest('[data-reset-prefs]');
+        if (resetBtn) {
+            Prefs.reset();
+            showToast('Preferences reset to defaults.', 'info');
+        }
+    });
+
     setTimeout(() => {
         appLoader.classList.add('hidden');
         loginOverlay?.classList.remove('hidden');
@@ -184,18 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     sidebarToggle.addEventListener('click', toggleSidebar);
 
-    function applyTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('umbra-theme', theme);
-    }
-
-    themeToggle.addEventListener('click', () => {
-        const current = document.documentElement.getAttribute('data-theme');
-        applyTheme(current === 'dark' ? 'light' : 'dark');
-    });
-
-    const savedTheme = localStorage.getItem('umbra-theme');
-    if (savedTheme) applyTheme(savedTheme);
+    themeToggle.addEventListener('click', () => Prefs.toggleTheme());
 
     function setActiveNav(target) {
         navItems.forEach(item => item.classList.remove('active'));
@@ -214,6 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
+        Prefs.reflect();
     });
 
     document.body.addEventListener('htmx:sendError', (evt) => {
@@ -240,7 +312,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.umbra = {
         toast: showToast,
-        theme: applyTheme,
+        prefs: Prefs,
         sidebar: { open: openSidebar, close: closeSidebar, toggle: toggleSidebar }
     };
 
