@@ -10,7 +10,7 @@ async fn get_root_handler(State(_state): State<AppState>) -> FinalResponse<Value
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/", get(get_root_handler))
+    Router::new().route("/health", get(get_root_handler))
 }
 
 pub async fn not_found_handler() -> FinalResponse<Value> {

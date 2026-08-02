@@ -10,6 +10,7 @@ members = [".", "migration"]
 axum = "0.8.9"
 tokio = { version = "1.53.1", features = ["full"]}
 dotenvy = "0.15"
+tower-http = { version = "0.6", features = ["fs"] }
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"]}
 serde_json = "1.0.151"
