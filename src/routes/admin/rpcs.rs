@@ -171,6 +171,7 @@ async fn update_rpc_handler(
         id: Set(rpc_id as i32),
         http_url: new_http_url.map_or(NotSet, |hu| Set(hu)),
         ws_url: new_ws_url.map_or(NotSet, |wu| Set(wu)),
+        ..Default::default()
     };
 
     Ok(ApiResponse::ok(

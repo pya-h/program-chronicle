@@ -21,6 +21,7 @@ sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustl
 subtle = "2.6.1"
 url = "2.5.8"
 solana-sdk="4.1.0"
+chrono = "0.4.45"
 
 [dev-dependencies]
 httpc-test = "0.1.10"
