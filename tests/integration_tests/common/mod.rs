@@ -61,18 +61,13 @@ fn test_database_url() -> String {
     url.to_string()
 }
 
-/// Ensure the test database exists and is reachable, creating it via the
-/// `postgres` maintenance database if necessary.
 async fn ensure_test_database(test_url: &str) {
-    // Fast path: the database already exists and is reachable.
-    // We must execute a query because Database::connect creates a lazy pool.
     if let Ok(db) = Database::connect(test_url).await {
         if db.execute_unprepared("SELECT 1").await.is_ok() {
             return;
         }
     }
 
-    // Slow path: create it via the maintenance database if it doesn't exist.
     let url =
         Url::parse(test_url).expect("test database URL should be valid because we just built it");
 
@@ -92,8 +87,6 @@ async fn ensure_test_database(test_url: &str) {
         ))
         .await
     {
-        // Ignore "database already exists" (SQLSTATE 42P04) so concurrent or
-        // re-runs don't panic.
         let err_str = err.to_string();
         if !err_str.contains("42P04") && !err_str.contains("already exists") {
             panic!("failed to create test database: {err}");
