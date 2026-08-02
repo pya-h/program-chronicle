@@ -1,7 +1,5 @@
 use std::sync::OnceLock;
 use std::time::Duration;
-
-use chrono::{DateTime, Utc};
 use httpc_test::Client;
 use migration::MigratorTrait;
 use sea_orm::{ConnectOptions, ConnectionTrait, Database};
@@ -168,9 +166,6 @@ pub fn server() -> &'static ServerInfo {
 
 pub async fn reset_db() {
     dotenvy::dotenv().ok();
-    // Force the server (and therefore the test database + migrations) to be
-    // initialized before we try to delete anything. Without this, the first
-    // test could run reset_db() against a database that has not been created yet.
     let _ = server();
 
     let db_url = test_database_url();
@@ -182,7 +177,7 @@ pub async fn reset_db() {
         .expect("failed to reset test tables");
 }
 
-pub fn parse_datetime(value: &Value) -> DateTime<Utc> {
+pub fn parse_datetime(value: &Value) -> chrono::NaiveDateTime {
     value
         .as_str()
         .expect("expected a datetime string")
