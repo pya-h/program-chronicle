@@ -8,7 +8,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginSubmit = document.getElementById('login-submit');
     const loginFeedback = document.getElementById('login-feedback');
     const appShell = document.getElementById('app-shell');
-    const mainContent = document.getElementById('main-content');
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const themeToggle = document.getElementById('theme-toggle');
@@ -19,14 +18,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let overlay = null;
     let isUnlocking = false;
 
-    // Reveal the login gate after loader
     setTimeout(() => {
         appLoader.classList.add('hidden');
         loginOverlay?.classList.remove('hidden');
         passkeyInput?.focus();
     }, 400);
 
-    // Passkey visibility toggle
     passkeyToggle?.addEventListener('click', () => {
         const isPassword = passkeyInput.type === 'password';
         passkeyInput.type = isPassword ? 'text' : 'password';
@@ -34,22 +31,16 @@ document.addEventListener('DOMContentLoaded', () => {
         passkeyToggle.setAttribute('aria-label', isPassword ? 'Hide passkey' : 'Show passkey');
     });
 
-    // Inject x-security header on all admin requests
     document.body.addEventListener('htmx:configRequest', (evt) => {
         if (!evt.detail.path?.startsWith('/admin')) return;
-
         const passkey = passkeyInput?.value || sessionStorage.getItem('umbra-admin-passkey');
-        if (passkey) {
-            evt.detail.headers['x-security'] = passkey;
-        }
+        if (passkey) evt.detail.headers['x-security'] = passkey;
     });
 
-    // Handle login result
     document.body.addEventListener('htmx:afterRequest', (evt) => {
         if (evt.detail.requestConfig.path !== '/admin') return;
 
         setLoading(false);
-
         const status = evt.detail.xhr.status;
 
         if (status === 200) {
@@ -59,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (status === 401) {
             showLoginError('Invalid passkey. Please try again.');
         } else if (status === 404 && tryDemoUnlock()) {
-            // static preview fallback: endpoint not found, demo passkey unlocks locally
+            // Static preview: no Rust server, fall back to the demo passkey.
         } else {
             showLoginError('Could not validate passkey. Please try again later.');
         }
@@ -67,33 +58,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.body.addEventListener('htmx:sendError', (evt) => {
         if (evt.detail.requestConfig.path !== '/admin') return;
-
         setLoading(false);
-
-        if (tryDemoUnlock()) {
-            // static preview fallback: network error, demo passkey unlocks locally
-        } else {
+        if (!tryDemoUnlock()) {
             showLoginError('Could not reach the admin endpoint. Is the server running?');
         }
     });
 
     function tryDemoUnlock() {
         if (passkeyInput?.value === 'umbra') {
-            showLoginFeedback('Demo mode: no server detected, unlocking locally.', 'info');
+            showLoginFeedback('Demo mode: no server detected, unlocking locally.');
             setTimeout(unlockDashboard, 400);
             return true;
         }
         return false;
     }
 
-    // Auto-unlock if a passkey is already in sessionStorage for this browser session
     function autoUnlockFromSession() {
         const savedPasskey = sessionStorage.getItem('umbra-admin-passkey');
         if (!savedPasskey || !passkeyInput) return;
 
         passkeyInput.value = savedPasskey;
         setLoading(true);
-
         htmx.ajax('GET', '/admin', {
             swap: 'none',
             headers: { 'x-security': savedPasskey }
@@ -113,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loginFeedback.textContent = message;
         loginFeedback.classList.add('visible');
         loginCard.classList.remove('shake');
-        void loginCard.offsetWidth; // reflow
+        void loginCard.offsetWidth; // reflow so the shake animation can replay
         loginCard.classList.add('shake');
     }
 
@@ -127,41 +112,49 @@ document.addEventListener('DOMContentLoaded', () => {
         loginFeedback?.classList.remove('visible');
     }
 
-    // Unlock animation: login dissolves, dashboard reveals
+    // Lock-screen handoff: reveal the shell behind the gate, then slide the gate
+    // straight down off-screen to uncover the dashboard.
     function unlockDashboard() {
         if (isUnlocking) return;
         isUnlocking = true;
-
         clearLoginFeedback();
-        loginOverlay?.classList.add('leaving');
 
-        // Prepare shell behind the overlay so the reveal is immediate
         appShell.classList.remove('hidden');
         appShell.classList.add('revealing');
 
-        setTimeout(() => {
+        requestAnimationFrame(() => loginOverlay?.classList.add('leaving'));
+
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+
             loginOverlay?.classList.add('hidden');
             loginOverlay?.classList.remove('leaving');
+            appShell.classList.remove('revealing');
 
-            // Load the dashboard fragment into the main content area
             htmx.ajax('GET', 'fragments/dashboard.html', {
                 target: '#main-content',
                 swap: 'innerHTML transition:true',
                 indicator: '#content-loader'
             });
-
             showToast('Welcome to the Umbra SVM Indexer admin panel.', 'success', 4000);
-        }, 500);
+        };
+
+        loginOverlay?.addEventListener('transitionend', function handler(e) {
+            if (e.propertyName !== 'transform') return;
+            loginOverlay.removeEventListener('transitionend', handler);
+            finish();
+        });
+        setTimeout(finish, 800); // fallback if transitionend never fires
     }
 
-    // Prevent default form submission fallback; HTMX handles it, but this keeps the UX tight
     loginForm?.addEventListener('submit', (e) => {
         e.preventDefault();
         clearLoginFeedback();
         setLoading(true);
     });
 
-    // Create mobile overlay if needed
     function ensureOverlay() {
         if (overlay) return overlay;
         overlay = document.createElement('div');
@@ -178,12 +171,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function closeSidebar() {
         sidebar.classList.remove('open');
-        if (overlay) overlay.classList.remove('visible');
+        overlay?.classList.remove('visible');
     }
 
     function toggleSidebar() {
-        const isMobile = window.innerWidth <= 1024;
-        if (isMobile) {
+        if (window.innerWidth <= 1024) {
             sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
         } else {
             appShell.classList.toggle('collapsed');
@@ -192,7 +184,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     sidebarToggle.addEventListener('click', toggleSidebar);
 
-    // Theme toggle
     function applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('umbra-theme', theme);
@@ -206,7 +197,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedTheme = localStorage.getItem('umbra-theme');
     if (savedTheme) applyTheme(savedTheme);
 
-    // Active sidebar item + breadcrumb update
     function setActiveNav(target) {
         navItems.forEach(item => item.classList.remove('active'));
         target.classList.add('active');
@@ -218,24 +208,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     navItems.forEach(item => {
-        item.addEventListener('click', (e) => {
-            setActiveNav(item);
-        });
+        item.addEventListener('click', () => setActiveNav(item));
     });
 
-    // HTMX events: update active nav after a successful swap
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
-        if (trigger && trigger.classList.contains('nav-item')) {
-            setActiveNav(trigger);
-        }
+        if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
     });
 
-    document.body.addEventListener('htmx:sendError', () => {
+    document.body.addEventListener('htmx:sendError', (evt) => {
+        if (evt.detail.requestConfig?.path === '/admin') return;
         showToast('Failed to load section. Make sure the panel is served by a local server.', 'error');
     });
 
-    // Toast helper
     function showToast(message, type = 'info', duration = 4000) {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
@@ -247,39 +232,30 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         toastContainer.appendChild(toast);
-
         setTimeout(() => {
             toast.classList.add('leaving');
             toast.addEventListener('animationend', () => toast.remove());
         }, duration);
     }
 
-    // Expose a tiny debug API on window for console tinkering
     window.umbra = {
         toast: showToast,
         theme: applyTheme,
         sidebar: { open: openSidebar, close: closeSidebar, toggle: toggleSidebar }
     };
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && sidebar.classList.contains('open')) {
-            closeSidebar();
-        }
+        if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar();
         if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
             e.preventDefault();
             toggleSidebar();
         }
     });
 
-    // Close mobile sidebar on resize to desktop
     window.addEventListener('resize', () => {
-        if (window.innerWidth > 1024 && sidebar.classList.contains('open')) {
-            closeSidebar();
-        }
+        if (window.innerWidth > 1024 && sidebar.classList.contains('open')) closeSidebar();
     });
 
-    // Demo: show a welcome toast once on first load (only if local server is used)
     if (window.location.protocol !== 'file:') {
         setTimeout(() => {
             showToast('Admin panel shell loaded. Section bodies will be wired next.', 'info', 5000);

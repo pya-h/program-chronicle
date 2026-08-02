@@ -179,12 +179,6 @@ body {
     background: linear-gradient(135deg, var(--accent-600), var(--accent-400));
     color: var(--text-inverse);
     box-shadow: var(--glow-accent);
-    animation: brand-breathe 4s ease-in-out infinite;
-}
-
-@keyframes brand-breathe {
-    0%, 100% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.25); }
-    50% { box-shadow: 0 0 22px rgba(59, 130, 246, 0.45); }
 }
 
 .brand-mark svg {
@@ -295,23 +289,28 @@ body {
 }
 
 .nav-badge {
+    position: relative;
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
     background: var(--danger-500);
     margin-left: auto;
     flex-shrink: 0;
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
 }
 
-.nav-badge.pulse {
-    animation: pulse-red 2s infinite;
+.nav-badge.pulse::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--danger-500);
+    animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
-@keyframes pulse-red {
-    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-    70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+/* Expanding ring driven by transform/opacity only (compositor-friendly). */
+@keyframes ping {
+    0% { transform: scale(1); opacity: 0.5; }
+    75%, 100% { transform: scale(2.6); opacity: 0; }
 }
 
 .nav-divider {
@@ -343,6 +342,7 @@ body {
 }
 
 .status-dot {
+    position: relative;
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
@@ -351,14 +351,15 @@ body {
 
 .status-dot.online {
     background: var(--success-500);
-    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
-    animation: pulse-green 2s infinite;
 }
 
-@keyframes pulse-green {
-    0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
-    70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+.status-dot.online::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--success-500);
+    animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
 .version {
@@ -380,10 +381,8 @@ body {
 /* Topbar */
 .topbar {
     height: var(--topbar-height);
-    background: var(--glass);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--glass-border);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-color);
     display: flex;
     align-items: center;
     padding: 0 1.5rem;
@@ -404,7 +403,7 @@ body {
     background: var(--bg-surface);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-base);
+    transition: background-color var(--transition-base), color var(--transition-base), border-color var(--transition-base);
 }
 
 .sidebar-toggle:hover {
@@ -456,7 +455,7 @@ body {
     background: var(--bg-surface);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-base);
+    transition: background-color var(--transition-base), color var(--transition-base), transform var(--transition-base);
 }
 
 .icon-btn:hover {
@@ -514,7 +513,7 @@ body {
     border: 1px solid var(--border-color);
     background: var(--bg-surface);
     cursor: pointer;
-    transition: all var(--transition-base);
+    transition: background-color var(--transition-base), border-color var(--transition-base);
 }
 
 .user-chip:hover {
@@ -647,7 +646,7 @@ body {
     font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--transition-base);
+    transition: background-color var(--transition-base), color var(--transition-base), border-color var(--transition-base), transform var(--transition-base), box-shadow var(--transition-base);
     border: 1px solid transparent;
 }
 
@@ -725,7 +724,7 @@ body {
     line-height: 1.5;
 }
 
-/* Card grid for future dashboard stat cards */
+/* Dashboard stat cards */
 .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
@@ -737,7 +736,7 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     padding: 1.25rem;
-    transition: all var(--transition-base);
+    transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-base);
 }
 
 .card:hover {
@@ -911,7 +910,7 @@ body {
     background: var(--text-muted);
 }
 
-/* Collapsed sidebar state (future enhancement) */
+/* Collapsed sidebar state */
 .app-shell.collapsed .sidebar {
     width: var(--sidebar-collapsed);
 }
@@ -955,36 +954,22 @@ body {
         radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.1) 0%, transparent 35%),
         var(--bg-body);
     z-index: 200;
-    transition: opacity var(--transition-slow), visibility var(--transition-slow), transform var(--transition-slow);
+    transition: transform 720ms cubic-bezier(0.7, 0, 0.28, 1);
+    will-change: transform;
+}
+
+/* Lock-screen slide: the gate drops away downward, revealing the app behind it.
+   The upward shadow falls onto the dashboard uncovered at the top edge as it slides. */
+.login-overlay.leaving {
+    transform: translateY(100%);
+    pointer-events: none;
+    box-shadow: 0 -24px 48px rgba(0, 0, 0, 0.35);
 }
 
 .login-overlay.hidden {
-    opacity: 0;
+    transform: translateY(100%);
     visibility: hidden;
     pointer-events: none;
-    transform: scale(1.02);
-}
-
-.login-overlay.leaving {
-    animation: login-leave 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-
-@keyframes login-leave {
-    0% {
-        opacity: 1;
-        transform: scale(1);
-        filter: blur(0);
-    }
-    40% {
-        opacity: 0.7;
-        transform: scale(1.03);
-    }
-    100% {
-        opacity: 0;
-        transform: scale(1.08);
-        filter: blur(8px);
-        visibility: hidden;
-    }
 }
 
 .login-card {
@@ -1251,26 +1236,15 @@ body {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transform: scale(0.98);
 }
 
 .app-shell.revealing {
-    animation: shell-reveal 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    animation: shell-settle 720ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes shell-reveal {
-    from {
-        opacity: 0;
-        visibility: visible;
-        transform: scale(0.98);
-        filter: blur(6px);
-    }
-    to {
-        opacity: 1;
-        visibility: visible;
-        transform: scale(1);
-        filter: blur(0);
-    }
+@keyframes shell-settle {
+    from { transform: scale(1.03); opacity: 0.65; }
+    to { transform: scale(1); opacity: 1; }
 }
 
 @media (max-width: 480px) {
@@ -1280,5 +1254,16 @@ body {
 
     .login-title {
         font-size: 1.25rem;
+    }
+}
+
+/* Respect users who ask for less motion; also lightens work on low-end devices. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
     }
 }
