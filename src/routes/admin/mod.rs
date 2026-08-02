@@ -1,10 +1,15 @@
-use axum::{Router, extract::State, response::NoContent, routing::get};
+use axum::{Router, routing::get};
+use crate::{
+    core::{
+        response::{ApiResponse, FinalResponse},
+        state::AppState,
+    },
+    middlewares::admin_guard::admin_guard,
+};
 
-use crate::{core::{response::{ApiResponse, FinalResponse}, state::AppState}, middlewares::admin_guard::admin_guard};
-
-mod rpcs;
 pub mod common;
 pub mod programs;
+mod rpcs;
 
 async fn validate_admin_handler() -> FinalResponse<()> {
     Ok(ApiResponse::ok(())) // Panel could call this, if it only wants to check passkey is correct
