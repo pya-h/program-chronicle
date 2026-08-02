@@ -247,7 +247,6 @@ async fn update_rpc_no_fields_does_not_change_updated_at() -> httpc_test::Result
         .unwrap();
     let original_updated_at = created.json_body_as::<serde_json::Value>()?["updated_at"].clone();
 
-    // Sleep so an accidental update would be detectable.
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let res = server()

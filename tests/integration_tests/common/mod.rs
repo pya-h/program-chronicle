@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use httpc_test::Client;
 use migration::MigratorTrait;
 use sea_orm::{ConnectOptions, ConnectionTrait, Database};
@@ -47,7 +47,8 @@ fn test_database_url() -> String {
     let mut url = Url::parse(&main_url)
         .unwrap_or_else(|_| panic!("DATABASE_URL is not a valid URL: {main_url}"));
 
-    // connection string may contain params; So directly appending _test is not a good idea
+    // Connection string may contain params; we extract the db name, append _test,
+    // and preserve the rest of the URL (query params, credentials, host, port).
     let db_name = url.path().trim_start_matches('/').to_string();
     if db_name.is_empty() {
         panic!("DATABASE_URL must contain a database name");
@@ -57,10 +58,15 @@ fn test_database_url() -> String {
     url.to_string()
 }
 
+/// Ensure the test database exists and is reachable, creating it via the
+/// `postgres` maintenance database if necessary.
 async fn ensure_test_database(test_url: &str) {
-    // Fast path: the database already exists.
-    if Database::connect(test_url).await.is_ok() {
-        return;
+    // Fast path: the database already exists and is reachable.
+    // We must execute a query because Database::connect creates a lazy pool.
+    if let Ok(db) = Database::connect(test_url).await {
+        if db.execute_unprepared("SELECT 1").await.is_ok() {
+            return;
+        }
     }
 
     // Slow path: create it via the maintenance database.
@@ -83,6 +89,14 @@ async fn ensure_test_database(test_url: &str) {
         ))
         .await
         .expect("failed to create test database");
+
+    // Verify the new database is reachable.
+    let db = Database::connect(test_url)
+        .await
+        .expect("failed to connect to freshly created test database");
+    db.execute_unprepared("SELECT 1")
+        .await
+        .expect("freshly created test database is not reachable");
 }
 
 fn setup_server() -> ServerInfo {
@@ -142,6 +156,11 @@ pub fn server() -> &'static ServerInfo {
 
 pub async fn reset_db() {
     dotenvy::dotenv().ok();
+    // Force the server (and therefore the test database + migrations) to be
+    // initialized before we try to delete anything. Without this, the first
+    // test could run reset_db() against a database that has not been created yet.
+    let _ = server();
+
     let db_url = test_database_url();
     let db = Database::connect(db_url)
         .await
@@ -151,7 +170,7 @@ pub async fn reset_db() {
         .expect("failed to reset test tables");
 }
 
-pub fn parse_datetime(value: &Value) -> NaiveDateTime {
+pub fn parse_datetime(value: &Value) -> DateTime<Utc> {
     value
         .as_str()
         .expect("expected a datetime string")
