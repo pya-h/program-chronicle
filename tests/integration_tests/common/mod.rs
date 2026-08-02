@@ -36,6 +36,14 @@ impl ServerInfo {
     }
 }
 
+fn database_name_from_url(url: &Url) -> String {
+    url.path_segments()
+        .and_then(|mut s| s.next_back())
+        .filter(|s| !s.is_empty())
+        .expect("URL must contain a database name")
+        .to_string()
+}
+
 fn test_database_url() -> String {
     if let Ok(test_url) = std::env::var("TEST_DATABASE_URL") {
         return test_url;
@@ -47,12 +55,9 @@ fn test_database_url() -> String {
     let mut url = Url::parse(&main_url)
         .unwrap_or_else(|_| panic!("DATABASE_URL is not a valid URL: {main_url}"));
 
-    // Connection string may contain params; we extract the db name, append _test,
-    // and preserve the rest of the URL (query params, credentials, host, port).
-    let db_name = url.path().trim_start_matches('/').to_string();
-    if db_name.is_empty() {
-        panic!("DATABASE_URL must contain a database name");
-    }
+    // Connection string may contain params; we extract the *decoded* db name,
+    // append _test, and preserve the rest of the URL (query params, credentials, etc.).
+    let db_name = database_name_from_url(&url);
 
     url.set_path(&format!("{db_name}_test"));
     url.to_string()
@@ -69,7 +74,7 @@ async fn ensure_test_database(test_url: &str) {
         }
     }
 
-    // Slow path: create it via the maintenance database.
+    // Slow path: create it via the maintenance database if it doesn't exist.
     let url =
         Url::parse(test_url).expect("test database URL should be valid because we just built it");
 
@@ -80,15 +85,22 @@ async fn ensure_test_database(test_url: &str) {
         .await
         .expect("failed to connect to maintenance database to create test database");
 
-    let db_name = url.path().trim_start_matches('/').to_string();
+    let db_name = database_name_from_url(&url);
 
-    maintenance_db
+    if let Err(err) = maintenance_db
         .execute_unprepared(&format!(
             "CREATE DATABASE \"{}\"",
             db_name.replace('"', "\"\"")
         ))
         .await
-        .expect("failed to create test database");
+    {
+        // Ignore "database already exists" (SQLSTATE 42P04) so concurrent or
+        // re-runs don't panic.
+        let err_str = err.to_string();
+        if !err_str.contains("42P04") && !err_str.contains("already exists") {
+            panic!("failed to create test database: {err}");
+        }
+    }
 
     // Verify the new database is reachable.
     let db = Database::connect(test_url)
