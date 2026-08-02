@@ -1,6 +1,14 @@
 document.addEventListener('DOMContentLoaded', () => {
     const appLoader = document.getElementById('app-loader');
+    const loginOverlay = document.getElementById('login-overlay');
+    const loginForm = document.getElementById('login-form');
+    const loginCard = loginForm?.closest('.login-card');
+    const passkeyInput = document.getElementById('passkey');
+    const passkeyToggle = document.getElementById('passkey-toggle');
+    const loginSubmit = document.getElementById('login-submit');
+    const loginFeedback = document.getElementById('login-feedback');
     const appShell = document.getElementById('app-shell');
+    const mainContent = document.getElementById('main-content');
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const themeToggle = document.getElementById('theme-toggle');
@@ -9,12 +17,149 @@ document.addEventListener('DOMContentLoaded', () => {
     const toastContainer = document.getElementById('toast-container');
 
     let overlay = null;
+    let isUnlocking = false;
 
-    // Reveal the app with a smooth fade-in
+    // Reveal the login gate after loader
     setTimeout(() => {
         appLoader.classList.add('hidden');
-        appShell.style.opacity = '1';
+        loginOverlay?.classList.remove('hidden');
+        passkeyInput?.focus();
     }, 400);
+
+    // Passkey visibility toggle
+    passkeyToggle?.addEventListener('click', () => {
+        const isPassword = passkeyInput.type === 'password';
+        passkeyInput.type = isPassword ? 'text' : 'password';
+        passkeyToggle.classList.toggle('showing', isPassword);
+        passkeyToggle.setAttribute('aria-label', isPassword ? 'Hide passkey' : 'Show passkey');
+    });
+
+    // Inject x-security header on all admin requests
+    document.body.addEventListener('htmx:configRequest', (evt) => {
+        if (!evt.detail.path?.startsWith('/admin')) return;
+
+        const passkey = passkeyInput?.value || sessionStorage.getItem('umbra-admin-passkey');
+        if (passkey) {
+            evt.detail.headers['x-security'] = passkey;
+        }
+    });
+
+    // Handle login result
+    document.body.addEventListener('htmx:afterRequest', (evt) => {
+        if (evt.detail.requestConfig.path !== '/admin') return;
+
+        setLoading(false);
+
+        const status = evt.detail.xhr.status;
+
+        if (status === 200) {
+            const passkey = passkeyInput?.value;
+            if (passkey) sessionStorage.setItem('umbra-admin-passkey', passkey);
+            unlockDashboard();
+        } else if (status === 401) {
+            showLoginError('Invalid passkey. Please try again.');
+        } else if (status === 404 && tryDemoUnlock()) {
+            // static preview fallback: endpoint not found, demo passkey unlocks locally
+        } else {
+            showLoginError('Could not validate passkey. Please try again later.');
+        }
+    });
+
+    document.body.addEventListener('htmx:sendError', (evt) => {
+        if (evt.detail.requestConfig.path !== '/admin') return;
+
+        setLoading(false);
+
+        if (tryDemoUnlock()) {
+            // static preview fallback: network error, demo passkey unlocks locally
+        } else {
+            showLoginError('Could not reach the admin endpoint. Is the server running?');
+        }
+    });
+
+    function tryDemoUnlock() {
+        if (passkeyInput?.value === 'umbra') {
+            showLoginFeedback('Demo mode: no server detected, unlocking locally.', 'info');
+            setTimeout(unlockDashboard, 400);
+            return true;
+        }
+        return false;
+    }
+
+    // Auto-unlock if a passkey is already in sessionStorage for this browser session
+    function autoUnlockFromSession() {
+        const savedPasskey = sessionStorage.getItem('umbra-admin-passkey');
+        if (!savedPasskey || !passkeyInput) return;
+
+        passkeyInput.value = savedPasskey;
+        setLoading(true);
+
+        htmx.ajax('GET', '/admin', {
+            swap: 'none',
+            headers: { 'x-security': savedPasskey }
+        });
+    }
+
+    setTimeout(autoUnlockFromSession, 600);
+
+    function setLoading(loading) {
+        loginSubmit?.classList.toggle('loading', loading);
+        if (passkeyInput) passkeyInput.disabled = loading;
+        if (loginSubmit) loginSubmit.disabled = loading;
+    }
+
+    function showLoginError(message) {
+        if (!loginFeedback || !loginCard) return;
+        loginFeedback.textContent = message;
+        loginFeedback.classList.add('visible');
+        loginCard.classList.remove('shake');
+        void loginCard.offsetWidth; // reflow
+        loginCard.classList.add('shake');
+    }
+
+    function showLoginFeedback(message) {
+        if (!loginFeedback) return;
+        loginFeedback.textContent = message;
+        loginFeedback.classList.add('visible');
+    }
+
+    function clearLoginFeedback() {
+        loginFeedback?.classList.remove('visible');
+    }
+
+    // Unlock animation: login dissolves, dashboard reveals
+    function unlockDashboard() {
+        if (isUnlocking) return;
+        isUnlocking = true;
+
+        clearLoginFeedback();
+        loginOverlay?.classList.add('leaving');
+
+        // Prepare shell behind the overlay so the reveal is immediate
+        appShell.classList.remove('hidden');
+        appShell.classList.add('revealing');
+
+        setTimeout(() => {
+            loginOverlay?.classList.add('hidden');
+            loginOverlay?.classList.remove('leaving');
+
+            // Load the dashboard fragment into the main content area
+            htmx.ajax('GET', 'fragments/dashboard.html', {
+                target: '#main-content',
+                swap: 'innerHTML transition:true',
+                indicator: '#content-loader'
+            });
+
+            showToast('Welcome to the Umbra SVM Indexer admin panel.', 'success', 4000);
+        }, 500);
+    }
+
+    // Prevent default form submission fallback; HTMX handles it, but this keeps the UX tight
+    loginForm?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        clearLoginFeedback();
+        setLoading(true);
+    });
 
     // Create mobile overlay if needed
     function ensureOverlay() {
