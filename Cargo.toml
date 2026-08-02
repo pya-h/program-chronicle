@@ -27,3 +27,4 @@ chrono = "0.4.45"
 httpc-test = "0.1.10"
 migration = { path = "migration" }
 reqwest = "0.12"
+chrono = "0.4"

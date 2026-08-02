@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::common::{reset_db, server};
+use crate::common::{assert_datetimes_equal, parse_datetime, reset_db, server};
 
 #[tokio::test]
 async fn add_rpc_happy_with_both_urls() -> httpc_test::Result<()> {
@@ -22,6 +22,9 @@ async fn add_rpc_happy_with_both_urls() -> httpc_test::Result<()> {
     assert_eq!(body["http_url"], "https://rpc-both.example.com");
     assert_eq!(body["ws_url"], "wss://rpc-both.example.com");
     assert!(body["id"].is_number());
+    assert!(body["created_at"].is_string());
+    assert!(body["updated_at"].is_string());
+    assert_datetimes_equal(&body["created_at"], &body["updated_at"]);
     Ok(())
 }
 
@@ -176,9 +179,12 @@ async fn update_rpc_happy() -> httpc_test::Result<()> {
             }),
         )
         .await?;
-    let id = created.json_body_as::<serde_json::Value>()?["id"]
-        .as_u64()
-        .unwrap();
+    let created_body = created.json_body_as::<serde_json::Value>()?;
+    let id = created_body["id"].as_u64().unwrap();
+    let created_at = created_body["created_at"].clone();
+
+    // Sleep so a stale updated_at would be detectable.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let res = server()
         .authed_client()
@@ -191,6 +197,8 @@ async fn update_rpc_happy() -> httpc_test::Result<()> {
 
     let body = res.json_body_as::<serde_json::Value>()?;
     assert_eq!(body["http_url"], "https://rpc-updated.example.com");
+    assert_eq!(body["created_at"], created_at);
+    assert!(parse_datetime(&body["updated_at"]) > parse_datetime(&created_at));
     Ok(())
 }
 
@@ -217,6 +225,43 @@ async fn update_rpc_no_fields_is_bad_request() -> httpc_test::Result<()> {
         .do_patch(&format!("/admin/rpcs/{}", id), json!({}))
         .await?;
     assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_rpc_no_fields_does_not_change_updated_at() -> httpc_test::Result<()> {
+    reset_db().await;
+
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/rpcs",
+            json!({
+                "http_url": "https://rpc-nochange.example.com",
+                "ws_url": "wss://rpc-nochange.example.com"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+    let original_updated_at = created.json_body_as::<serde_json::Value>()?["updated_at"].clone();
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let res = server()
+        .authed_client()
+        .do_patch(&format!("/admin/rpcs/{}", id), json!({}))
+        .await?;
+    assert_eq!(res.status(), 400);
+
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/rpcs/{}", id))
+        .await?;
+    assert_eq!(res.status(), 200);
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_datetimes_equal(&body["updated_at"], &original_updated_at);
     Ok(())
 }
 
