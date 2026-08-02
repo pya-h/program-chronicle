@@ -954,16 +954,21 @@ body {
         radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.1) 0%, transparent 35%),
         var(--bg-body);
     z-index: 200;
-    transition: transform 720ms cubic-bezier(0.7, 0, 0.28, 1);
     will-change: transform;
 }
 
 /* Lock-screen slide: the gate drops away downward, revealing the app behind it.
-   The upward shadow falls onto the dashboard uncovered at the top edge as it slides. */
+   Driven by a keyframe (not a transition) so it fires reliably on class-add — a
+   transition from an untransformed start can be collapsed by style batching. */
 .login-overlay.leaving {
-    transform: translateY(100%);
+    animation: login-slide-down 720ms cubic-bezier(0.7, 0, 0.28, 1) forwards;
     pointer-events: none;
     box-shadow: 0 -24px 48px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes login-slide-down {
+    from { transform: translateY(0); }
+    to { transform: translateY(100%); }
 }
 
 .login-overlay.hidden {

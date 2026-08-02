@@ -141,12 +141,12 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast('Welcome to the Umbra SVM Indexer admin panel.', 'success', 4000);
         };
 
-        loginOverlay?.addEventListener('transitionend', function handler(e) {
-            if (e.propertyName !== 'transform') return;
-            loginOverlay.removeEventListener('transitionend', handler);
+        loginOverlay?.addEventListener('animationend', function handler(e) {
+            if (e.animationName !== 'login-slide-down') return;
+            loginOverlay.removeEventListener('animationend', handler);
             finish();
         });
-        setTimeout(finish, 800); // fallback if transitionend never fires
+        setTimeout(finish, 820); // fallback if animationend never fires
     }
 
     loginForm?.addEventListener('submit', (e) => {
