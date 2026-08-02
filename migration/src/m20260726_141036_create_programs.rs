@@ -45,7 +45,7 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Programs::RpcId).integer().not_null())
                     .col(ColumnDef::new(Programs::Address).binary().not_null())
-                    .check(Expr::cust(r#"octet_length("address") = 32"#))
+                    .check(Expr::cust(r#"OCTET_LENGTH("address") = 32"#))
                     .col(ColumnDef::new(Programs::Name).string_len(64).null())
                     .col(ColumnDef::new(Programs::LastProcessedAt).timestamp().null())
                     .col(
@@ -80,7 +80,7 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("uq-programs-address-rpcid")
+                    .name("uq-programs-address-rpc-id")
                     .table(Programs::Table)
                     .col(Programs::Address)
                     .col(Programs::RpcId)
