@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::common::{reset_db, server};
+use crate::common::{assert_datetimes_equal, parse_datetime, reset_db, server};
 
 fn address(idx: usize) -> &'static str {
     const ADDRESSES: &[&str] = &[
@@ -56,6 +56,9 @@ async fn add_program_with_rpc_id_happy() -> httpc_test::Result<()> {
     let body = res.json_body_as::<serde_json::Value>()?;
     assert_eq!(body["name"], "test-program");
     assert_eq!(body["rpc_id"], rpc_id);
+    assert!(body["created_at"].is_string());
+    assert!(body["updated_at"].is_string());
+    assert_datetimes_equal(&body["created_at"], &body["updated_at"]);
     Ok(())
 }
 
@@ -236,9 +239,12 @@ async fn update_program_happy() -> httpc_test::Result<()> {
             }),
         )
         .await?;
-    let id = created.json_body_as::<serde_json::Value>()?["id"]
-        .as_u64()
-        .unwrap();
+    let created_body = created.json_body_as::<serde_json::Value>()?;
+    let id = created_body["id"].as_u64().unwrap();
+    let created_at = created_body["created_at"].clone();
+
+    // Sleep so a stale updated_at would be detectable.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let res = server()
         .authed_client()
@@ -251,6 +257,8 @@ async fn update_program_happy() -> httpc_test::Result<()> {
 
     let body = res.json_body_as::<serde_json::Value>()?;
     assert_eq!(body["name"], "new-name");
+    assert_eq!(body["created_at"], created_at);
+    assert!(parse_datetime(&body["updated_at"]) > parse_datetime(&created_at));
     Ok(())
 }
 

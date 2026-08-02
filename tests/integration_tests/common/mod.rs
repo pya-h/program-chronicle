@@ -1,10 +1,13 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use chrono::NaiveDateTime;
 use httpc_test::Client;
 use migration::MigratorTrait;
-use sea_orm::{ConnectionTrait, ConnectOptions, Database};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+use serde_json::Value;
 use tokio::runtime::Runtime;
+use url::Url;
 
 static SERVER: OnceLock<ServerInfo> = OnceLock::new();
 
@@ -33,18 +36,70 @@ impl ServerInfo {
     }
 }
 
+fn test_database_url() -> String {
+    if let Ok(test_url) = std::env::var("TEST_DATABASE_URL") {
+        return test_url;
+    }
+
+    let main_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set for tests (or set TEST_DATABASE_URL instead)");
+
+    let mut url = Url::parse(&main_url)
+        .unwrap_or_else(|_| panic!("DATABASE_URL is not a valid URL: {main_url}"));
+
+    // connection string may contain params; So directly appending _test is not a good idea
+    let db_name = url.path().trim_start_matches('/').to_string();
+    if db_name.is_empty() {
+        panic!("DATABASE_URL must contain a database name");
+    }
+
+    url.set_path(&format!("{db_name}_test"));
+    url.to_string()
+}
+
+async fn ensure_test_database(test_url: &str) {
+    // Fast path: the database already exists.
+    if Database::connect(test_url).await.is_ok() {
+        return;
+    }
+
+    // Slow path: create it via the maintenance database.
+    let url =
+        Url::parse(test_url).expect("test database URL should be valid because we just built it");
+
+    let mut maintenance_url = url.clone();
+    maintenance_url.set_path("postgres");
+
+    let maintenance_db = Database::connect(maintenance_url.to_string())
+        .await
+        .expect("failed to connect to maintenance database to create test database");
+
+    let db_name = url.path().trim_start_matches('/').to_string();
+
+    maintenance_db
+        .execute_unprepared(&format!(
+            "CREATE DATABASE \"{}\"",
+            db_name.replace('"', "\"\"")
+        ))
+        .await
+        .expect("failed to create test database");
+}
+
 fn setup_server() -> ServerInfo {
     dotenvy::dotenv().ok();
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+    let db_url = test_database_url();
     let admin_passkey = std::env::var("ADMIN_PASSKEY").unwrap_or_else(|_| "test".to_string());
 
     let (tx, rx) = std::sync::mpsc::channel();
     let passkey_for_thread = admin_passkey.clone();
+    let db_url_for_thread = db_url.clone();
 
     std::thread::spawn(move || {
         let rt = Runtime::new().expect("failed to create test server runtime");
         let port = rt.block_on(async {
-            let mut opts = ConnectOptions::new(&db_url);
+            ensure_test_database(&db_url_for_thread).await;
+
+            let mut opts = ConnectOptions::new(db_url_for_thread);
             opts.max_connections(10);
             let db = Database::connect(opts)
                 .await
@@ -87,11 +142,27 @@ pub fn server() -> &'static ServerInfo {
 
 pub async fn reset_db() {
     dotenvy::dotenv().ok();
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+    let db_url = test_database_url();
     let db = Database::connect(db_url)
         .await
         .expect("failed to connect to test database for reset");
     db.execute_unprepared("DELETE FROM programs; DELETE FROM rpcs;")
         .await
         .expect("failed to reset test tables");
+}
+
+pub fn parse_datetime(value: &Value) -> NaiveDateTime {
+    value
+        .as_str()
+        .expect("expected a datetime string")
+        .parse()
+        .expect("expected a valid ISO 8601 datetime")
+}
+
+pub fn assert_datetimes_equal(left: &Value, right: &Value) {
+    assert_eq!(
+        parse_datetime(left),
+        parse_datetime(right),
+        "expected datetimes to be equal"
+    );
 }
