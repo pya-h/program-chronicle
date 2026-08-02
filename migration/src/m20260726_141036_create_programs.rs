@@ -1,4 +1,4 @@
-use sea_orm_migration::{prelude::*};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -17,6 +17,8 @@ enum Programs {
     Name,
     LastProcessedSlot,
     LastProcessedAt,
+    CreatedAt,
+    UpdatedAt,
 }
 
 #[derive(DeriveIden)]
@@ -52,6 +54,18 @@ impl MigrationTrait for Migration {
                             .default(0),
                     )
                     .check(Expr::col(Programs::LastProcessedSlot).gte(0))
+                    .col(
+                        ColumnDef::new(Programs::CreatedAt)
+                            .timestamp()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(Programs::UpdatedAt)
+                            .timestamp()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-programs-rpc-id")

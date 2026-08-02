@@ -7,7 +7,7 @@ use serde::Serialize;
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "programs")]
 pub struct Model {
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(primary_key)]
     pub id: i32,
     #[sea_orm(unique_key = "rpcid")]
     pub rpc_id: i32,
@@ -16,6 +16,8 @@ pub struct Model {
     pub name: Option<String>,
     pub last_processed_at: Option<DateTime>,
     pub last_processed_slot: Option<i64>,
+    pub created_at: DateTime,
+    pub updated_at: DateTime,
     #[sea_orm(
         belongs_to,
         from = "rpc_id",

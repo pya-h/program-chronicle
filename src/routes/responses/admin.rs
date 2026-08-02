@@ -31,13 +31,16 @@ impl GetRpcsResponse {
 
 #[macro_export]
 macro_rules! unknown_rpc {
-    () => {
+    () => {{
+        let now = chrono::Utc::now().naive_utc();
         RpcModel {
             id: 0,
             http_url: "UNKNOWN".to_owned(),
             ws_url: "UNKNOWN".to_owned(),
+            created_at: now,
+            updated_at: now,
         }
-    };
+    }};
 }
 
 #[derive(Serialize)]

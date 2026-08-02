@@ -13,6 +13,8 @@ pub struct Model {
     pub http_url: String,
     #[sea_orm(unique)]
     pub ws_url: String,
+    pub created_at: DateTime,
+    pub updated_at: DateTime,
     #[sea_orm(has_many)]
     pub programs: HasMany<super::programs::Entity>,
 }

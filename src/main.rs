@@ -35,6 +35,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect(&format!("Failed listening on the port: {}", app_port));
+    tracing::info!("Listening on {}...", addr);
     axum::serve(listener, router)
         .await
         .expect("Failed serving and setting up routes with the tcp listener!");

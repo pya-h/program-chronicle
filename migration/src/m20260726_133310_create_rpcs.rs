@@ -15,6 +15,8 @@ enum RPCs {
     Id,
     HttpUrl,
     WsUrl,
+    CreatedAt,
+    UpdatedAt,
 }
 
 #[async_trait::async_trait]
@@ -43,6 +45,18 @@ impl MigrationTrait for Migration {
                             .string_len(1024_u32)
                             .not_null()
                             .unique_key(),
+                    )
+                    .col(
+                        ColumnDef::new(RPCs::CreatedAt)
+                        .timestamp()
+                        .not_null()
+                        .default(Expr::current_timestamp())
+                    )
+                    .col(
+                        ColumnDef::new(RPCs::UpdatedAt)
+                        .timestamp()
+                        .not_null()
+                        .default(Expr::current_timestamp())
                     )
                     .to_owned(),
             )
