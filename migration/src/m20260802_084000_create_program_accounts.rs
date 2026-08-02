@@ -74,7 +74,7 @@ impl MigrationTrait for Migration {
                             .from(ProgramAccounts::Table, ProgramAccounts::ProgramId)
                             .to(Programs::Table, Programs::Id)
                             .on_update(ForeignKeyAction::Cascade)
-                            .on_delete(ForeignKeyAction::Restrict), // Or maybe SET_NULL?
+                            .on_delete(ForeignKeyAction::Restrict), // Or maybe SET_NULL? or NO_ACTION?
                     )
                     .to_owned(),
             )

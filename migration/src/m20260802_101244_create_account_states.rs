@@ -30,9 +30,35 @@ enum AccountStates {
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
-    async fn up(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        // Replace the sample below with your own migration scripts
-        todo!();
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(AccountStates::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(AccountStates::Id)
+                            .big_integer()
+                            .primary_key()
+                            .auto_increment()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(AccountStates::ProgramAccountId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk-account-states-account-id")
+                            .from(AccountStates::Table, AccountStates::ProgramAccountId)
+                            .to(ProgramAccounts::Table, ProgramAccounts::Id)
+                            .on_update(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Restrict) // Or maybe SET_NULL? or NO_ACTION?
+                    )
+                    .to_owned(),
+            )
+            .await
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {

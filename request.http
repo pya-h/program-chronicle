@@ -5,7 +5,8 @@
 @adminPasskey = test
 
 ### Health check
-GET {{baseUrl}}/
+GET {{baseUrl}}/admin
+x-Security: {{adminPasskey}}
 
 
 ### ---------- RPCs ----------
