@@ -21,7 +21,7 @@ enum AccountStates {
     Table,
     Id,
     ProgramAccountId,
-    State,
+    Data,
     Slot,
     TxSignature,
     CreatedAt,
@@ -48,21 +48,44 @@ impl MigrationTrait for Migration {
                             .big_integer()
                             .not_null(),
                     )
+                    .col(ColumnDef::new(AccountStates::Data).binary().null()) // Can this have actually a Null state?
+                    .col(ColumnDef::new(AccountStates::Slot).big_integer().not_null())
+                    .check(Expr::col(AccountStates::Slot).gt(0))
+                    .col(ColumnDef::new(AccountStates::TxSignature).binary().null()) // Check if this tx-signature can be null here, also in ProgramAccounts
+                    .check(Expr::cust(
+                        r#""tx_signature" IS NULL OR OCTET_LENGTH("tx_signature") = 64"#,
+                    ))
+                    .col(
+                        ColumnDef::new(AccountStates::CreatedAt)
+                            .timestamp()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(AccountStates::UpdatedAt)
+                            .timestamp()
+                            .default(Expr::current_timestamp()),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-account-states-account-id")
                             .from(AccountStates::Table, AccountStates::ProgramAccountId)
                             .to(ProgramAccounts::Table, ProgramAccounts::Id)
                             .on_update(ForeignKeyAction::Cascade)
-                            .on_delete(ForeignKeyAction::Restrict) // Or maybe SET_NULL? or NO_ACTION?
+                            .on_delete(ForeignKeyAction::Restrict), // Or maybe SET_NULL? or NO_ACTION?
                     )
                     .to_owned(),
             )
             .await
     }
 
-    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        // Replace the sample below with your own migration scripts
-        todo!();
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(AccountStates::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await
     }
 }

@@ -51,7 +51,7 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(ProgramAccounts::Address).binary().not_null())
                     .check(Expr::cust(r#"OCTET_LENGTH("address") = 32"#))
-                    .col(ColumnDef::new(ProgramAccounts::State).binary().null())
+                    .col(ColumnDef::new(ProgramAccounts::State).binary().null()) // Can this have actually a Null state?
                     .col(
                         ColumnDef::new(ProgramAccounts::LatestSlot)
                             .big_integer()
