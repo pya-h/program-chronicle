@@ -18,6 +18,8 @@ pub struct Model {
     pub last_processed_slot: Option<i64>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
+    #[sea_orm(has_many)]
+    pub program_accounts: HasMany<super::program_accounts::Entity>,
     #[sea_orm(
         belongs_to,
         from = "rpc_id",
