@@ -287,7 +287,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
         Prefs.reflect();
-        if (evt.detail.path?.includes('fragments/rpcs.html')) initRpcSection();
+        // Detect the swapped-in section by its DOM marker — htmx's afterSwap detail
+        // exposes requestConfig.path, not a bare `path`, so key off the content itself.
+        const swapped = evt.detail.target;
+        if (swapped?.matches?.('[data-section="rpcs"]') || swapped?.querySelector?.('[data-section="rpcs"]')) {
+            initRpcSection();
+        }
     });
 
     document.body.addEventListener('htmx:sendError', (evt) => {
@@ -314,8 +319,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar();
-        if (e.key === 'Escape' && activeModal()) closeAllModals();
+        if (e.key === 'Escape') {
+            const openModals = document.querySelectorAll('.modal-overlay.open');
+            if (openModals.length) {
+                openModals.forEach(m => { if (!m.hasAttribute('data-static')) closeModal(m.id); });
+            } else if (sidebar.classList.contains('open')) {
+                closeSidebar();
+            }
+        }
         if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
             e.preventDefault();
             toggleSidebar();
@@ -432,6 +443,8 @@ document.addEventListener('DOMContentLoaded', () => {
         modal.classList.add('open');
         modal.setAttribute('aria-hidden', 'false');
         document.body.style.overflow = 'hidden';
+        const focusTarget = modal.querySelector('.input-field') || modal.querySelector('.modal-close');
+        setTimeout(() => focusTarget?.focus(), 60);
     }
 
     function closeModal(id) {
@@ -442,21 +455,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!activeModal()) document.body.style.overflow = '';
     }
 
-    function closeAllModals() {
-        document.querySelectorAll('.modal-overlay.open').forEach(m => {
-            m.classList.remove('open');
-            m.setAttribute('aria-hidden', 'true');
-        });
-        document.body.style.overflow = '';
-    }
-
     document.addEventListener('click', (e) => {
         const close = e.target.closest('[data-close-modal]');
         if (close) {
             const modal = close.closest('.modal-overlay');
             if (modal) closeModal(modal.id);
         }
-        if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('open')) {
+        // Backdrop click closes a modal unless it is marked static (edit/delete),
+        // which must only be dismissed via the X / Cancel button or on success.
+        if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('open') && !e.target.hasAttribute('data-static')) {
             closeModal(e.target.id);
         }
     });
@@ -569,6 +576,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let editOriginal = { http: '', ws: '' };
+
     document.body.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action="edit"]');
         if (!btn) return;
@@ -576,9 +585,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const row = document.querySelector(`.rpc-row[data-rpc-id="${id}"]`);
         if (!row) return;
         const values = row.querySelectorAll('.rpc-url-value');
+        editOriginal = { http: values[0]?.textContent || '', ws: values[1]?.textContent || '' };
         document.getElementById('rpc-edit-id').value = id;
-        document.getElementById('rpc-edit-http').value = values[0]?.textContent || '';
-        document.getElementById('rpc-edit-ws').value = values[1]?.textContent || '';
+        document.getElementById('rpc-edit-http').value = editOriginal.http;
+        document.getElementById('rpc-edit-ws').value = editOriginal.ws;
         showFieldFeedback(document.getElementById('rpc-edit-feedback'), '');
         openModal('rpc-edit-modal');
     });
@@ -595,18 +605,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const wsRaw = document.getElementById('rpc-edit-ws').value;
             showFieldFeedback(feedback, '');
 
+            // Only send fields that are non-empty AND differ from the loaded values,
+            // so an unchanged form is rejected client-side (spec: at least one change).
             const payload = {};
             if (httpRaw.trim()) {
                 const http = validateHttpUrl(httpRaw);
                 if (!http.ok) return showFieldFeedback(feedback, http.message);
-                payload.http_url = http.value;
+                if (http.value !== editOriginal.http) payload.http_url = http.value;
             }
             if (wsRaw.trim()) {
                 const ws = validateWsUrl(wsRaw);
                 if (!ws.ok) return showFieldFeedback(feedback, ws.message);
-                payload.ws_url = ws.value;
+                if (ws.value !== editOriginal.ws) payload.ws_url = ws.value;
             }
-            if (Object.keys(payload).length === 0) return showFieldFeedback(feedback, 'Change at least one URL to save.');
+            if (Object.keys(payload).length === 0) return showFieldFeedback(feedback, 'Change at least one field to save.');
 
             setBtnLoading(btn, true);
             const res = await apiCall('PATCH', `/admin/rpcs/${id}`, payload);
