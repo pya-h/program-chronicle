@@ -115,6 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.body.addEventListener('htmx:configRequest', (evt) => {
         if (!evt.detail.path?.startsWith('/admin')) return;
+        if (evt.detail.headers['x-security']) return;
         const passkey = passkeyInput?.value || sessionStorage.getItem('umbra-admin-passkey');
         if (passkey) evt.detail.headers['x-security'] = passkey;
     });
@@ -286,23 +287,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
         Prefs.reflect();
+        if (evt.detail.path?.includes('fragments/rpcs.html')) initRpcSection();
     });
 
     document.body.addEventListener('htmx:sendError', (evt) => {
         if (evt.detail.requestConfig?.path === '/admin') return;
-        showToast('Failed to load section. Make sure the panel is served by a local server.', 'error');
+        showToast('Failed to load section. Is the server running?', 'error');
     });
 
     function showToast(message, type = 'info', duration = 4000) {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
-
         const icon = type === 'success' ? '✓' : type === 'error' ? '!' : 'i';
-        toast.innerHTML = `
-            <span class="toast-icon">${icon}</span>
-            <span class="toast-message">${message}</span>
-        `;
-
+        toast.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-message">${escapeHtml(message)}</span>`;
         toastContainer.appendChild(toast);
         setTimeout(() => {
             toast.classList.add('leaving');
@@ -318,6 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar();
+        if (e.key === 'Escape' && activeModal()) closeAllModals();
         if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
             e.preventDefault();
             toggleSidebar();
@@ -329,8 +327,357 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     if (window.location.protocol !== 'file:') {
-        setTimeout(() => {
-            showToast('Admin panel shell loaded. Section bodies will be wired next.', 'info', 5000);
-        }, 900);
+        setTimeout(() => showToast('Welcome to the Umbra SVM Indexer admin panel.', 'info', 4000), 900);
     }
+
+    // RPC section ---------------------------------------------------------------
+    const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+    function toBase58(bytes) {
+        if (!bytes || bytes.length === 0) return '';
+        const base = 58n;
+        let num = 0n;
+        for (const b of bytes) num = (num << 8n) | BigInt(b);
+        if (num === 0n) return BASE58[0];
+        let out = '';
+        while (num > 0n) {
+            out = BASE58[Number(num % base)] + out;
+            num /= base;
+        }
+        return out;
+    }
+
+    function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function getPasskey() {
+        return sessionStorage.getItem('umbra-admin-passkey') || passkeyInput?.value || '';
+    }
+
+    async function apiCall(method, path, body = null) {
+        const headers = { 'x-security': getPasskey() };
+        if (body !== null) headers['Content-Type'] = 'application/json';
+        try {
+            const res = await fetch(path, { method, headers, body: body !== null ? JSON.stringify(body) : null });
+            const text = await res.text();
+            const data = text ? (() => { try { return JSON.parse(text); } catch { return { message: text }; } })() : null;
+            if (!res.ok) return { ok: false, status: res.status, data, message: data?.message || `Request failed (${res.status})` };
+            return { ok: true, status: res.status, data, message: '' };
+        } catch (err) {
+            return { ok: false, status: 0, data: null, message: err.message || 'Network error' };
+        }
+    }
+
+    function normalizeHttpUrl(raw) {
+        const url = raw.trim();
+        if (!url) return null;
+        return url.includes('://') ? url : `https://${url}`;
+    }
+
+    function normalizeWsUrl(raw) {
+        const url = raw.trim();
+        if (!url) return null;
+        return url.includes('://') ? url : `wss://${url}`;
+    }
+
+    function validateHttpUrl(raw) {
+        const url = normalizeHttpUrl(raw);
+        if (!url) return { ok: false, message: 'HTTP URL is required.' };
+        try {
+            const parsed = new URL(url);
+            if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, message: 'HTTP URL must use http:// or https://.' };
+            return { ok: true, value: url };
+        } catch {
+            return { ok: false, message: 'HTTP URL is not a valid URL.' };
+        }
+    }
+
+    function validateWsUrl(raw) {
+        const url = normalizeWsUrl(raw);
+        if (!url) return { ok: true, value: null };
+        try {
+            const parsed = new URL(url);
+            if (!['ws:', 'wss:'].includes(parsed.protocol)) return { ok: false, message: 'WebSocket URL must use ws:// or wss://.' };
+            return { ok: true, value: url };
+        } catch {
+            return { ok: false, message: 'WebSocket URL is not a valid URL.' };
+        }
+    }
+
+    function setBtnLoading(btn, loading) {
+        btn?.classList.toggle('loading', loading);
+        if (btn) btn.disabled = loading;
+    }
+
+    function showFieldFeedback(el, message) {
+        if (!el) return;
+        el.textContent = message;
+        el.classList.toggle('visible', !!message);
+    }
+
+    function showBtnSuccess(btn) {
+        if (!btn) return;
+        btn.classList.add('success');
+        setTimeout(() => btn.classList.remove('success'), 1500);
+    }
+
+    function activeModal() {
+        return document.querySelector('.modal-overlay.open');
+    }
+
+    function openModal(id) {
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        modal.classList.add('open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal(id) {
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+        if (!activeModal()) document.body.style.overflow = '';
+    }
+
+    function closeAllModals() {
+        document.querySelectorAll('.modal-overlay.open').forEach(m => {
+            m.classList.remove('open');
+            m.setAttribute('aria-hidden', 'true');
+        });
+        document.body.style.overflow = '';
+    }
+
+    document.addEventListener('click', (e) => {
+        const close = e.target.closest('[data-close-modal]');
+        if (close) {
+            const modal = close.closest('.modal-overlay');
+            if (modal) closeModal(modal.id);
+        }
+        if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('open')) {
+            closeModal(e.target.id);
+        }
+    });
+
+    function initRpcSection() {
+        loadRpcList();
+        bindAddRpcForm();
+        bindEditRpcForm();
+        bindDeleteRpcConfirm();
+    }
+
+    async function loadRpcList() {
+        const root = document.getElementById('rpc-list-root');
+        const empty = document.getElementById('rpc-empty');
+        const count = document.getElementById('rpc-count');
+        if (!root) return;
+
+        root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
+        if (empty) empty.hidden = true;
+        if (count) count.textContent = 'Loading…';
+
+        const res = await apiCall('GET', '/admin/rpcs');
+        if (!res.ok) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            if (count) count.textContent = 'Failed to load';
+            showToast(res.message, 'error');
+            return;
+        }
+
+        const list = res.data?.data || [];
+        window.__rpcCache = list;
+        if (count) count.textContent = `${list.length} endpoint${list.length === 1 ? '' : 's'}`;
+        if (list.length === 0) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
+        }
+        renderRpcList(list);
+    }
+
+    function renderRpcList(list) {
+        const root = document.getElementById('rpc-list-root');
+        if (!root) return;
+        root.innerHTML = `<div class="rpc-list">${list.map(renderRpcRow).join('')}</div>`;
+    }
+
+    function renderRpcRow(item) {
+        const rpc = item.rpc || item;
+        const programs = item.programs || [];
+        const hasPrograms = programs.length > 0;
+        return `
+            <div class="rpc-row" data-rpc-id="${escapeHtml(rpc.id)}">
+                <div class="rpc-id">${escapeHtml(rpc.id)}</div>
+                <div class="rpc-url-block">
+                    <span class="rpc-url-label">HTTP</span>
+                    <span class="rpc-url-value">${escapeHtml(rpc.http_url)}</span>
+                </div>
+                <div class="rpc-url-block">
+                    <span class="rpc-url-label">WebSocket</span>
+                    <span class="rpc-url-value">${escapeHtml(rpc.ws_url)}</span>
+                </div>
+                <div class="rpc-actions">
+                    ${hasPrograms ? `
+                    <button type="button" class="rpc-action-btn accent" data-rpc-id="${escapeHtml(rpc.id)}" data-action="programs" aria-label="Programs">
+                        <span class="rpc-programs-badge">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            <span class="badge-count">${programs.length}</span>
+                        </span>
+                    </button>` : ''}
+                    <button type="button" class="rpc-action-btn accent" data-rpc-id="${escapeHtml(rpc.id)}" data-action="edit" aria-label="Edit">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button type="button" class="rpc-action-btn danger" data-rpc-id="${escapeHtml(rpc.id)}" data-action="delete" aria-label="Delete">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function bindAddRpcForm() {
+        const form = document.getElementById('rpc-add-form');
+        if (!form) return;
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const feedback = document.getElementById('rpc-add-feedback');
+            const btn = document.getElementById('rpc-add-submit');
+            const httpInput = document.getElementById('rpc-add-http');
+            const wsInput = document.getElementById('rpc-add-ws');
+            showFieldFeedback(feedback, '');
+
+            const http = validateHttpUrl(httpInput.value);
+            if (!http.ok) return showFieldFeedback(feedback, http.message);
+            const ws = validateWsUrl(wsInput.value);
+            if (!ws.ok) return showFieldFeedback(feedback, ws.message);
+
+            const payload = { http_url: http.value };
+            if (ws.value) payload.ws_url = ws.value;
+
+            setBtnLoading(btn, true);
+            const res = await apiCall('POST', '/admin/rpcs', payload);
+            setBtnLoading(btn, false);
+
+            if (!res.ok) return showFieldFeedback(feedback, res.message);
+            form.reset();
+            showBtnSuccess(btn);
+            showToast('RPC added successfully.', 'success');
+            loadRpcList();
+        });
+    }
+
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="edit"]');
+        if (!btn) return;
+        const id = btn.dataset.rpcId;
+        const row = document.querySelector(`.rpc-row[data-rpc-id="${id}"]`);
+        if (!row) return;
+        const values = row.querySelectorAll('.rpc-url-value');
+        document.getElementById('rpc-edit-id').value = id;
+        document.getElementById('rpc-edit-http').value = values[0]?.textContent || '';
+        document.getElementById('rpc-edit-ws').value = values[1]?.textContent || '';
+        showFieldFeedback(document.getElementById('rpc-edit-feedback'), '');
+        openModal('rpc-edit-modal');
+    });
+
+    function bindEditRpcForm() {
+        const form = document.getElementById('rpc-edit-form');
+        if (!form) return;
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const feedback = document.getElementById('rpc-edit-feedback');
+            const btn = document.getElementById('rpc-edit-submit');
+            const id = document.getElementById('rpc-edit-id').value;
+            const httpRaw = document.getElementById('rpc-edit-http').value;
+            const wsRaw = document.getElementById('rpc-edit-ws').value;
+            showFieldFeedback(feedback, '');
+
+            const payload = {};
+            if (httpRaw.trim()) {
+                const http = validateHttpUrl(httpRaw);
+                if (!http.ok) return showFieldFeedback(feedback, http.message);
+                payload.http_url = http.value;
+            }
+            if (wsRaw.trim()) {
+                const ws = validateWsUrl(wsRaw);
+                if (!ws.ok) return showFieldFeedback(feedback, ws.message);
+                payload.ws_url = ws.value;
+            }
+            if (Object.keys(payload).length === 0) return showFieldFeedback(feedback, 'Change at least one URL to save.');
+
+            setBtnLoading(btn, true);
+            const res = await apiCall('PATCH', `/admin/rpcs/${id}`, payload);
+            setBtnLoading(btn, false);
+
+            if (!res.ok) return showFieldFeedback(feedback, res.message);
+            closeModal('rpc-edit-modal');
+            showToast('RPC updated successfully.', 'success');
+            loadRpcList();
+        });
+    }
+
+    let deleteTargetId = null;
+
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="delete"]');
+        if (!btn) return;
+        deleteTargetId = btn.dataset.rpcId;
+        const row = document.querySelector(`.rpc-row[data-rpc-id="${deleteTargetId}"]`);
+        const detail = document.getElementById('rpc-delete-detail');
+        if (detail) detail.textContent = row?.querySelectorAll('.rpc-url-value')[0]?.textContent || '';
+        showFieldFeedback(document.getElementById('rpc-delete-feedback'), '');
+        openModal('rpc-delete-modal');
+    });
+
+    function bindDeleteRpcConfirm() {
+        const btn = document.getElementById('rpc-delete-confirm');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            if (!deleteTargetId) return;
+            const feedback = document.getElementById('rpc-delete-feedback');
+            showFieldFeedback(feedback, '');
+            setBtnLoading(btn, true);
+            const res = await apiCall('DELETE', `/admin/rpcs/${deleteTargetId}`);
+            setBtnLoading(btn, false);
+            if (!res.ok) return showFieldFeedback(feedback, res.message);
+            deleteTargetId = null;
+            closeModal('rpc-delete-modal');
+            showToast('RPC deleted.', 'success');
+            loadRpcList();
+        });
+    }
+
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="programs"]');
+        if (!btn) return;
+        const id = btn.dataset.rpcId;
+        const item = (window.__rpcCache || []).find(i => String(i.rpc?.id || i.id) === id);
+        renderProgramsModal(item?.programs || []);
+        openModal('rpc-programs-modal');
+    });
+
+    function renderProgramsModal(programs) {
+        const list = document.getElementById('rpc-programs-list');
+        const title = document.getElementById('rpc-programs-title');
+        if (title) title.textContent = `Programs using this RPC (${programs.length})`;
+        if (!list) return;
+        if (programs.length === 0) {
+            list.innerHTML = '<p class="modal-text-muted">No programs tied to this RPC.</p>';
+            return;
+        }
+        list.innerHTML = programs.map(p => {
+            const address = Array.isArray(p.address) ? toBase58(p.address) : p.address;
+            return `
+                <div class="program-item">
+                    <span class="program-name">${escapeHtml(p.name || `Program ${p.id}`)}</span>
+                    <span class="program-address">${escapeHtml(address)}</span>
+                    <span class="program-meta">ID: ${escapeHtml(p.id)}${p.last_processed_slot ? ` • Slot ${escapeHtml(p.last_processed_slot)}` : ''}</span>
+                </div>
+            `;
+        }).join('');
+    }
+
 });
