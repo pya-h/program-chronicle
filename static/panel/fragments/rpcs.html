@@ -1,20 +1,145 @@
-<section class="section-shell">
+<section class="section-shell rpcs-section" data-section="rpcs">
     <header class="section-header">
         <div class="section-title-block">
             <h1 class="section-title">RPCs</h1>
             <p class="section-description">Manage Fogo / SVM RPC endpoints used by the indexer.</p>
         </div>
-        <div class="section-actions">
-            <button class="btn btn-secondary">Test all</button>
-            <button class="btn btn-primary">Add RPC</button>
-        </div>
     </header>
 
-    <div class="empty-state">
-        <div class="empty-state-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+    <article class="card rpc-form-card">
+        <div class="card-head">
+            <div class="card-head-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            </div>
+            <div>
+                <h2 class="card-head-title">Add RPC</h2>
+                <p class="card-head-sub">HTTP URL is required. Leave WebSocket URL empty to auto-generate it from the HTTP URL.</p>
+            </div>
         </div>
-        <h2 class="empty-state-title">RPC endpoints</h2>
-        <p class="empty-state-text">A table of HTTP / WebSocket URLs, health status, and assigned programs will appear here.</p>
+
+        <form id="rpc-add-form" class="rpc-form" data-rpc-form="add">
+            <div class="form-grid">
+                <div class="input-group">
+                    <label for="rpc-add-http" class="input-label">HTTP URL</label>
+                    <input type="text" id="rpc-add-http" name="http_url" class="input-field" placeholder="https://api.mainnet-beta.solana.com" autocomplete="off" required>
+                    <span class="field-hint">Required. Must be a valid HTTP or HTTPS URL.</span>
+                </div>
+                <div class="input-group">
+                    <label for="rpc-add-ws" class="input-label">WebSocket URL</label>
+                    <input type="text" id="rpc-add-ws" name="ws_url" class="input-field" placeholder="wss://api.mainnet-beta.solana.com" autocomplete="off">
+                    <span class="field-hint">Optional. Must be a valid WS or WSS URL.</span>
+                </div>
+            </div>
+
+            <div class="rpc-form-footer">
+                <div class="form-feedback" id="rpc-add-feedback" aria-live="polite"></div>
+                <button type="submit" class="btn btn-primary" id="rpc-add-submit">
+                    <span class="btn-text">Add RPC</span>
+                    <span class="btn-loader" aria-hidden="true"><span></span><span></span><span></span></span>
+                    <span class="btn-success" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+            </div>
+        </form>
+    </article>
+
+    <article class="card rpc-list-card">
+        <div class="card-head">
+            <div class="card-head-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            </div>
+            <div>
+                <h2 class="card-head-title">Configured RPCs</h2>
+                <p class="card-head-sub" id="rpc-count">Loading…</p>
+            </div>
+        </div>
+
+        <div id="rpc-list-root" class="rpc-list-root">
+            <div class="skeleton-table" aria-busy="true" aria-label="Loading RPCs">
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+            </div>
+        </div>
+
+        <div class="rpc-empty" id="rpc-empty" hidden>
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            </div>
+            <p class="empty-state-title">No RPCs configured</p>
+            <p class="empty-state-text">Add an RPC endpoint above to start indexing programs.</p>
+        </div>
+    </article>
+
+    <div class="modal-overlay" id="rpc-edit-modal" aria-hidden="true" data-static>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rpc-edit-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="rpc-edit-title">Edit RPC</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="rpc-edit-form" class="rpc-form" data-rpc-form="edit">
+                <input type="hidden" id="rpc-edit-id" name="id">
+                <div class="input-group">
+                    <label for="rpc-edit-http" class="input-label">HTTP URL</label>
+                    <input type="text" id="rpc-edit-http" name="http_url" class="input-field" placeholder="https://api.example.com" autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label for="rpc-edit-ws" class="input-label">WebSocket URL</label>
+                    <input type="text" id="rpc-edit-ws" name="ws_url" class="input-field" placeholder="wss://api.example.com" autocomplete="off">
+                </div>
+                <div class="form-feedback" id="rpc-edit-feedback" aria-live="polite"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="rpc-edit-submit">
+                        <span class="btn-text">Save changes</span>
+                        <span class="btn-loader" aria-hidden="true"><span></span><span></span><span></span></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="rpc-delete-modal" aria-hidden="true" data-static>
+        <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="rpc-delete-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="rpc-delete-title">Delete RPC</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-text">Are you sure you want to delete this RPC?</p>
+                <p class="modal-text-muted" id="rpc-delete-detail"></p>
+                <p class="modal-warning">This cannot be undone if no programs are tied to it.</p>
+                <div class="form-feedback" id="rpc-delete-feedback" aria-live="polite"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="button" class="btn btn-danger" id="rpc-delete-confirm">
+                    <span class="btn-text">Delete</span>
+                    <span class="btn-loader" aria-hidden="true"><span></span><span></span><span></span></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="rpc-programs-modal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rpc-programs-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="rpc-programs-title">Programs using this RPC</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body modal-body-scroll">
+                <div id="rpc-programs-list" class="programs-list"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal>Close</button>
+            </div>
+        </div>
     </div>
 </section>
