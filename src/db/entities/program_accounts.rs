@@ -19,8 +19,8 @@ pub struct Model {
     #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
     pub latest_tx_signature: Option<Vec<u8>>,
     pub first_seen_slot: Option<i64>,
-    pub created_at: Option<DateTime>,
-    pub updated_at: Option<DateTime>,
+    pub created_at: DateTime,
+    pub updated_at: DateTime,
     #[sea_orm(has_many)]
     pub account_states: HasMany<super::account_states::Entity>,
     #[sea_orm(
@@ -35,9 +35,12 @@ pub struct Model {
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for ActiveModel {
-    async fn before_save<C>(mut self, _db: &C, insert: bool) -> Result<Self, DbErr> {
+    async fn before_save<C>(mut self, _db: &C, insert: bool) -> Result<Self, DbErr>
+    where
+        C: ConnectionTrait,
+    {
         if !insert {
-            self.updated_at = Set(chrono::Utc().naive_utc());
+            self.updated_at = Set(chrono::Utc::now().naive_utc());
         }
         Ok(self)
     }

@@ -66,8 +66,8 @@ impl MigrationTrait for Migration {
                     .check(Expr::cust(r#""latest_tx_signature" IS NULL OR OCTET_LENGTH("latest_tx_signature") = 64"#))
                     .col(ColumnDef::new(ProgramAccounts::FirstSeenSlot).big_integer().null())
                     .check(Expr::col(ProgramAccounts::FirstSeenSlot).gte(0))
-                    .col(ColumnDef::new(ProgramAccounts::CreatedAt).timestamp().default(Expr::current_timestamp()))
-                    .col(ColumnDef::new(ProgramAccounts::UpdatedAt).timestamp().default(Expr::current_timestamp()))
+                    .col(ColumnDef::new(ProgramAccounts::CreatedAt).timestamp().not_null().default(Expr::current_timestamp()))
+                    .col(ColumnDef::new(ProgramAccounts::UpdatedAt).timestamp().not_null().default(Expr::current_timestamp()))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-accounts-program-id")
