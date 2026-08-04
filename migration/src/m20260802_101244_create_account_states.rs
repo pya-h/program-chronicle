@@ -1,4 +1,4 @@
-use sea_orm_migration::{prelude::*, schema::*};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -58,11 +58,13 @@ impl MigrationTrait for Migration {
                     .col(
                         ColumnDef::new(AccountStates::CreatedAt)
                             .timestamp()
+                            .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
                         ColumnDef::new(AccountStates::UpdatedAt)
                             .timestamp()
+                            .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .foreign_key(
