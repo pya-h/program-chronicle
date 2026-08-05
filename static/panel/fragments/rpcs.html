@@ -82,15 +82,17 @@
             </div>
             <form id="rpc-edit-form" class="rpc-form" data-rpc-form="edit">
                 <input type="hidden" id="rpc-edit-id" name="id">
-                <div class="input-group">
-                    <label for="rpc-edit-http" class="input-label">HTTP URL</label>
-                    <input type="text" id="rpc-edit-http" name="http_url" class="input-field" placeholder="https://api.example.com" autocomplete="off">
+                <div class="modal-body">
+                    <div class="input-group">
+                        <label for="rpc-edit-http" class="input-label">HTTP URL</label>
+                        <input type="text" id="rpc-edit-http" name="http_url" class="input-field" placeholder="https://api.example.com" autocomplete="off">
+                    </div>
+                    <div class="input-group">
+                        <label for="rpc-edit-ws" class="input-label">WebSocket URL</label>
+                        <input type="text" id="rpc-edit-ws" name="ws_url" class="input-field" placeholder="wss://api.example.com" autocomplete="off">
+                    </div>
+                    <div class="form-feedback" id="rpc-edit-feedback" aria-live="polite"></div>
                 </div>
-                <div class="input-group">
-                    <label for="rpc-edit-ws" class="input-label">WebSocket URL</label>
-                    <input type="text" id="rpc-edit-ws" name="ws_url" class="input-field" placeholder="wss://api.example.com" autocomplete="off">
-                </div>
-                <div class="form-feedback" id="rpc-edit-feedback" aria-live="polite"></div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
                     <button type="submit" class="btn btn-primary" id="rpc-edit-submit">

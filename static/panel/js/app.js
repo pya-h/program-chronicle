@@ -283,17 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
         item.addEventListener('click', () => setActiveNav(item));
     });
 
-    document.body.addEventListener('htmx:afterSwap', (evt) => {
-        const trigger = evt.detail.requestConfig?.trigger;
-        if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
-        Prefs.reflect();
-        // Detect the swapped-in section by its DOM marker — htmx's afterSwap detail
-        // exposes requestConfig.path, not a bare `path`, so key off the content itself.
-        const swapped = evt.detail.target;
-        if (swapped?.matches?.('[data-section="rpcs"]') || swapped?.querySelector?.('[data-section="rpcs"]')) {
-            initRpcSection();
-        }
-    });
+    // Section swap detection is handled near the end of the script so RPC and
+    // Programs initializers share the same listener and do not double-fire.
 
     document.body.addEventListener('htmx:sendError', (evt) => {
         if (evt.detail.requestConfig?.path === '/admin') return;
@@ -580,7 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.body.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action="edit"]');
-        if (!btn) return;
+        if (!btn || !btn.dataset.rpcId) return;
         const id = btn.dataset.rpcId;
         const row = document.querySelector(`.rpc-row[data-rpc-id="${id}"]`);
         if (!row) return;
@@ -635,7 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.body.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action="delete"]');
-        if (!btn) return;
+        if (!btn || !btn.dataset.rpcId) return;
         deleteTargetId = btn.dataset.rpcId;
         const row = document.querySelector(`.rpc-row[data-rpc-id="${deleteTargetId}"]`);
         const detail = document.getElementById('rpc-delete-detail');
@@ -671,7 +662,7 @@ document.addEventListener('DOMContentLoaded', () => {
         openModal('rpc-programs-modal');
     });
 
-    function renderProgramsModal(programs) {
+    function renderProgramsModal(programs, opts = {}) {
         const list = document.getElementById('rpc-programs-list');
         const title = document.getElementById('rpc-programs-title');
         if (title) title.textContent = `Programs using this RPC (${programs.length})`;
@@ -680,16 +671,468 @@ document.addEventListener('DOMContentLoaded', () => {
             list.innerHTML = '<p class="modal-text-muted">No programs tied to this RPC.</p>';
             return;
         }
+        const clickable = opts.clickable !== false;
         list.innerHTML = programs.map(p => {
-            const address = Array.isArray(p.address) ? toBase58(p.address) : p.address;
+            const address = formatProgramAddress(p.address);
             return `
-                <div class="program-item">
+                <div class="program-item ${clickable ? 'program-item-clickable' : ''}" ${clickable ? `data-program-id="${escapeHtml(p.id)}" data-program-address="${escapeHtml(address)}"` : ''}>
                     <span class="program-name">${escapeHtml(p.name || `Program ${p.id}`)}</span>
                     <span class="program-address">${escapeHtml(address)}</span>
                     <span class="program-meta">ID: ${escapeHtml(p.id)}${p.last_processed_slot ? ` • Slot ${escapeHtml(p.last_processed_slot)}` : ''}</span>
                 </div>
             `;
         }).join('');
+
+        if (clickable) {
+            list.querySelectorAll('.program-item-clickable').forEach(item => {
+                item.addEventListener('click', () => {
+                    const id = item.dataset.programId;
+                    const address = item.dataset.programAddress;
+                    closeModal('rpc-programs-modal');
+                    openProgramEditById(id, address);
+                });
+            });
+        }
     }
+
+    // Programs section --------------------------------------------------------
+    function formatProgramAddress(raw) {
+        if (typeof raw === 'string') return raw;
+        if (Array.isArray(raw)) return toBase58(raw.map(n => Number(n)));
+        return '';
+    }
+
+    const BASE58_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+    function fromBase58(str) {
+        const base = 58n;
+        let num = 0n;
+        for (const ch of str) {
+            const idx = BASE58_CHARS.indexOf(ch);
+            if (idx === -1) return null;
+            num = (num * base) + BigInt(idx);
+        }
+        const bytes = [];
+        while (num > 0n) {
+            bytes.unshift(Number(num & 0xffn));
+            num >>= 8n;
+        }
+        for (let i = 0; i < str.length && str[i] === BASE58_CHARS[0]; i++) bytes.unshift(0);
+        return bytes;
+    }
+
+    function validateSolanaAddress(raw) {
+        const value = raw.trim();
+        if (!value) return { ok: false, message: 'Program address is required.' };
+        if (value.length < 32 || value.length > 44) return { ok: false, message: 'Address length does not look like a Solana public key.' };
+        const bytes = fromBase58(value);
+        if (!bytes) return { ok: false, message: 'Address contains invalid base-58 characters.' };
+        if (bytes.length !== 32) return { ok: false, message: `Address decodes to ${bytes.length} bytes; expected 32.` };
+        return { ok: true, value };
+    }
+
+    function initProgramsSection() {
+        loadProgramList();
+        bindAddProgramForm();
+        bindEditProgramForm();
+        bindDeleteProgramConfirm();
+        bindProgramRpcModeSwitch('program-add');
+        bindProgramRpcModeSwitch('program-edit');
+    }
+
+    async function loadProgramList() {
+        const root = document.getElementById('program-list-root');
+        const empty = document.getElementById('program-empty');
+        const count = document.getElementById('program-count');
+        if (!root) return;
+
+        root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
+        if (empty) empty.hidden = true;
+        if (count) count.textContent = 'Loading…';
+
+        const res = await apiCall('GET', '/admin/programs');
+        if (!res.ok) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            if (count) count.textContent = 'Failed to load';
+            showToast(res.message, 'error');
+            return;
+        }
+
+        const list = res.data?.data || [];
+        window.__programCache = list;
+        if (count) count.textContent = `${list.length} program${list.length === 1 ? '' : 's'}`;
+        if (list.length === 0) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
+        }
+        renderProgramList(list);
+    }
+
+    function renderProgramList(list) {
+        const root = document.getElementById('program-list-root');
+        if (!root) return;
+        root.innerHTML = `<div class="program-list">${list.map(renderProgramRow).join('')}</div>`;
+    }
+
+    function renderProgramRow(item) {
+        const program = item.program || item;
+        const rpc = item.rpc || {};
+        const address = formatProgramAddress(program.address);
+        const name = program.name || `Program ${program.id}`;
+        const slot = program.last_processed_slot;
+        return `
+            <div class="program-row" data-program-id="${escapeHtml(program.id)}" data-program-address="${escapeHtml(address)}">
+                <div class="program-id">${escapeHtml(program.id)}</div>
+                <div class="program-info">
+                    <span class="program-name">${escapeHtml(name)}</span>
+                    <span class="program-address" title="${escapeHtml(address)}">${escapeHtml(address)}</span>
+                </div>
+                <div class="program-rpc-link">
+                    <button type="button" class="program-rpc-btn" data-program-id="${escapeHtml(program.id)}" data-action="rpc">
+                        <span class="rpc-url-label">RPC</span>
+                        <span class="program-rpc-url">${escapeHtml(rpc.http_url || '—')}</span>
+                    </button>
+                </div>
+                <div class="program-status">
+                    <span class="status-badge ${slot ? 'indexed' : 'pending'}">${slot ? `Slot ${escapeHtml(slot)}` : 'Pending'}</span>
+                </div>
+                <div class="program-actions">
+                    <button type="button" class="program-action-btn accent" data-program-id="${escapeHtml(program.id)}" data-action="edit" aria-label="Edit">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button type="button" class="program-action-btn danger" data-program-id="${escapeHtml(program.id)}" data-action="delete" aria-label="Delete">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    async function populateRpcSelect(selectId, includeKeepCurrent = false) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+
+        const currentValue = select.value;
+        select.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = includeKeepCurrent ? 'Keep current RPC' : 'Select an RPC endpoint…';
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        select.appendChild(placeholder);
+
+        const res = await apiCall('GET', '/admin/rpcs');
+        const rpcs = res.ok ? (res.data?.data || []) : [];
+        if (res.ok) window.__rpcCache = rpcs;
+
+        rpcs.forEach(item => {
+            const rpc = item.rpc || item;
+            const option = document.createElement('option');
+            option.value = rpc.id;
+            option.textContent = `${rpc.id}: ${rpc.http_url}`;
+            select.appendChild(option);
+        });
+
+        if (currentValue) select.value = currentValue;
+    }
+
+    function bindProgramRpcModeSwitch(prefix) {
+        const existing = document.getElementById(`${prefix}-mode-existing`);
+        const newBtn = document.getElementById(`${prefix}-mode-new`);
+        const panels = document.getElementById(`${prefix}-rpc-panels`);
+        if (!existing || !newBtn || !panels) return;
+
+        const setMode = (mode) => {
+            existing.classList.toggle('active', mode === 'existing');
+            newBtn.classList.toggle('active', mode === 'new');
+            panels.querySelectorAll('.program-rpc-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === mode));
+        };
+
+        existing.addEventListener('click', () => setMode('existing'));
+        newBtn.addEventListener('click', () => setMode('new'));
+    }
+
+    // optional=true (update flow): an empty "New RPC" panel means "keep current RPC"
+    // rather than a validation error, since the RPC is not required on patch.
+    function getProgramRpcPayload(prefix, { optional = false } = {}) {
+        const existingPanel = document.getElementById(`${prefix}-existing-panel`);
+        const isExisting = existingPanel?.classList.contains('active') ?? true;
+        if (isExisting) {
+            const rpcId = document.getElementById(`${prefix}-rpc-id`)?.value;
+            return rpcId ? { rpc_id: parseInt(rpcId, 10) } : {};
+        }
+        const httpRaw = (document.getElementById(`${prefix}-rpc-http`)?.value || '').trim();
+        const wsRaw = (document.getElementById(`${prefix}-rpc-ws`)?.value || '').trim();
+        if (optional && !httpRaw && !wsRaw) return {};
+        const http = validateHttpUrl(httpRaw);
+        if (!http.ok) return { error: http.message };
+        const ws = validateWsUrl(wsRaw);
+        if (!ws.ok) return { error: ws.message };
+        const payload = { rpc_url: { http_url: http.value } };
+        if (ws.value) payload.rpc_url.ws_url = ws.value;
+        return payload;
+    }
+
+    function bindAddProgramForm() {
+        const form = document.getElementById('program-add-form');
+        if (!form) return;
+
+        populateRpcSelect('program-add-rpc-id');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const feedback = document.getElementById('program-add-feedback');
+            const btn = document.getElementById('program-add-submit');
+            showFieldFeedback(feedback, '');
+
+            const address = validateSolanaAddress(document.getElementById('program-add-address').value);
+            if (!address.ok) return showFieldFeedback(feedback, address.message);
+
+            const startSlotRaw = document.getElementById('program-add-start-slot').value;
+            const startSlot = startSlotRaw ? parseInt(startSlotRaw, 10) : null;
+            if (startSlotRaw && (!Number.isFinite(startSlot) || startSlot < 0)) {
+                return showFieldFeedback(feedback, 'Start slot must be a non-negative integer.');
+            }
+
+            const rpcPayload = getProgramRpcPayload('program-add');
+            if (rpcPayload.error) return showFieldFeedback(feedback, rpcPayload.error);
+            if (!rpcPayload.rpc_id && !rpcPayload.rpc_url) {
+                return showFieldFeedback(feedback, 'Select an existing RPC or provide a new RPC URL.');
+            }
+
+            const name = document.getElementById('program-add-name').value.trim() || null;
+            const payload = { address: address.value, ...rpcPayload };
+            if (name) payload.name = name;
+            if (startSlot !== null) payload.start_slot = startSlot;
+
+            setBtnLoading(btn, true);
+            const res = await apiCall('POST', '/admin/programs', payload);
+            setBtnLoading(btn, false);
+
+            if (!res.ok) return showFieldFeedback(feedback, res.message);
+            form.reset();
+            resetProgramRpcMode('program-add');
+            showBtnSuccess(btn);
+            showToast('Program added successfully.', 'success');
+            loadProgramList();
+        });
+    }
+
+    function resetProgramRpcMode(prefix) {
+        const existing = document.getElementById(`${prefix}-mode-existing`);
+        if (existing) {
+            existing.click();
+            const select = document.getElementById(`${prefix}-rpc-id`);
+            if (select) select.value = '';
+        }
+    }
+
+    let programEditOriginal = {};
+    let programEditTargetId = null;
+
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="edit"]');
+        if (!btn || !btn.dataset.programId) return;
+        const id = btn.dataset.programId;
+        const address = btn.closest('.program-row')?.dataset?.programAddress;
+        openProgramEditById(id, address);
+    });
+
+    async function openProgramEditById(id, knownAddress) {
+        programEditTargetId = id;
+        const cached = window.__programCache || [];
+        let item = cached.find(i => String(i.program?.id || i.id) === id);
+        if (!item && knownAddress) {
+            item = cached.find(i => formatProgramAddress(i.program?.address || i.address) === knownAddress);
+        }
+        if (!item) {
+            const res = await apiCall('GET', `/admin/programs/${id}`);
+            if (!res.ok) {
+                showToast(res.message, 'error');
+                return;
+            }
+            item = res.data;
+        }
+        if (!item) return;
+
+        const program = item.program || item;
+        const address = knownAddress || formatProgramAddress(program.address);
+
+        programEditOriginal = {
+            address,
+            name: program.name || '',
+            rpc_id: String(program.rpc_id || '')
+        };
+
+        const switchToPrograms = () => {
+            const main = document.getElementById('main-content');
+            if (main?.querySelector('[data-section="programs"]')) {
+                setActiveNav(document.querySelector('.nav-item[hx-get="fragments/programs.html"]'));
+                return Promise.resolve();
+            }
+            const navItem = document.querySelector('.nav-item[hx-get="fragments/programs.html"]');
+            if (!navItem) return Promise.resolve();
+            setActiveNav(navItem);
+            return new Promise((resolve) => {
+                const handler = () => {
+                    document.body.removeEventListener('htmx:afterSwap', handler);
+                    resolve();
+                };
+                document.body.addEventListener('htmx:afterSwap', handler);
+                navItem.click();
+            });
+        };
+
+        await switchToPrograms();
+
+        const idEl = document.getElementById('program-edit-id');
+        if (!idEl) { showToast('Could not open the program editor.', 'error'); return; }
+
+        await populateRpcSelect('program-edit-rpc-id', true);
+
+        idEl.value = program.id;
+        document.getElementById('program-edit-address').value = programEditOriginal.address;
+        document.getElementById('program-edit-name').value = programEditOriginal.name;
+        const rpcSelect = document.getElementById('program-edit-rpc-id');
+        if (rpcSelect) rpcSelect.value = '';
+
+        resetProgramRpcMode('program-edit');
+        showFieldFeedback(document.getElementById('program-edit-feedback'), '');
+        openModal('program-edit-modal');
+    }
+
+    function bindEditProgramForm() {
+        const form = document.getElementById('program-edit-form');
+        if (!form) return;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const feedback = document.getElementById('program-edit-feedback');
+            const btn = document.getElementById('program-edit-submit');
+            showFieldFeedback(feedback, '');
+
+            const addressRaw = document.getElementById('program-edit-address').value;
+            const nameRaw = document.getElementById('program-edit-name').value;
+            const rpcPayload = getProgramRpcPayload('program-edit', { optional: true });
+            if (rpcPayload.error) return showFieldFeedback(feedback, rpcPayload.error);
+
+            const payload = {};
+
+            if (addressRaw.trim()) {
+                const address = validateSolanaAddress(addressRaw);
+                if (!address.ok) return showFieldFeedback(feedback, address.message);
+                if (address.value !== programEditOriginal.address) payload.address = address.value;
+            }
+
+            if (nameRaw.trim()) {
+                const name = nameRaw.trim();
+                if (name !== programEditOriginal.name) payload.name = name;
+            } else if (programEditOriginal.name) {
+                payload.name = '';
+            }
+
+            if (rpcPayload.rpc_id) {
+                if (String(rpcPayload.rpc_id) !== programEditOriginal.rpc_id) payload.rpc_id = rpcPayload.rpc_id;
+            } else if (rpcPayload.rpc_url) {
+                payload.rpc_url = rpcPayload.rpc_url;
+            }
+
+            if (Object.keys(payload).length === 0) {
+                return showFieldFeedback(feedback, 'Change at least one field to save.');
+            }
+
+            setBtnLoading(btn, true);
+            const res = await apiCall('PATCH', `/admin/programs/${programEditTargetId}`, payload);
+            setBtnLoading(btn, false);
+
+            if (!res.ok) return showFieldFeedback(feedback, res.message);
+            closeModal('program-edit-modal');
+            showToast('Program updated successfully.', 'success');
+            loadProgramList();
+        });
+    }
+
+    let deleteProgramTargetId = null;
+
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="delete"]');
+        if (!btn || !btn.dataset.programId) return;
+        deleteProgramTargetId = btn.dataset.programId;
+        const row = document.querySelector(`.program-row[data-program-id="${deleteProgramTargetId}"]`);
+        const detail = document.getElementById('program-delete-detail');
+        if (detail) {
+            const name = row?.querySelector('.program-name')?.textContent || '';
+            const address = row?.dataset?.programAddress || '';
+            detail.textContent = `${name}${address ? ` • ${address}` : ''}`;
+        }
+        showFieldFeedback(document.getElementById('program-delete-feedback'), '');
+        openModal('program-delete-modal');
+    });
+
+    function bindDeleteProgramConfirm() {
+        const btn = document.getElementById('program-delete-confirm');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            if (!deleteProgramTargetId) return;
+            const feedback = document.getElementById('program-delete-feedback');
+            showFieldFeedback(feedback, '');
+            setBtnLoading(btn, true);
+            const res = await apiCall('DELETE', `/admin/programs/${deleteProgramTargetId}`);
+            setBtnLoading(btn, false);
+            if (!res.ok) return showFieldFeedback(feedback, res.message);
+            deleteProgramTargetId = null;
+            closeModal('program-delete-modal');
+            showToast('Program deleted.', 'success');
+            loadProgramList();
+        });
+    }
+
+    // Registered once at module scope (not per-init) so navigating away and back
+    // to the Programs section does not stack duplicate delegated listeners.
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="rpc"]');
+        if (!btn || !btn.dataset.programId) return;
+        const id = btn.dataset.programId;
+        const cached = window.__programCache || [];
+        const item = cached.find(i => String(i.program?.id || i.id) === id);
+        const rpc = item?.rpc || {};
+
+        document.getElementById('program-rpc-title').textContent = `RPC for Program ${id}`;
+        document.getElementById('program-rpc-http').textContent = rpc.http_url || '—';
+        document.getElementById('program-rpc-ws').textContent = rpc.ws_url || '—';
+        document.getElementById('program-rpc-id').textContent = rpc.id || '—';
+
+        const gotoBtn = document.getElementById('program-rpc-goto');
+        if (gotoBtn) {
+            const validRpc = rpc.id && rpc.id !== 0;
+            gotoBtn.disabled = !validRpc;
+            gotoBtn.onclick = validRpc ? () => {
+                closeModal('program-rpc-modal');
+                const rpcNav = document.querySelector('.nav-item[hx-get="fragments/rpcs.html"]');
+                if (rpcNav) {
+                    setActiveNav(rpcNav);
+                    rpcNav.click();
+                }
+            } : null;
+        }
+        openModal('program-rpc-modal');
+    });
+
+    window.umbra.openProgramEdit = openProgramEditById;
+
+    document.body.addEventListener('htmx:afterSwap', (evt) => {
+        const trigger = evt.detail.requestConfig?.trigger;
+        if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
+        Prefs.reflect();
+        const swapped = evt.detail.target;
+        if (swapped?.matches?.('[data-section="rpcs"]') || swapped?.querySelector?.('[data-section="rpcs"]')) {
+            initRpcSection();
+        }
+        if (swapped?.matches?.('[data-section="programs"]') || swapped?.querySelector?.('[data-section="programs"]')) {
+            initProgramsSection();
+        }
+    });
 
 });
