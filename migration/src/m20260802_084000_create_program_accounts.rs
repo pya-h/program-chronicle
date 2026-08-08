@@ -24,12 +24,19 @@ enum ProgramAccounts {
     State,
     RentEpoch,
     LatestSlot,
+    LatestSlotId,
     LatestTxSignature,
     LatestWriteVersion,
 }
 
 #[derive(DeriveIden)]
 enum Programs {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
+enum Slots {
     Table,
     Id,
 }
@@ -68,6 +75,7 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .check(Expr::col(ProgramAccounts::LatestSlot).gte(0))
+                    .col(ColumnDef::new(ProgramAccounts::LatestSlotId).big_integer().not_null())
                     .col(
                         ColumnDef::new(ProgramAccounts::LatestTxSignature)
                             .binary()
@@ -83,6 +91,14 @@ impl MigrationTrait for Migration {
                             .to(Programs::Table, Programs::Id)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::Restrict), // Or maybe SET_NULL? or NO_ACTION?
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk-accounts-latest-slot-id")
+                            .from(ProgramAccounts::Table, ProgramAccounts::LatestSlotId)
+                            .to(Slots::Table, Slots::Id)
+                            .on_update(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Restrict),
                     )
                     .to_owned(),
             )
