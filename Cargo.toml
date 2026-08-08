@@ -23,6 +23,8 @@ subtle = "2.6.1"
 url = "2.5.8"
 solana-sdk="4.1.0"
 chrono = "0.4.45"
+futures = "0.3"
+async-trait = "0.1"
 
 [dev-dependencies]
 httpc-test = "0.1.10"

@@ -1,5 +1,6 @@
 pub mod core;
 pub mod db;
+pub mod indexer;
 pub mod middlewares;
 pub mod routes;
 

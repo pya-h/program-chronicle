@@ -25,6 +25,15 @@ pub enum SvmIndexerError {
     #[error("Unknown Client error! {0}")]
     UnknownSolanaClientError(String),
 
+    #[error("RPC request failed! {0}")]
+    RpcRequestFailed(String),
+
+    #[error("RPC subscription failed! {0}")]
+    SubscriptionFailed(String),
+
+    #[error("Indexer failure! {0}")]
+    IndexerFailure(String),
+
     #[error("Invalid URL input! {0}")]
     InvalidURL(String),
 
