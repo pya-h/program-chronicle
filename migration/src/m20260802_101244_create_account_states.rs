@@ -21,11 +21,16 @@ enum AccountStates {
     Table,
     Id,
     ProgramAccountId,
+    CreatedAt,
+    UpdatedAt,
+
+    Lamports,
+    Owner,
     Data,
     Slot,
     TxSignature,
-    CreatedAt,
-    UpdatedAt,
+    WriteVersion,
+    BlockTime,
 }
 
 #[async_trait::async_trait]

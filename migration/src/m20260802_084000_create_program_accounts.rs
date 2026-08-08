@@ -1,5 +1,3 @@
-use std::u64;
-
 use sea_orm_migration::prelude::*;
 
 pub struct Migration;
@@ -24,10 +22,10 @@ enum ProgramAccounts {
     Lamports,
     Owner,
     State,
+    RentEpoch,
     LatestSlot,
     LatestTxSignature,
     LatestWriteVersion,
-    LatestBlockTime,
 }
 
 #[derive(DeriveIden)]
@@ -63,6 +61,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(ProgramAccounts::Lamports).big_integer().not_null()).check(Expr::col(ProgramAccounts::Lamports).gte(0))
                     .col(ColumnDef::new(ProgramAccounts::Owner).binary().not_null()).check(Expr::cust(r#"OCTET_LENGTH("owner") = 32"#))
                     .col(ColumnDef::new(ProgramAccounts::State).binary().not_null())
+                    .col(ColumnDef::new(ProgramAccounts::RentEpoch).big_integer().null())
                     .col(
                         ColumnDef::new(ProgramAccounts::LatestSlot)
                             .big_integer()
@@ -77,8 +76,6 @@ impl MigrationTrait for Migration {
                     .check(Expr::cust(r#""latest_tx_signature" IS NULL OR OCTET_LENGTH("latest_tx_signature") = 64"#))
                     .col(ColumnDef::new(ProgramAccounts::LatestWriteVersion).big_integer().not_null().default(0))
                     .check(Expr::col(ProgramAccounts::LatestWriteVersion).gte(0))
-                    .col(ColumnDef::new(ProgramAccounts::LatestBlockTime).big_integer().null())
-                    .check(Expr::cust(r#""latest_block_time" IS NULL OR "latest_block_time" >= 0"#))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-accounts-program-id")
