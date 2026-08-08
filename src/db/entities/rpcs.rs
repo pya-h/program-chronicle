@@ -17,6 +17,8 @@ pub struct Model {
     pub updated_at: DateTime,
     #[sea_orm(has_many)]
     pub programs: HasMany<super::programs::Entity>,
+    #[sea_orm(has_many)]
+    pub slots: HasMany<super::slots::Entity>,
 }
 
 #[async_trait::async_trait]

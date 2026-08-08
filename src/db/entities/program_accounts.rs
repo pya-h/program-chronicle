@@ -9,20 +9,27 @@ use serde::Serialize;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    #[sea_orm(unique_key = "id")]
+    #[sea_orm(unique_key = "programid")]
     pub program_id: i32,
-    #[sea_orm(column_type = "VarBinary(StringLen::None)", unique_key = "id")]
+    #[sea_orm(column_type = "VarBinary(StringLen::None)", unique_key = "programid")]
     pub address: Vec<u8>,
-    #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
-    pub state: Option<Vec<u8>>,
-    pub latest_slot: Option<i64>,
-    #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
-    pub latest_tx_signature: Option<Vec<u8>>,
-    pub first_seen_slot: Option<i64>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
+    pub lamports: i64,
+    #[sea_orm(column_type = "VarBinary(StringLen::None)")]
+    pub owner: Vec<u8>,
+    #[sea_orm(column_type = "VarBinary(StringLen::None)")]
+    pub state: Vec<u8>,
+    pub rent_epoch: Option<i64>,
+    pub latest_slot: i64,
+    pub latest_slot_id: i64,
+    #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
+    pub latest_tx_signature: Option<Vec<u8>>,
+    pub latest_write_version: i64,
     #[sea_orm(has_many)]
     pub account_states: HasMany<super::account_states::Entity>,
+    #[sea_orm(has_many)]
+    pub program_events: HasMany<super::program_events::Entity>,
     #[sea_orm(
         belongs_to,
         from = "program_id",
@@ -31,6 +38,14 @@ pub struct Model {
         on_delete = "Restrict"
     )]
     pub programs: BelongsTo<super::programs::Entity>,
+    #[sea_orm(
+        belongs_to,
+        from = "latest_slot_id",
+        to = "id",
+        on_update = "Cascade",
+        on_delete = "Restrict"
+    )]
+    pub slots: BelongsTo<super::slots::Entity>,
 }
 
 #[async_trait::async_trait]

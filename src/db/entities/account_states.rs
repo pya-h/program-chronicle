@@ -9,10 +9,18 @@ use serde::Serialize;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
+    #[sea_orm(unique_key = "write")]
     pub program_account_id: i64,
-    #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
-    pub data: Option<Vec<u8>>,
+    #[sea_orm(column_type = "VarBinary(StringLen::None)")]
+    pub data: Vec<u8>,
+    pub lamports: i64,
+    #[sea_orm(column_type = "VarBinary(StringLen::None)")]
+    pub owner: Vec<u8>,
+    #[sea_orm(unique_key = "write")]
     pub slot: i64,
+    pub slot_id: i64,
+    #[sea_orm(unique_key = "write")]
+    pub write_version: i64,
     #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
     pub tx_signature: Option<Vec<u8>>,
     pub created_at: DateTime,
@@ -25,6 +33,14 @@ pub struct Model {
         on_delete = "Restrict"
     )]
     pub program_accounts: BelongsTo<super::program_accounts::Entity>,
+    #[sea_orm(
+        belongs_to,
+        from = "slot_id",
+        to = "id",
+        on_update = "Cascade",
+        on_delete = "Restrict"
+    )]
+    pub slots: BelongsTo<super::slots::Entity>,
 }
 
 #[async_trait::async_trait]

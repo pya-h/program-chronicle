@@ -2,5 +2,8 @@
 
 pub use super::account_states::Entity as AccountStates;
 pub use super::program_accounts::Entity as ProgramAccounts;
+pub use super::program_events::Entity as ProgramEvents;
 pub use super::programs::Entity as Programs;
 pub use super::rpcs::Entity as Rpcs;
+pub use super::slots::Entity as Slots;
+pub use super::transactions::Entity as Transactions;
