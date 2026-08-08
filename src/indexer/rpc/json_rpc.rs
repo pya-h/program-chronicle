@@ -1,11 +1,16 @@
 use async_trait::async_trait;
+use futures::StreamExt;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
+use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{
-    RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig,
+    RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
+    RpcTransactionLogsFilter,
 };
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
+use solana_sdk::{
+    account::Account, commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature,
+};
 use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiMessage, UiTransactionEncoding,
 };
@@ -18,13 +23,24 @@ use crate::indexer::rpc::{
 
 pub struct JsonRpc {
     client: RpcClient,
+    ws_url: String,
+    commitment: CommitmentConfig,
 }
 
 impl JsonRpc {
-    pub fn new(http_url: String) -> Self {
+    pub fn new(http_url: String, ws_url: String, commitment: CommitmentConfig) -> Self {
         Self {
-            client: RpcClient::new(http_url),
+            client: RpcClient::new_with_commitment(http_url, commitment),
+            ws_url,
+            commitment,
         }
+    }
+
+    async fn connect(&self) -> RpcResult<&'static PubsubClient> {
+        let pubsub = PubsubClient::new(&self.ws_url)
+            .await
+            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
+        Ok(Box::leak(Box::new(pubsub)))
     }
 }
 
@@ -149,14 +165,72 @@ impl SvmRpc for JsonRpc {
 
     async fn subscribe_program(
         &self,
-        _program: &Pubkey,
+        program: &Pubkey,
         _filter: Option<&AccountFilter>,
     ) -> RpcResult<SubStream<AccountSnapshot>> {
-        todo!()
+        let client = self.connect().await?;
+        let config = RpcProgramAccountsConfig {
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64Zstd),
+                commitment: Some(self.commitment),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (stream, _unsub) = client
+            .program_subscribe(program, Some(config))
+            .await
+            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
+
+        Ok(Box::pin(stream.map(|response| {
+            let slot = response.context.slot;
+            let keyed = response.value;
+            let address = keyed
+                .pubkey
+                .parse()
+                .map_err(|_| SvmIndexerError::SubscriptionFailed(keyed.pubkey.clone()))?;
+            let account = keyed.account.decode::<Account>().ok_or_else(|| {
+                SvmIndexerError::SubscriptionFailed(format!("undecodable account {}", keyed.pubkey))
+            })?;
+            Ok(AccountSnapshot {
+                address,
+                owner: account.owner,
+                lamports: account.lamports,
+                data: account.data,
+                rent_epoch: account.rent_epoch,
+                executable: account.executable,
+                slot,
+                write_version: None,
+            })
+        })))
     }
 
-    async fn subscribe_logs(&self, _program: &Pubkey) -> RpcResult<SubStream<LogsNotification>> {
-        todo!()
+    async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>> {
+        let client = self.connect().await?;
+        let config = RpcTransactionLogsConfig {
+            commitment: Some(self.commitment),
+        };
+        let (stream, _unsub) = client
+            .logs_subscribe(
+                RpcTransactionLogsFilter::Mentions(vec![program.to_string()]),
+                config,
+            )
+            .await
+            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
+
+        Ok(Box::pin(stream.map(|response| {
+            let slot = response.context.slot;
+            let value = response.value;
+            Ok(LogsNotification {
+                signature: value
+                    .signature
+                    .parse()
+                    .map_err(|_| SvmIndexerError::SubscriptionFailed(value.signature.clone()))?,
+                slot,
+                err: value.err.map(|e| serde_json::to_value(e).unwrap_or_default()),
+                logs: value.logs,
+            })
+        })))
     }
 }
 
