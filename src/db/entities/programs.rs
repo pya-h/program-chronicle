@@ -21,6 +21,8 @@ pub struct Model {
     pub updated_at: DateTime,
     #[sea_orm(has_many)]
     pub program_accounts: HasMany<super::program_accounts::Entity>,
+    #[sea_orm(has_many)]
+    pub program_events: HasMany<super::program_events::Entity>,
     #[sea_orm(
         belongs_to,
         from = "rpc_id",
@@ -29,6 +31,8 @@ pub struct Model {
         on_delete = "Restrict"
     )]
     pub rpcs: BelongsTo<super::rpcs::Entity>,
+    #[sea_orm(has_many)]
+    pub transactions: HasMany<super::transactions::Entity>,
 }
 
 #[async_trait::async_trait]

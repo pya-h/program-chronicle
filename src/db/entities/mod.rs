@@ -4,5 +4,8 @@ pub mod prelude;
 
 pub mod account_states;
 pub mod program_accounts;
+pub mod program_events;
 pub mod programs;
 pub mod rpcs;
+pub mod slots;
+pub mod transactions;
