@@ -17,6 +17,7 @@ enum Programs {
     Name,
     LastProcessedSlot,
     LastProcessedAt,
+    StartSlot,
     CreatedAt,
     UpdatedAt,
 }
@@ -54,6 +55,8 @@ impl MigrationTrait for Migration {
                             .default(0),
                     )
                     .check(Expr::col(Programs::LastProcessedSlot).gte(0))
+                    .col(ColumnDef::new(Programs::StartSlot).big_integer().null())
+                    .check(Expr::col(Programs::StartSlot).gte(0))
                     .col(
                         ColumnDef::new(Programs::CreatedAt)
                             .timestamp()

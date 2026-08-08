@@ -16,16 +16,27 @@ enum ProgramAccounts {
 }
 
 #[derive(DeriveIden)]
+enum Slots {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
 enum AccountStates {
     #[sea_orm(iden = "account_states")]
     Table,
     Id,
     ProgramAccountId,
-    Data,
-    Slot,
-    TxSignature,
     CreatedAt,
     UpdatedAt,
+
+    Lamports,
+    Owner,
+    Data,
+    Slot,
+    SlotId,
+    TxSignature,
+    WriteVersion,
 }
 
 #[async_trait::async_trait]
@@ -48,9 +59,16 @@ impl MigrationTrait for Migration {
                             .big_integer()
                             .not_null(),
                     )
-                    .col(ColumnDef::new(AccountStates::Data).binary().null()) // Can this have actually a Null state?
+                    .col(ColumnDef::new(AccountStates::Data).binary().not_null())
+                    .col(ColumnDef::new(AccountStates::Lamports).big_integer().not_null())
+                    .check(Expr::col(AccountStates::Lamports).gte(0))
+                    .col(ColumnDef::new(AccountStates::Owner).binary().not_null())
+                    .check(Expr::cust(r#"OCTET_LENGTH("owner") = 32"#))
                     .col(ColumnDef::new(AccountStates::Slot).big_integer().not_null())
                     .check(Expr::col(AccountStates::Slot).gt(0))
+                    .col(ColumnDef::new(AccountStates::SlotId).big_integer().not_null())
+                    .col(ColumnDef::new(AccountStates::WriteVersion).big_integer().not_null().default(0))
+                    .check(Expr::col(AccountStates::WriteVersion).gte(0))
                     .col(ColumnDef::new(AccountStates::TxSignature).binary().null()) // Check if this tx-signature can be null here, also in ProgramAccounts
                     .check(Expr::cust(
                         r#""tx_signature" IS NULL OR OCTET_LENGTH("tx_signature") = 64"#,
@@ -73,11 +91,50 @@ impl MigrationTrait for Migration {
                             .from(AccountStates::Table, AccountStates::ProgramAccountId)
                             .to(ProgramAccounts::Table, ProgramAccounts::Id)
                             .on_update(ForeignKeyAction::Cascade)
-                            .on_delete(ForeignKeyAction::Restrict), // Or maybe SET_NULL? or NO_ACTION?
+                            .on_delete(ForeignKeyAction::Restrict),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk-account-states-slot-id")
+                            .from(AccountStates::Table, AccountStates::SlotId)
+                            .to(Slots::Table, Slots::Id)
+                            .on_update(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Restrict),
                     )
                     .to_owned(),
             )
-            .await
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("uq-account-states-account-slot-write")
+                    .table(AccountStates::Table)
+                    .col(AccountStates::ProgramAccountId)
+                    .col(AccountStates::Slot)
+                    .col(AccountStates::WriteVersion)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-account-states-slot")
+                    .table(AccountStates::Table)
+                    .col(AccountStates::Slot)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-account-states-tx-signature")
+                    .table(AccountStates::Table)
+                    .col(AccountStates::TxSignature)
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {

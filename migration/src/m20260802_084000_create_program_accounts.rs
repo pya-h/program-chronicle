@@ -17,14 +17,26 @@ enum ProgramAccounts {
     Address,
     CreatedAt,
     UpdatedAt,
-    // Next four are mostly for caching, to return the account state fast instead of querying thousands of account states.
+
+    // Next ones are mostly for caching, to return the account state fast instead of querying thousands of account states.
+    Lamports,
+    Owner,
     State,
+    RentEpoch,
     LatestSlot,
+    LatestSlotId,
     LatestTxSignature,
-    FirstSeenSlot,
+    LatestWriteVersion,
 }
+
 #[derive(DeriveIden)]
 enum Programs {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
+enum Slots {
     Table,
     Id,
 }
@@ -49,25 +61,29 @@ impl MigrationTrait for Migration {
                             .integer()
                             .not_null(),
                     )
-                    .col(ColumnDef::new(ProgramAccounts::Address).binary().not_null())
-                    .check(Expr::cust(r#"OCTET_LENGTH("address") = 32"#))
-                    .col(ColumnDef::new(ProgramAccounts::State).binary().null()) // Can this have actually a Null state?
+                    .col(ColumnDef::new(ProgramAccounts::Address).binary().not_null()).check(Expr::cust(r#"OCTET_LENGTH("address") = 32"#))
+                    .col(ColumnDef::new(ProgramAccounts::CreatedAt).timestamp().not_null().default(Expr::current_timestamp()))
+                    .col(ColumnDef::new(ProgramAccounts::UpdatedAt).timestamp().not_null().default(Expr::current_timestamp()))
+
+                    .col(ColumnDef::new(ProgramAccounts::Lamports).big_integer().not_null()).check(Expr::col(ProgramAccounts::Lamports).gte(0))
+                    .col(ColumnDef::new(ProgramAccounts::Owner).binary().not_null()).check(Expr::cust(r#"OCTET_LENGTH("owner") = 32"#))
+                    .col(ColumnDef::new(ProgramAccounts::State).binary().not_null())
+                    .col(ColumnDef::new(ProgramAccounts::RentEpoch).big_integer().null())
                     .col(
                         ColumnDef::new(ProgramAccounts::LatestSlot)
                             .big_integer()
-                            .null(),
+                            .not_null(),
                     )
                     .check(Expr::col(ProgramAccounts::LatestSlot).gte(0))
+                    .col(ColumnDef::new(ProgramAccounts::LatestSlotId).big_integer().not_null())
                     .col(
                         ColumnDef::new(ProgramAccounts::LatestTxSignature)
                             .binary()
                             .null(),
                     )
                     .check(Expr::cust(r#""latest_tx_signature" IS NULL OR OCTET_LENGTH("latest_tx_signature") = 64"#))
-                    .col(ColumnDef::new(ProgramAccounts::FirstSeenSlot).big_integer().null())
-                    .check(Expr::col(ProgramAccounts::FirstSeenSlot).gte(0))
-                    .col(ColumnDef::new(ProgramAccounts::CreatedAt).timestamp().not_null().default(Expr::current_timestamp()))
-                    .col(ColumnDef::new(ProgramAccounts::UpdatedAt).timestamp().not_null().default(Expr::current_timestamp()))
+                    .col(ColumnDef::new(ProgramAccounts::LatestWriteVersion).big_integer().not_null().default(0))
+                    .check(Expr::col(ProgramAccounts::LatestWriteVersion).gte(0))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-accounts-program-id")
@@ -75,6 +91,14 @@ impl MigrationTrait for Migration {
                             .to(Programs::Table, Programs::Id)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::Restrict), // Or maybe SET_NULL? or NO_ACTION?
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk-accounts-latest-slot-id")
+                            .from(ProgramAccounts::Table, ProgramAccounts::LatestSlotId)
+                            .to(Slots::Table, Slots::Id)
+                            .on_update(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Restrict),
                     )
                     .to_owned(),
             )

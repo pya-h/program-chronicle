@@ -96,7 +96,7 @@ async fn add_program_handler(
     let program = programs::ActiveModel {
         rpc_id: Set(rpc.id),
         address: Set(address.to_bytes().to_vec()),
-        last_processed_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
+        start_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
         name: payload.name.map_or(NotSet, |name| Set(Some(name))),
         ..Default::default()
     };
