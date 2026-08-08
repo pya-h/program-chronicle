@@ -16,6 +16,7 @@ pub struct Model {
     pub name: Option<String>,
     pub last_processed_at: Option<DateTime>,
     pub last_processed_slot: Option<i64>,
+    pub start_slot: Option<i64>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
     #[sea_orm(has_many)]
