@@ -21,7 +21,11 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "json"]}
 sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
 subtle = "2.6.1"
 url = "2.5.8"
-solana-sdk="4.1.0"
+solana-sdk = "2.3"
+solana-client = "2.3"
+solana-account-decoder = "2.3"
+solana-rpc-client-api = "2.3"
+solana-transaction-status = "2.3"
 chrono = "0.4.45"
 futures = "0.3"
 async-trait = "0.1"

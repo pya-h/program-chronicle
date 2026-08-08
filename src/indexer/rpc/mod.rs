@@ -1,3 +1,5 @@
+pub mod json_rpc;
+
 use std::pin::Pin;
 
 use futures::Stream;
