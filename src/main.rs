@@ -53,9 +53,10 @@ async fn main() {
             _ => CommitmentConfig::confirmed(),
         },
         sse_tx.clone(),
+        env_u64("INDEXER_CATCHUP_CONCURRENCY", 4).max(1) as usize, // 0 permits would deadlock every catch-up
     ));
 
-    let backfill_interval = Duration::from_secs(env_u64("INDEXER_BLOCKTIME_BACKFILL_SECS", 60));
+    let backfill_interval = Duration::from_secs(env_u64("INDEXER_BLOCKTIME_BACKFILL_SECS", 60).max(1)); // interval panics on a zero period
     tokio::spawn(indexer.clone().run_block_time_backfill(backfill_interval));
     tokio::spawn(async move {
         if let Err(err) = indexer.start(new_program_rx).await {
