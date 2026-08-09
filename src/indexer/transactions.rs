@@ -1,11 +1,54 @@
 use sea_orm::{
     ActiveValue::Set, DatabaseConnection, EntityTrait, TransactionTrait, sea_query::OnConflict,
 };
+use solana_sdk::pubkey::Pubkey;
 
 use crate::core::error::SvmIndexerError;
-use crate::db::entities::transactions;
+use crate::db::entities::{programs, transactions};
 use crate::indexer::persist::ensure_slot;
-use crate::indexer::rpc::RawTransaction;
+use crate::indexer::rpc::{RawTransaction, SvmRpc};
+
+const CATCH_UP_PAGE_SIZE: usize = 1000;
+
+/// Backfills the downtime gap: newest→oldest
+pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
+    rpc: &R,
+    db: &DatabaseConnection,
+    program: &programs::Model,
+) -> Result<(), SvmIndexerError> {
+    let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
+        SvmIndexerError::InvalidPublicKey(
+            "Stored program address is not a valid pubkey!".to_owned(),
+        )
+    })?;
+    let floor = program
+        .last_processed_slot
+        .unwrap_or(0)
+        .max(program.start_slot.unwrap_or(0));
+
+    let mut before = None;
+    'pages: loop {
+        let page = rpc
+            .get_signatures_for_address(&address, before, CATCH_UP_PAGE_SIZE)
+            .await?;
+        let page_len = page.len();
+        if page_len == 0 {
+            break;
+        }
+        before = page.last().map(|sig| sig.signature);
+        for sig in page {
+            if (sig.slot as i64) < floor {
+                break 'pages;
+            }
+            let tx = rpc.get_transaction(&sig.signature).await?;
+            index_transaction(db, program.id, program.rpc_id, &tx).await?;
+        }
+        if page_len < CATCH_UP_PAGE_SIZE {
+            break;
+        }
+    }
+    Ok(())
+}
 
 pub async fn index_transaction(
     db: &DatabaseConnection,
