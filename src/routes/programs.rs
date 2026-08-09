@@ -48,12 +48,12 @@ fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
     let bytes = bs58::decode(encoded).into_vec().map_err(|_| {
         SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned())
     })?;
-    // substr is 1-indexed, memcmp offset is 0-indexed
+    // substr is 1-indexed, memcmp offset is 0-indexed; substr on bytea needs integer args
     Ok(Expr::cust_with_values(
-        "substr(program_accounts.state, ?, ?) = ?",
+        "substr(program_accounts.state, $1, $2) = $3",
         [
-            Value::from(offset + 1),
-            Value::from(bytes.len() as i64),
+            Value::from((offset + 1) as i32),
+            Value::from(bytes.len() as i32),
             Value::from(bytes),
         ],
     ))
@@ -76,7 +76,7 @@ async fn get_program_accounts_handler(
             ));
         }
         condition = condition.add(Expr::cust_with_values(
-            "length(program_accounts.state) = ?",
+            "length(program_accounts.state) = $1",
             [Value::from(data_size)],
         ));
     }
@@ -140,7 +140,7 @@ async fn get_program_events_handler(
             })?;
         // keep byte-identical to the expression index so the planner uses it
         condition = condition.add(Expr::cust_with_values(
-            "substr(data, 1, 8) = ?",
+            "substr(data, 1, 8) = $1",
             [Value::from(bytes)],
         ));
     }
