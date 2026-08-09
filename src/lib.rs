@@ -16,7 +16,7 @@ pub fn app(
     admin_passkey: String,
     new_program_tx: Option<mpsc::Sender<i32>>,
 ) -> Router {
-    let state = AppState::new_with_passkey(db, admin_passkey, new_program_tx);
+    let state = AppState::new(db, admin_passkey, new_program_tx);
     Router::new()
         .nest("/admin", routes::admin::routes(state.clone()))
         .merge(routes::root::routes())

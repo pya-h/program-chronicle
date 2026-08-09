@@ -1,5 +1,3 @@
-use std::env;
-
 use sea_orm::DatabaseConnection;
 use tokio::sync::mpsc;
 
@@ -11,7 +9,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new_with_passkey(
+    pub fn new(
         db: DatabaseConnection,
         admin_passkey: String,
         new_program_tx: Option<mpsc::Sender<i32>>,
@@ -21,10 +19,5 @@ impl AppState {
             db,
             new_program_tx,
         }
-    }
-
-    pub fn new(db: DatabaseConnection) -> Self {
-        let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
-        Self::new_with_passkey(db, admin_passkey, None)
     }
 }
