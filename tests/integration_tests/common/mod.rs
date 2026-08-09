@@ -2,16 +2,27 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use httpc_test::Client;
 use migration::MigratorTrait;
-use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ConnectOptions, ConnectionTrait, Database,
+    DatabaseConnection,
+};
 use serde_json::Value;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
 use url::Url;
+
+use svm_indexer::core::sse::SseEvent;
+use svm_indexer::db::entities::{program_events, programs, rpcs, transactions};
+use svm_indexer::indexer::persist::{ensure_slot, upsert_account_snapshot};
+use svm_indexer::indexer::rpc::AccountSnapshot;
 
 static SERVER: OnceLock<ServerInfo> = OnceLock::new();
 
 pub struct ServerInfo {
     pub base_url: String,
     pub admin_passkey: String,
+    pub sse_tx: broadcast::Sender<SseEvent>,
 }
 
 impl ServerInfo {
@@ -113,7 +124,7 @@ fn setup_server() -> ServerInfo {
 
     std::thread::spawn(move || {
         let rt = Runtime::new().expect("failed to create test server runtime");
-        let port = rt.block_on(async {
+        let (port, sse_tx) = rt.block_on(async {
             ensure_test_database(&db_url_for_thread).await;
 
             let mut opts = ConnectOptions::new(db_url_for_thread);
@@ -126,8 +137,8 @@ fn setup_server() -> ServerInfo {
                 .await
                 .expect("failed to refresh test database schema");
 
-            let (sse_tx, _) = tokio::sync::broadcast::channel(16);
-            let app = svm_indexer::app(db, passkey_for_thread.clone(), None, sse_tx);
+            let (sse_tx, _) = broadcast::channel::<SseEvent>(64);
+            let app = svm_indexer::app(db, passkey_for_thread.clone(), None, sse_tx.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("failed to bind test server");
@@ -138,19 +149,20 @@ fn setup_server() -> ServerInfo {
             });
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            port
+            (port, sse_tx)
         });
-        tx.send(port).expect("failed to send server port");
+        tx.send((port, sse_tx)).expect("failed to send server handle");
 
         // Keep the server runtime alive for the whole test process.
         rt.block_on(std::future::pending::<()>());
     });
 
-    let port = rx.recv().expect("failed to receive server port");
+    let (port, sse_tx) = rx.recv().expect("failed to receive server handle");
 
     ServerInfo {
         base_url: format!("http://127.0.0.1:{}", port),
         admin_passkey,
+        sse_tx,
     }
 }
 
@@ -158,17 +170,158 @@ pub fn server() -> &'static ServerInfo {
     SERVER.get_or_init(setup_server)
 }
 
-pub async fn reset_db() {
+/// A fresh connection to the test database, sharing the same schema the running server uses.
+pub async fn test_db() -> DatabaseConnection {
     dotenvy::dotenv().ok();
     let _ = server();
+    Database::connect(test_database_url())
+        .await
+        .expect("failed to connect to test database")
+}
 
-    let db_url = test_database_url();
-    let db = Database::connect(db_url)
+pub async fn reset_db() {
+    let db = test_db().await;
+    // child rows first so the Restrict foreign keys don't block the truncation
+    db.execute_unprepared(
+        "DELETE FROM account_states; DELETE FROM program_events; DELETE FROM transactions; \
+         DELETE FROM program_accounts; DELETE FROM slots; DELETE FROM programs; DELETE FROM rpcs;",
+    )
+    .await
+    .expect("failed to reset test tables");
+}
+
+/// Deterministic 32-byte address from a seed, so tests can round-trip the base58 string.
+pub fn pubkey(seed: u8) -> Pubkey {
+    Pubkey::new_from_array([seed; 32])
+}
+
+/// Deterministic 64-byte signature from a seed.
+pub fn signature(seed: u8) -> Signature {
+    Signature::from([seed; 64])
+}
+
+pub async fn seed_rpc(db: &DatabaseConnection, http_url: &str) -> i32 {
+    let now = chrono::Utc::now().naive_utc();
+    rpcs::ActiveModel {
+        http_url: Set(http_url.to_owned()),
+        ws_url: Set(format!("wss://{}", http_url.trim_start_matches("https://"))),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("failed to seed rpc")
+    .id
+}
+
+pub async fn seed_program(db: &DatabaseConnection, rpc_id: i32, address: &Pubkey) -> i32 {
+    let now = chrono::Utc::now().naive_utc();
+    programs::ActiveModel {
+        rpc_id: Set(rpc_id),
+        address: Set(address.to_bytes().to_vec()),
+        name: Set(Some("seed-program".to_owned())),
+        start_slot: Set(Some(0)),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("failed to seed program")
+    .id
+}
+
+/// Persists an account snapshot through the real indexer path, so seeded reads exercise the same
+/// cache/history rows production writes. Returns nothing; the caller reads back via the API.
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_account(
+    db: &DatabaseConnection,
+    program_id: i32,
+    rpc_id: i32,
+    address: &Pubkey,
+    owner: &Pubkey,
+    data: &[u8],
+    lamports: u64,
+    slot: u64,
+    write_version: u64,
+    block_time: Option<i64>,
+) {
+    let (sse_tx, _) = broadcast::channel::<SseEvent>(16);
+    let snapshot = AccountSnapshot {
+        address: *address,
+        owner: *owner,
+        lamports,
+        data: data.to_vec(),
+        rent_epoch: 0,
+        executable: false,
+        slot,
+        write_version: Some(write_version),
+    };
+    upsert_account_snapshot(db, &sse_tx, program_id, rpc_id, &snapshot, None, block_time)
         .await
-        .expect("failed to connect to test database for reset");
-    db.execute_unprepared("DELETE FROM programs; DELETE FROM rpcs;")
+        .expect("failed to seed account snapshot");
+}
+
+pub async fn seed_transaction(
+    db: &DatabaseConnection,
+    program_id: Option<i32>,
+    rpc_id: i32,
+    signature: &Signature,
+    slot: i64,
+    success: bool,
+    block_time: Option<i64>,
+) {
+    let slot_id = ensure_slot(db, rpc_id, slot, block_time)
         .await
-        .expect("failed to reset test tables");
+        .expect("failed to ensure slot for transaction");
+    let now = chrono::Utc::now().naive_utc();
+    transactions::ActiveModel {
+        signature: Set(signature.as_ref().to_vec()),
+        program_id: Set(program_id),
+        slot: Set(slot),
+        slot_id: Set(slot_id),
+        success: Set(success),
+        error: Set(None),
+        fee: Set(Some(5000)),
+        fee_payer: Set(None),
+        raw: Set(serde_json::json!({"seed": true})),
+        created_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("failed to seed transaction");
+}
+
+pub async fn seed_event(
+    db: &DatabaseConnection,
+    program_id: i32,
+    rpc_id: i32,
+    signature: &Signature,
+    log_index: i32,
+    slot: i64,
+    data: &[u8],
+    block_time: Option<i64>,
+) {
+    let slot_id = ensure_slot(db, rpc_id, slot, block_time)
+        .await
+        .expect("failed to ensure slot for event");
+    let now = chrono::Utc::now().naive_utc();
+    program_events::ActiveModel {
+        program_id: Set(program_id),
+        program_account_id: Set(None),
+        tx_signature: Set(signature.as_ref().to_vec()),
+        slot: Set(slot),
+        slot_id: Set(slot_id),
+        log_index: Set(log_index),
+        data: Set(data.to_vec()),
+        created_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("failed to seed event");
 }
 
 pub fn parse_datetime(value: &Value) -> chrono::NaiveDateTime {
