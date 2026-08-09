@@ -2,6 +2,7 @@ pub mod persist;
 pub mod rpc;
 pub mod state;
 pub mod supervisor;
+pub mod transactions;
 
 use std::collections::HashMap;
 use std::sync::Arc;
