@@ -1,0 +1,116 @@
+<section class="section-shell" data-section="transactions">
+    <header class="section-header">
+        <div class="section-title-block">
+            <h1 class="section-title">Transactions</h1>
+            <p class="section-description">Indexed transactions for a program, newest first.</p>
+        </div>
+    </header>
+
+    <article class="card">
+        <div class="card-head">
+            <div class="card-head-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+            </div>
+            <div>
+                <h2 class="card-head-title">Transactions</h2>
+                <p class="card-head-sub" id="tx-count">Select a program to begin.</p>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            <div class="input-group">
+                <label for="tx-program" class="input-label">Program</label>
+                <div class="select-wrap">
+                    <select id="tx-program" class="input-field select-field">
+                        <option value="" disabled selected>Select a program…</option>
+                    </select>
+                </div>
+            </div>
+            <div class="input-group">
+                <label for="tx-success" class="input-label">Status</label>
+                <div class="select-wrap">
+                    <select id="tx-success" class="input-field select-field">
+                        <option value="">All</option>
+                        <option value="true">Success</option>
+                        <option value="false">Failed</option>
+                    </select>
+                </div>
+            </div>
+            <div class="input-group">
+                <label for="tx-from" class="input-label">From Slot</label>
+                <input type="number" id="tx-from" class="input-field" placeholder="min" min="0">
+            </div>
+            <div class="input-group">
+                <label for="tx-to" class="input-label">To Slot</label>
+                <input type="number" id="tx-to" class="input-field" placeholder="max" min="0">
+            </div>
+            <button type="button" class="btn btn-primary" id="tx-apply">Search</button>
+        </div>
+
+        <div id="tx-root"></div>
+
+        <div class="empty-state" id="tx-empty" hidden>
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+            </div>
+            <p class="empty-state-title">No transactions</p>
+            <p class="empty-state-text">Pick a program above, or adjust the status / slot filters.</p>
+        </div>
+
+        <div class="list-pager" id="tx-pager"></div>
+    </article>
+
+    <div class="modal-overlay" id="tx-detail-modal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="tx-detail-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="tx-detail-title">Transaction</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="rpc-detail-block">
+                    <span class="rpc-detail-label">Signature</span>
+                    <span class="rpc-detail-value mono" id="tx-detail-signature">—</span>
+                </div>
+                <div class="rpc-detail-block">
+                    <span class="rpc-detail-label">Fee Payer</span>
+                    <span class="rpc-detail-value mono" id="tx-detail-payer">—</span>
+                </div>
+                <div class="detail-grid">
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Status</span>
+                        <span class="rpc-detail-value" id="tx-detail-status">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Program</span>
+                        <span class="rpc-detail-value" id="tx-detail-program">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Slot</span>
+                        <span class="rpc-detail-value" id="tx-detail-slot">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Fee</span>
+                        <span class="rpc-detail-value" id="tx-detail-fee">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Block Time</span>
+                        <span class="rpc-detail-value" id="tx-detail-time">—</span>
+                    </div>
+                </div>
+                <div class="rpc-detail-block" id="tx-detail-error-block" hidden>
+                    <span class="rpc-detail-label">Error</span>
+                    <div class="detail-data pre" id="tx-detail-error">—</div>
+                </div>
+                <div class="rpc-detail-block">
+                    <span class="rpc-detail-label">Raw</span>
+                    <div class="detail-data pre" id="tx-detail-raw">—</div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal>Close</button>
+            </div>
+        </div>
+    </div>
+</section>

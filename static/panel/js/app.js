@@ -1542,6 +1542,192 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
+    // Transactions section ------------------------------------------------------
+    let txList = null;
+
+    function initTxSection() {
+        populateProgramSelect('tx-program');
+        txList = createListSection({
+            rootId: 'tx-root', emptyId: 'tx-empty', countId: 'tx-count', pagerId: 'tx-pager',
+            endpoint: () => {
+                const id = document.getElementById('tx-program')?.value;
+                return id ? `/programs/${id}/transactions` : null;
+            },
+            params: () => {
+                const success = document.getElementById('tx-success')?.value;
+                const from = document.getElementById('tx-from')?.value.trim();
+                const to = document.getElementById('tx-to')?.value.trim();
+                const p = {};
+                if (success) p.success = success;
+                if (from) p.from_slot = from;
+                if (to) p.to_slot = to;
+                return p;
+            },
+            renderRows: (rows) => `<div class="dash-list">${rows.map(renderTxRow).join('')}</div>`,
+            countText: (total) => `${formatCount(total)} transaction${total === 1 ? '' : 's'}`
+        });
+
+        const apply = () => txList.reload();
+        document.getElementById('tx-apply')?.addEventListener('click', apply);
+        ['tx-program', 'tx-success'].forEach(id => document.getElementById(id)?.addEventListener('change', apply));
+        ['tx-from', 'tx-to'].forEach(id => {
+            document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+        });
+        txList.load();
+    }
+
+    function renderTxRow(tx) {
+        return `
+            <div class="dash-row clickable" data-tx="${escapeHtml(tx.signature)}">
+                <div class="dash-row-main">
+                    <span class="dash-row-title mono" title="${escapeHtml(tx.signature)}">${escapeHtml(shortSig(tx.signature))}</span>
+                    <span class="dash-row-sub">Slot ${escapeHtml(formatCount(tx.slot))}${tx.fee != null ? ` · ${escapeHtml(formatCount(tx.fee))} fee` : ''}</span>
+                </div>
+                <span class="status-badge ${tx.success ? 'indexed' : 'failed'}">${tx.success ? 'Success' : 'Failed'}</span>
+            </div>
+        `;
+    }
+
+    async function openTxDetail(signature) {
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        ['tx-detail-signature', 'tx-detail-payer', 'tx-detail-status', 'tx-detail-program',
+         'tx-detail-slot', 'tx-detail-fee', 'tx-detail-time'].forEach(id => set(id, '…'));
+        set('tx-detail-raw', 'Loading…');
+        const errBlock = document.getElementById('tx-detail-error-block');
+        if (errBlock) errBlock.hidden = true;
+        openModal('tx-detail-modal');
+
+        const res = await apiCall('GET', `/transactions/${encodeURIComponent(signature)}`);
+        if (!res.ok) {
+            closeModal('tx-detail-modal');
+            showToast(res.message, 'error');
+            return;
+        }
+        const tx = res.data || {};
+        set('tx-detail-signature', tx.signature || signature);
+        set('tx-detail-payer', tx.fee_payer || '—');
+        set('tx-detail-status', tx.success ? 'Success' : 'Failed');
+        set('tx-detail-program', tx.program_id != null ? tx.program_id : '—');
+        set('tx-detail-slot', formatCount(tx.slot));
+        set('tx-detail-fee', tx.fee != null ? `${formatCount(tx.fee)} lamports` : '—');
+        set('tx-detail-time', tx.block_time != null ? new Date(tx.block_time * 1000).toISOString() : '—');
+        set('tx-detail-raw', tx.raw != null ? JSON.stringify(tx.raw, null, 2) : '(empty)');
+        if (errBlock) {
+            errBlock.hidden = tx.err == null;
+            if (tx.err != null) set('tx-detail-error', JSON.stringify(tx.err, null, 2));
+        }
+    }
+
+    document.body.addEventListener('click', (e) => {
+        const row = e.target.closest('.dash-row.clickable[data-tx]');
+        if (row) openTxDetail(row.dataset.tx);
+    });
+
+    // Events section ------------------------------------------------------------
+    let eventsList = null;
+    let eventsCache = [];
+
+    // Leading 8 bytes of an event's base64 data, as hex — the Anchor-style
+    // discriminator the list can also be filtered by.
+    function discriminatorHex(b64) {
+        if (!b64) return '';
+        const bytes = base64ToBytes(b64);
+        return bytesToHex(bytes.subarray(0, 8));
+    }
+
+    function initEventsSection() {
+        populateProgramSelect('ev-program');
+        eventsList = createListSection({
+            rootId: 'ev-root', emptyId: 'ev-empty', countId: 'ev-count', pagerId: 'ev-pager',
+            endpoint: () => {
+                const id = document.getElementById('ev-program')?.value;
+                return id ? `/programs/${id}/events` : null;
+            },
+            params: () => {
+                const disc = document.getElementById('ev-discriminator')?.value.trim();
+                const sig = document.getElementById('ev-signature')?.value.trim();
+                const from = document.getElementById('ev-from')?.value.trim();
+                const to = document.getElementById('ev-to')?.value.trim();
+                const p = {};
+                if (disc) p.discriminator = disc;
+                if (sig) p.tx_signature = sig;
+                if (from) p.from_slot = from;
+                if (to) p.to_slot = to;
+                return p;
+            },
+            renderRows: (rows) => {
+                eventsCache = rows;
+                return `<div class="dash-list">${rows.map(renderEventRow).join('')}</div>`;
+            },
+            countText: (total) => `${formatCount(total)} event${total === 1 ? '' : 's'}`
+        });
+
+        const apply = () => eventsList.reload();
+        document.getElementById('ev-apply')?.addEventListener('click', apply);
+        document.getElementById('ev-program')?.addEventListener('change', apply);
+        ['ev-discriminator', 'ev-signature', 'ev-from', 'ev-to'].forEach(id => {
+            document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+        });
+        eventsList.load();
+    }
+
+    function renderEventRow(ev, idx) {
+        const disc = discriminatorHex(ev.data);
+        return `
+            <div class="dash-row clickable" data-event-idx="${idx}">
+                <div class="dash-row-main">
+                    <span class="dash-row-title mono">${disc ? escapeHtml(disc) : '(no data)'}</span>
+                    <span class="dash-row-sub mono" title="${escapeHtml(ev.tx_signature || '')}">${escapeHtml(shortSig(ev.tx_signature))} · #${escapeHtml(ev.log_index)}</span>
+                </div>
+                <span class="status-badge indexed">Slot ${escapeHtml(formatCount(ev.slot))}</span>
+            </div>
+        `;
+    }
+
+    function openEventDetail(ev) {
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set('ev-detail-signature', ev.tx_signature || '—');
+        set('ev-detail-discriminator', discriminatorHex(ev.data) || '—');
+        set('ev-detail-logindex', ev.log_index);
+        set('ev-detail-slot', formatCount(ev.slot));
+        set('ev-detail-time', ev.block_time != null ? new Date(ev.block_time * 1000).toISOString() : '—');
+
+        const dataEl = document.getElementById('ev-detail-data');
+        if (dataEl) {
+            dataEl.dataset.b64 = ev.data || '';
+            dataEl.dataset.mode = 'base64';
+            dataEl.textContent = ev.data || '(empty)';
+        }
+        const toggle = document.getElementById('ev-detail-data-toggle');
+        if (toggle) toggle.textContent = 'Show hex';
+        openModal('ev-detail-modal');
+    }
+
+    document.body.addEventListener('click', (e) => {
+        const row = e.target.closest('.dash-row.clickable[data-event-idx]');
+        if (row) {
+            const ev = eventsCache[Number(row.dataset.eventIdx)];
+            if (ev) openEventDetail(ev);
+            return;
+        }
+        const toggle = e.target.closest('#ev-detail-data-toggle');
+        if (toggle) {
+            const dataEl = document.getElementById('ev-detail-data');
+            if (!dataEl) return;
+            const b64 = dataEl.dataset.b64 || '';
+            if (dataEl.dataset.mode === 'base64') {
+                const bytes = b64 ? base64ToBytes(b64) : new Uint8Array();
+                dataEl.textContent = bytes.length ? bytesToHex(bytes) : '(empty)';
+                dataEl.dataset.mode = 'hex';
+                toggle.textContent = 'Show base64';
+            } else {
+                dataEl.textContent = b64 || '(empty)';
+                dataEl.dataset.mode = 'base64';
+                toggle.textContent = 'Show hex';
+            }
+        }
+    });
+
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
@@ -1561,6 +1747,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="history"]') || swapped?.querySelector?.('[data-section="history"]')) {
             initHistorySection();
+        }
+        if (swapped?.matches?.('[data-section="transactions"]') || swapped?.querySelector?.('[data-section="transactions"]')) {
+            initTxSection();
+        }
+        if (swapped?.matches?.('[data-section="events"]') || swapped?.querySelector?.('[data-section="events"]')) {
+            initEventsSection();
         }
     });
 
