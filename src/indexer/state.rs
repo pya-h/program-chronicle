@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use sea_orm::DatabaseConnection;
 use solana_sdk::pubkey::Pubkey;
 
@@ -25,6 +26,23 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
 
     for snapshot in &snapshots {
         upsert_account_snapshot(db, program.id, program.rpc_id, snapshot, None, block_time).await?;
+    }
+    Ok(())
+}
+
+pub async fn stream_state<R: SvmRpc + ?Sized>(
+    rpc: &R,
+    db: &DatabaseConnection,
+    program: &programs::Model,
+) -> Result<(), SvmIndexerError> {
+    let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
+        SvmIndexerError::InvalidPublicKey("Stored program address is not a valid pubkey!".to_owned())
+    })?;
+    let mut stream = rpc.subscribe_program(&address, None).await?;
+
+    while let Some(snapshot) = stream.next().await {
+        let snapshot = snapshot?;
+        upsert_account_snapshot(db, program.id, program.rpc_id, &snapshot, None, None).await?;
     }
     Ok(())
 }
