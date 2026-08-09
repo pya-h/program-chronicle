@@ -158,6 +158,16 @@ Content-Type: application/json
 }
 
 
+### Deactivate a program (pause indexing without deleting it)
+POST {{baseUrl}}/admin/programs/1/deactivate
+x-security: {{adminPasskey}}
+
+
+### Activate a program (resume indexing from last_processed_slot)
+POST {{baseUrl}}/admin/programs/1/activate
+x-security: {{adminPasskey}}
+
+
 ### Delete program (replace 1 with an existing id)
 DELETE {{baseUrl}}/admin/programs/1
 x-security: {{adminPasskey}}

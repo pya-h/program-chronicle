@@ -2721,6 +2721,12 @@ html.no-anim *::after {
     color: var(--warning-500);
 }
 
+.status-badge.paused {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.25);
+    color: var(--text-secondary);
+}
+
 .program-actions {
     display: flex;
     justify-content: flex-end;
@@ -2756,6 +2762,16 @@ html.no-anim *::after {
 .program-action-btn.danger:hover {
     color: var(--danger-400);
     border-color: var(--danger-500);
+}
+
+.program-action-btn.warn:hover {
+    color: var(--warning-500);
+    border-color: var(--warning-500);
+}
+
+.program-action-btn.success:hover {
+    color: var(--success-500);
+    border-color: var(--success-500);
 }
 
 .program-action-btn svg {

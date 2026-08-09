@@ -2,7 +2,7 @@ use crate::{
     core::{
         error::SvmIndexerError,
         response::{ApiResponse, FinalResponse, NoContentResponse},
-        state::AppState,
+        state::{AppState, ProgramCommand},
     },
     db::entities::{
         programs,
@@ -24,7 +24,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     response::NoContent,
-    routing::get,
+    routing::{get, post},
 };
 use sea_orm::{
     ActiveModelTrait,
@@ -108,12 +108,80 @@ async fn add_program_handler(
             rpc.id as u64
         )
     })?;
-    if let Some(tx) = &state.new_program_tx {
+    if let Some(tx) = &state.supervisor_tx {
         // TODO: Implement a retry process here with N failure submitting error to the panel
-        let _ = tx.send(program.id).await;
+        let _ = tx.send(ProgramCommand::Start(program.id)).await;
     }
 
     Ok(ApiResponse::created(ProgramWithRpcResponse { program, rpc }))
+}
+
+/// Flips a program's `active` flag and tells the supervisor to start or stop its indexer task.
+async fn set_program_activation(
+    state: &AppState,
+    program_id: u16,
+    active: bool,
+) -> FinalResponse<ProgramWithRpcResponse> {
+    let found = programs::Entity::find_by_id(program_id)
+        .find_also_related(rpcs::Entity)
+        .one(&state.db)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error_with_id(
+                "Failed fetching program info!",
+                err,
+                program_id as u64,
+            )
+        })?;
+    let Some((program, rpc)) = found else {
+        return Err(SvmIndexerError::ItemNotFound(String::from("No such program!")));
+    };
+
+    // only touch the row and signal the supervisor when the state actually changes — a redundant
+    // activate/deactivate is a no-op, not a duplicate start/stop
+    if program.active != active {
+        programs::ActiveModel {
+            id: Unchanged(program.id),
+            active: Set(active),
+            ..Default::default()
+        }
+        .update(&state.db)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error_with_id(
+                "Failed updating the program activation state!",
+                err,
+                program_id as u64,
+            )
+        })?;
+        if let Some(tx) = &state.supervisor_tx {
+            let command = if active {
+                ProgramCommand::Start(program.id)
+            } else {
+                ProgramCommand::Stop(program.id)
+            };
+            let _ = tx.send(command).await;
+        }
+    }
+
+    Ok(ApiResponse::ok(ProgramWithRpcResponse {
+        program: programs::Model { active, ..program },
+        rpc: rpc.unwrap_or(unknown_rpc!()),
+    }))
+}
+
+async fn activate_program_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+) -> FinalResponse<ProgramWithRpcResponse> {
+    set_program_activation(&state, program_id, true).await
+}
+
+async fn deactivate_program_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+) -> FinalResponse<ProgramWithRpcResponse> {
+    set_program_activation(&state, program_id, false).await
 }
 
 async fn get_single_program_handler(
@@ -300,4 +368,6 @@ pub fn routes() -> Router<AppState> {
                 .patch(update_program_handler)
                 .delete(delete_program_handler),
         )
+        .route("/{program_id}/activate", post(activate_program_handler))
+        .route("/{program_id}/deactivate", post(deactivate_program_handler))
 }

@@ -1,18 +1,21 @@
 use std::sync::Arc;
 
-use sea_orm::EntityTrait;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::sync::mpsc;
 
 use crate::core::error::SvmIndexerError;
+use crate::core::state::ProgramCommand;
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::Indexer;
 
 impl Indexer {
     pub async fn start(
         self: Arc<Self>,
-        mut new_program_rx: mpsc::Receiver<i32>,
+        mut commands: mpsc::Receiver<ProgramCommand>,
     ) -> Result<(), SvmIndexerError> {
+        // only active programs are indexed at boot; deactivated ones wait for an explicit start
         let programs = programs::Entity::find()
+            .filter(programs::Column::Active.eq(true))
             .find_also_related(rpcs::Entity)
             .all(&self.db)
             .await
@@ -26,9 +29,12 @@ impl Indexer {
             self.clone().spawn_program(program, rpc).await;
         }
 
-        // Each new program register, notifies starting its indexer here
-        while let Some(program_id) = new_program_rx.recv().await {
-            self.clone().spawn_by_id(program_id).await;
+        // The admin API signals here to start a just-added/reactivated program or stop a deactivated one
+        while let Some(command) = commands.recv().await {
+            match command {
+                ProgramCommand::Start(program_id) => self.clone().spawn_by_id(program_id).await,
+                ProgramCommand::Stop(program_id) => self.stop_program(program_id).await,
+            }
         }
         Ok(())
     }
@@ -39,7 +45,12 @@ impl Indexer {
             .one(&self.db)
             .await;
         match found {
-            Ok(Some((program, Some(rpc)))) => self.spawn_program(program, rpc).await,
+            Ok(Some((program, Some(rpc)))) if program.active => {
+                self.spawn_program(program, rpc).await
+            }
+            Ok(Some((program, Some(_)))) => {
+                tracing::debug!(program_id = program.id, "Ignoring start for inactive program.")
+            }
             Ok(Some((_, None))) => tracing::error!(program_id, "New program has no rpc row!"),
             Ok(None) => tracing::error!(program_id, "New program vanished before indexing!"),
             Err(err) => {
@@ -50,6 +61,10 @@ impl Indexer {
 
     async fn spawn_program(self: Arc<Self>, program: programs::Model, rpc: rpcs::Model) {
         let program_id = program.id;
+        let mut handles = self.handles.lock().await;
+        if handles.get(&program_id).is_some_and(|handle| !handle.is_finished()) {
+            return; // already indexing — a duplicate activate or a boot/register race
+        }
         let client = self.client_for(&rpc).await;
         let indexer = self.clone();
         let handle = tokio::spawn(async move {
@@ -57,6 +72,14 @@ impl Indexer {
                 tracing::error!(program_id, error = %err, "Program indexer task exited!");
             }
         });
-        self.handles.lock().await.insert(program_id, handle);
+        handles.insert(program_id, handle);
+    }
+
+    /// Aborts a program's running task and forgets its handle, so reactivation spawns a fresh one.
+    async fn stop_program(&self, program_id: i32) {
+        if let Some(handle) = self.handles.lock().await.remove(&program_id) {
+            handle.abort();
+            tracing::info!(program_id, "Deactivated program; stopped its indexer task.");
+        }
     }
 }

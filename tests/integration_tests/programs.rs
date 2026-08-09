@@ -344,6 +344,74 @@ async fn delete_program_happy() -> httpc_test::Result<()> {
 }
 
 #[tokio::test]
+async fn add_program_defaults_to_active() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-active-default.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
+        .await?;
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["active"], true, "a new program is indexed unless paused");
+    Ok(())
+}
+
+#[tokio::test]
+async fn activate_and_deactivate_program_toggles_flag() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-toggle.example.com").await;
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_post(&format!("/admin/programs/{}/deactivate", id), json!({}))
+        .await?;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.json_body_as::<serde_json::Value>()?["active"], false);
+
+    // the flag is durable — a subsequent read reflects the paused state
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    assert_eq!(res.json_body_as::<serde_json::Value>()?["active"], false);
+
+    let res = server()
+        .authed_client()
+        .do_post(&format!("/admin/programs/{}/activate", id), json!({}))
+        .await?;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.json_body_as::<serde_json::Value>()?["active"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn activate_unknown_program_is_not_found() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let res = server()
+        .authed_client()
+        .do_post("/admin/programs/9999/activate", json!({}))
+        .await?;
+    assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 

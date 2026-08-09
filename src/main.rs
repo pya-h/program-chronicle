@@ -2,6 +2,7 @@ use sea_orm::{ConnectOptions, Database};
 use solana_sdk::commitment_config::CommitmentConfig;
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use svm_indexer::core::sse::{SSE_CHANNEL_CAPACITY, SseEvent};
+use svm_indexer::core::state::ProgramCommand;
 use svm_indexer::indexer::Indexer;
 use tokio::sync::{broadcast, mpsc};
 
@@ -39,7 +40,7 @@ async fn main() {
         }
     };
 
-    let (new_program_tx, new_program_rx) = mpsc::channel::<i32>(32);
+    let (supervisor_tx, supervisor_rx) = mpsc::channel::<ProgramCommand>(32);
     let (sse_tx, _) = broadcast::channel::<SseEvent>(SSE_CHANNEL_CAPACITY);
     let indexer = Arc::new(Indexer::new(
         database_connection.clone(),
@@ -62,7 +63,7 @@ async fn main() {
         Duration::from_secs(env_u64("INDEXER_TXSIG_BACKFILL_SECS", 120).max(1));
     tokio::spawn(indexer.clone().run_tx_signature_backfill(tx_signature_backfill_interval));
     tokio::spawn(async move {
-        if let Err(err) = indexer.start(new_program_rx).await {
+        if let Err(err) = indexer.start(supervisor_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");
         }
     });
@@ -71,7 +72,7 @@ async fn main() {
     let router = svm_indexer::app(
         database_connection,
         admin_passkey,
-        Some(new_program_tx),
+        Some(supervisor_tx),
         sse_tx,
     );
 

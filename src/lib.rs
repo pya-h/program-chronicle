@@ -14,15 +14,15 @@ use tokio::sync::{broadcast, mpsc};
 use tower_http::services::ServeDir;
 
 use crate::core::sse::SseEvent;
-use crate::core::state::AppState;
+use crate::core::state::{AppState, ProgramCommand};
 
 pub fn app(
     db: DatabaseConnection,
     admin_passkey: String,
-    new_program_tx: Option<mpsc::Sender<i32>>,
+    supervisor_tx: Option<mpsc::Sender<ProgramCommand>>,
     sse_tx: broadcast::Sender<SseEvent>,
 ) -> Router {
-    let state = AppState::new(db, admin_passkey, new_program_tx, sse_tx);
+    let state = AppState::new(db, admin_passkey, supervisor_tx, sse_tx);
     Router::new()
         .nest("/admin", routes::admin::routes(state.clone()))
         .nest("/sse", routes::sse::routes())

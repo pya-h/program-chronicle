@@ -916,6 +916,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const address = formatProgramAddress(program.address);
         const name = program.name || `Program ${program.id}`;
         const slot = program.last_processed_slot;
+        const active = program.active !== false;
+        const toggleLabel = active ? 'Deactivate' : 'Activate';
+        const toggleIcon = active
+            ? '<rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>'
+            : '<polygon points="6 4 20 12 6 20 6 4"/>';
         return `
             <div class="program-row" data-program-id="${escapeHtml(program.id)}" data-program-address="${escapeHtml(address)}">
                 <div class="program-id">${escapeHtml(program.id)}</div>
@@ -930,9 +935,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                 </div>
                 <div class="program-status">
-                    <span class="status-badge ${slot ? 'indexed' : 'pending'}">${slot ? `Slot ${escapeHtml(slot)}` : 'Pending'}</span>
+                    <span class="status-badge ${active ? (slot ? 'indexed' : 'pending') : 'paused'}">${active ? (slot ? `Slot ${escapeHtml(slot)}` : 'Pending') : 'Paused'}</span>
                 </div>
                 <div class="program-actions">
+                    <button type="button" class="program-action-btn ${active ? 'warn' : 'success'}" data-program-id="${escapeHtml(program.id)}" data-active="${active}" data-action="toggle-active" aria-label="${toggleLabel}" title="${toggleLabel}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${toggleIcon}</svg>
+                    </button>
                     <button type="button" class="program-action-btn accent" data-program-id="${escapeHtml(program.id)}" data-action="edit" aria-label="Edit">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
@@ -1252,6 +1260,20 @@ document.addEventListener('DOMContentLoaded', () => {
             } : null;
         }
         openModal('program-rpc-modal');
+    });
+
+    // Registered once at module scope so re-entering the Programs section doesn't stack listeners.
+    document.body.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-action="toggle-active"]');
+        if (!btn || !btn.dataset.programId) return;
+        const id = btn.dataset.programId;
+        const activate = btn.dataset.active !== 'true'; // currently inactive → activate, and vice-versa
+        setBtnLoading(btn, true);
+        const res = await apiCall('POST', `/admin/programs/${id}/${activate ? 'activate' : 'deactivate'}`);
+        setBtnLoading(btn, false);
+        if (!res.ok) return showToast(res.message, 'error');
+        showToast(activate ? 'Program activated.' : 'Program deactivated.', 'success');
+        loadProgramList();
     });
 
     window.umbra.openProgramEdit = openProgramEditById;

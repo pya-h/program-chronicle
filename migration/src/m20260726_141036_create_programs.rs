@@ -18,6 +18,7 @@ enum Programs {
     LastProcessedSlot,
     LastProcessedAt,
     StartSlot,
+    Active,
     CreatedAt,
     UpdatedAt,
 }
@@ -57,6 +58,12 @@ impl MigrationTrait for Migration {
                     .check(Expr::col(Programs::LastProcessedSlot).gte(0))
                     .col(ColumnDef::new(Programs::StartSlot).big_integer().null())
                     .check(Expr::col(Programs::StartSlot).gte(0))
+                    .col(
+                        ColumnDef::new(Programs::Active)
+                            .boolean()
+                            .not_null()
+                            .default(true), // NULL-free: a program is indexed unless explicitly paused
+                    )
                     .col(
                         ColumnDef::new(Programs::CreatedAt)
                             .timestamp()

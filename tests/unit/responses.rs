@@ -179,6 +179,7 @@ fn program_progress_reads_straight_off_the_program_row() {
         last_processed_at: None,
         last_processed_slot: Some(900),
         start_slot: Some(100),
+        active: true,
         created_at: ts(),
         updated_at: ts(),
     };
