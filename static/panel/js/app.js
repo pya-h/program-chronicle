@@ -450,9 +450,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const path = resolveEndpoint();
             if (!path) {
+                // No target yet (e.g. no program picked): show the empty state but
+                // keep the fragment's initial count hint untouched.
                 root.innerHTML = '';
                 if (empty) empty.hidden = false;
-                if (count) count.textContent = '';
                 renderPager(0);
                 return;
             }
@@ -1491,6 +1492,56 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // History section -----------------------------------------------------------
+    let historyList = null;
+
+    function initHistorySection() {
+        historyList = createListSection({
+            rootId: 'history-root', emptyId: 'history-empty', countId: 'history-count', pagerId: 'history-pager',
+            endpoint: () => {
+                const addr = document.getElementById('history-address')?.value.trim();
+                return addr ? `/accounts/${encodeURIComponent(addr)}/history` : null;
+            },
+            params: () => {
+                const from = document.getElementById('history-from')?.value.trim();
+                const to = document.getElementById('history-to')?.value.trim();
+                const p = {};
+                if (from) p.from_slot = from;
+                if (to) p.to_slot = to;
+                return p;
+            },
+            renderRows: (rows) => `<div class="history-list">${rows.map(renderHistoryRow).join('')}</div>`,
+            countText: (total) => `${formatCount(total)} state${total === 1 ? '' : 's'}`
+        });
+
+        const apply = () => historyList.reload();
+        document.getElementById('history-load')?.addEventListener('click', apply);
+        ['history-address', 'history-from', 'history-to'].forEach(id => {
+            document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+        });
+        historyList.load();
+    }
+
+    function renderHistoryRow(s) {
+        const time = s.block_time != null ? new Date(s.block_time * 1000).toISOString() : '—';
+        const sig = s.tx_signature ? shortSig(s.tx_signature) : '—';
+        const preview = s.data ? `${s.data.slice(0, 48)}${s.data.length > 48 ? '…' : ''}` : '(empty)';
+        return `
+            <div class="history-row">
+                <span class="status-badge indexed history-slot">Slot ${escapeHtml(formatCount(s.slot))}</span>
+                <div class="history-body">
+                    <div class="history-meta">
+                        <span>wv ${escapeHtml(formatCount(s.write_version))}</span>
+                        <span>${escapeHtml(formatCount(s.lamports))} lamports</span>
+                        <span class="mono" title="${escapeHtml(s.tx_signature || '')}">${escapeHtml(sig)}</span>
+                        <span>${escapeHtml(time)}</span>
+                    </div>
+                    <div class="history-data mono" title="base64 data">${escapeHtml(preview)}</div>
+                </div>
+            </div>
+        `;
+    }
+
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
@@ -1507,6 +1558,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="pdas"]') || swapped?.querySelector?.('[data-section="pdas"]')) {
             initPdasSection();
+        }
+        if (swapped?.matches?.('[data-section="history"]') || swapped?.querySelector?.('[data-section="history"]')) {
+            initHistorySection();
         }
     });
 
