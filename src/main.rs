@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use sea_orm::Database;
 use solana_sdk::commitment_config::CommitmentConfig;
 use svm_indexer::core::sse::{SSE_CHANNEL_CAPACITY, SseEvent};
@@ -38,6 +38,20 @@ async fn main() {
         },
         sse_tx.clone(),
     ));
+
+    let backfill_interval = Duration::from_secs({
+        let secs = env::var("INDEXER_BLOCKTIME_BACKFILL_SECS")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !secs.is_empty() {
+            secs.parse()
+                .expect("INDEXER_BLOCKTIME_BACKFILL_SECS must be a positive integer!")
+        } else {
+            60
+        }
+    });
+    tokio::spawn(indexer.clone().run_block_time_backfill(backfill_interval));
     tokio::spawn(async move {
         if let Err(err) = indexer.start(new_program_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");

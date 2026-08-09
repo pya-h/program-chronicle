@@ -1,3 +1,4 @@
+pub mod backfill;
 pub mod events;
 pub mod persist;
 pub mod rpc;
