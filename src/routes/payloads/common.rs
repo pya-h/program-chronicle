@@ -1,11 +1,26 @@
 use sea_orm::{DatabaseConnection, PaginatorTrait, SelectorTrait};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 
 use crate::core::error::SvmIndexerError;
 
+// serde_urlencoded delivers `#[serde(flatten)]` fields as strings, so a bare `Option<u16>` fails to coerce (`invalid type: string`). 
+fn de_opt_u16<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        Some(raw) if !raw.trim().is_empty() => {
+            raw.trim().parse::<u16>().map(Some).map_err(de::Error::custom)
+        }
+        _ => Ok(None),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct PaginationQuery {
+    #[serde(default, deserialize_with = "de_opt_u16")]
     pub per_page: Option<u16>,
+    #[serde(default, deserialize_with = "de_opt_u16")]
     pub page: Option<u16>,
 }
 
