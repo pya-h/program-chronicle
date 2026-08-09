@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -15,10 +17,15 @@ use crate::{
         response::{ApiResponse, FinalResponse},
         state::AppState,
     },
-    db::entities::{program_accounts, program_events, slots},
+    db::entities::{account_states, program_accounts, program_events, slots, transactions},
     routes::{
         payloads::common::PaginationQuery,
-        responses::{accounts::ProgramAccountsResponse, events::ProgramEventsResponse},
+        responses::{
+            accounts::{AccountChangeResponse, ProgramAccountsResponse},
+            changes::ProgramChangesResponse,
+            events::{ProgramEventResponse, ProgramEventsResponse},
+            transactions::TransactionsResponse,
+        },
     },
 };
 
@@ -153,8 +160,155 @@ async fn get_program_events_handler(
     )))
 }
 
+#[derive(Deserialize)]
+struct ProgramTransactionsQuery {
+    since_slot: Option<i64>,
+    from_slot: Option<i64>,
+    to_slot: Option<i64>,
+    success: Option<bool>,
+    #[serde(flatten)]
+    pagination: PaginationQuery,
+}
+
+async fn get_program_transactions_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+    Query(query): Query<ProgramTransactionsQuery>,
+) -> FinalResponse<TransactionsResponse> {
+    let mut condition =
+        Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32));
+    if let Some(since_slot) = query.since_slot {
+        condition = condition.add(transactions::Column::Slot.gte(since_slot));
+    }
+    if let Some(from_slot) = query.from_slot {
+        condition = condition.add(transactions::Column::Slot.gte(from_slot));
+    }
+    if let Some(to_slot) = query.to_slot {
+        condition = condition.add(transactions::Column::Slot.lte(to_slot));
+    }
+    if let Some(success) = query.success {
+        condition = condition.add(transactions::Column::Success.eq(success));
+    }
+
+    let transactions_query = transactions::Entity::find()
+        .filter(condition)
+        .find_also_related(slots::Entity)
+        .order_by_desc(transactions::Column::Slot)
+        .order_by_desc(transactions::Column::Id);
+
+    let (rows, total, pages) = query
+        .pagination
+        .paginate_or_all(transactions_query, &state.db, Some("Failed fetching program transactions!"))
+        .await?;
+    Ok(ApiResponse::ok(TransactionsResponse::new(
+        rows, total, pages,
+    )))
+}
+
+#[derive(Deserialize)]
+struct ProgramChangesQuery {
+    from_slot: Option<i64>,
+    to_slot: Option<i64>,
+    include_events: Option<bool>,
+    #[serde(flatten)]
+    pagination: PaginationQuery,
+}
+
+async fn get_program_changes_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+    Query(query): Query<ProgramChangesQuery>,
+) -> FinalResponse<ProgramChangesResponse> {
+    let mut states_condition =
+        Condition::all().add(program_accounts::Column::ProgramId.eq(program_id as i32));
+    if let Some(from_slot) = query.from_slot {
+        states_condition = states_condition.add(account_states::Column::Slot.gte(from_slot));
+    }
+    if let Some(to_slot) = query.to_slot {
+        states_condition = states_condition.add(account_states::Column::Slot.lte(to_slot));
+    }
+
+    let states_query = account_states::Entity::find()
+        .find_also_related(program_accounts::Entity)
+        .filter(states_condition)
+        .order_by_asc(account_states::Column::Slot)
+        .order_by_asc(account_states::Column::WriteVersion);
+
+    let (state_rows, states_total, states_pages) = query
+        .pagination
+        .paginate_or_all(states_query, &state.db, Some("Failed fetching program changes!"))
+        .await?;
+
+    let slot_ids: Vec<i64> = state_rows.iter().map(|(state, _)| state.slot_id).collect();
+    let block_times: HashMap<i64, Option<i64>> = if slot_ids.is_empty() {
+        HashMap::new()
+    } else {
+        slots::Entity::find()
+            .filter(slots::Column::Id.is_in(slot_ids))
+            .all(&state.db)
+            .await
+            .map_err(|err| SvmIndexerError::db_error("Failed resolving change-set slots!", err))?
+            .into_iter()
+            .map(|slot| (slot.id, slot.block_time))
+            .collect()
+    };
+
+    let account_states = state_rows
+        .into_iter()
+        .map(|(state, account)| {
+            let block_time = block_times.get(&state.slot_id).copied().flatten();
+            let address = account.map(|account| account.address).unwrap_or_default();
+            AccountChangeResponse::from_model(state, &address, block_time)
+        })
+        .collect();
+
+    let (events, events_total, events_pages) = if query.include_events.unwrap_or(false) {
+        let mut events_condition =
+            Condition::all().add(program_events::Column::ProgramId.eq(program_id as i32));
+        if let Some(from_slot) = query.from_slot {
+            events_condition = events_condition.add(program_events::Column::Slot.gte(from_slot));
+        }
+        if let Some(to_slot) = query.to_slot {
+            events_condition = events_condition.add(program_events::Column::Slot.lte(to_slot));
+        }
+        let events_query = program_events::Entity::find()
+            .filter(events_condition)
+            .find_also_related(slots::Entity)
+            .order_by_asc(program_events::Column::Slot)
+            .order_by_asc(program_events::Column::Id);
+
+        let (event_rows, events_total, events_pages) = query
+            .pagination
+            .paginate_or_all(events_query, &state.db, Some("Failed fetching program change events!"))
+            .await?;
+        let events = event_rows
+            .into_iter()
+            .map(|(event, slot)| {
+                ProgramEventResponse::from_model(event, slot.and_then(|slot| slot.block_time))
+            })
+            .collect();
+        (Some(events), Some(events_total), Some(events_pages))
+    } else {
+        (None, None, None)
+    };
+
+    Ok(ApiResponse::ok(ProgramChangesResponse {
+        account_states,
+        account_states_total: states_total,
+        account_states_pages: states_pages,
+        events,
+        events_total,
+        events_pages,
+    }))
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/{program_id}/accounts", get(get_program_accounts_handler))
         .route("/{program_id}/events", get(get_program_events_handler))
+        .route(
+            "/{program_id}/transactions",
+            get(get_program_transactions_handler),
+        )
+        .route("/{program_id}/changes", get(get_program_changes_handler))
 }

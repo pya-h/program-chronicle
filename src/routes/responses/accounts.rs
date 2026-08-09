@@ -96,6 +96,33 @@ impl AccountStateResponse {
 }
 
 #[derive(Serialize)]
+pub struct AccountChangeResponse {
+    pub address: String,
+    pub owner: String,
+    pub data: String,
+    pub lamports: i64,
+    pub slot: i64,
+    pub write_version: i64,
+    pub tx_signature: Option<String>,
+    pub block_time: Option<i64>,
+}
+
+impl AccountChangeResponse {
+    pub fn from_model(state: AccountStateModel, address: &[u8], block_time: Option<i64>) -> Self {
+        Self {
+            address: pubkey_string(address),
+            owner: pubkey_string(&state.owner),
+            data: STANDARD.encode(&state.data),
+            lamports: state.lamports,
+            slot: state.slot,
+            write_version: state.write_version,
+            tx_signature: state.tx_signature.map(|sig| signature_string(&sig)),
+            block_time,
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct AccountHistoryResponse {
     pub data: Vec<AccountStateResponse>,
     pub total: u16,

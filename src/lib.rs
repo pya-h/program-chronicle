@@ -24,6 +24,7 @@ pub fn app(
         .nest("/sse", routes::sse::routes())
         .nest("/accounts", routes::accounts::routes())
         .nest("/programs", routes::programs::routes())
+        .nest("/transactions", routes::transactions::routes())
         .merge(routes::root::routes())
         .with_state(state)
         .fallback_service(
