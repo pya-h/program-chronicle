@@ -21,6 +21,7 @@ pub fn app(
     let state = AppState::new(db, admin_passkey, new_program_tx, sse_tx);
     Router::new()
         .nest("/admin", routes::admin::routes(state.clone()))
+        .nest("/sse", routes::sse::routes())
         .merge(routes::root::routes())
         .with_state(state)
         .fallback_service(
