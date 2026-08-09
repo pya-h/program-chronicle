@@ -101,16 +101,19 @@ async fn add_program_handler(
         ..Default::default()
     };
 
-    Ok(ApiResponse::created(ProgramWithRpcResponse {
-        program: program.insert(&state.db).await.map_err(|err| {
-            SvmIndexerError::db_error_with_id(
-                "Adding the new program failed at last step! Maybe the program already registered on this rpc?",
-                err,
-                rpc.id as u64
-            )
-        })?,
-        rpc,
-    }))
+    let program = program.insert(&state.db).await.map_err(|err| {
+        SvmIndexerError::db_error_with_id(
+            "Adding the new program failed at last step! Maybe the program already registered on this rpc?",
+            err,
+            rpc.id as u64
+        )
+    })?;
+    if let Some(tx) = &state.new_program_tx {
+        // TODO: Implement a retry process here with N failure submitting error to the panel
+        let _ = tx.send(program.id).await;
+    }
+
+    Ok(ApiResponse::created(ProgramWithRpcResponse { program, rpc }))
 }
 
 async fn get_single_program_handler(

@@ -4,7 +4,6 @@ pub mod state;
 pub mod supervisor;
 
 use std::collections::HashMap;
-use std::env;
 use std::sync::Arc;
 
 use sea_orm::{

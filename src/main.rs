@@ -2,6 +2,7 @@ use std::{env, net::SocketAddr, sync::Arc};
 use sea_orm::Database;
 use solana_sdk::commitment_config::CommitmentConfig;
 use svm_indexer::indexer::Indexer;
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
@@ -21,6 +22,7 @@ async fn main() {
         }
     };
 
+    let (new_program_tx, new_program_rx) = mpsc::channel::<i32>(32);
     let indexer = Arc::new(Indexer::new(
         database_connection.clone(),
         match env::var("INDEXER_COMMITMENT")
@@ -34,13 +36,13 @@ async fn main() {
         },
     ));
     tokio::spawn(async move {
-        if let Err(err) = indexer.start().await {
+        if let Err(err) = indexer.start(new_program_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");
         }
     });
 
     let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
-    let router = svm_indexer::app(database_connection, admin_passkey);
+    let router = svm_indexer::app(database_connection, admin_passkey, Some(new_program_tx));
 
     let app_port = {
         let port = env::var("APP_PORT").unwrap_or_default().trim().to_string();

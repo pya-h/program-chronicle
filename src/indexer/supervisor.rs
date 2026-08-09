@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
 use sea_orm::EntityTrait;
+use tokio::sync::mpsc;
 
 use crate::core::error::SvmIndexerError;
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::Indexer;
 
 impl Indexer {
-    pub async fn start(self: Arc<Self>) -> Result<(), SvmIndexerError> {
+    pub async fn start(
+        self: Arc<Self>,
+        mut new_program_rx: mpsc::Receiver<i32>,
+    ) -> Result<(), SvmIndexerError> {
         let programs = programs::Entity::find()
             .find_also_related(rpcs::Entity)
             .all(&self.db)
@@ -21,7 +25,27 @@ impl Indexer {
             };
             self.clone().spawn_program(program, rpc).await;
         }
+
+        // Each new program register, notifies starting its indexer here
+        while let Some(program_id) = new_program_rx.recv().await {
+            self.clone().spawn_by_id(program_id).await;
+        }
         Ok(())
+    }
+
+    async fn spawn_by_id(self: Arc<Self>, program_id: i32) {
+        let found = programs::Entity::find_by_id(program_id)
+            .find_also_related(rpcs::Entity)
+            .one(&self.db)
+            .await;
+        match found {
+            Ok(Some((program, Some(rpc)))) => self.spawn_program(program, rpc).await,
+            Ok(Some((_, None))) => tracing::error!(program_id, "New program has no rpc row!"),
+            Ok(None) => tracing::error!(program_id, "New program vanished before indexing!"),
+            Err(err) => {
+                tracing::error!(program_id, error = %err, "Failed loading new program to index!")
+            }
+        }
     }
 
     async fn spawn_program(self: Arc<Self>, program: programs::Model, rpc: rpcs::Model) {
