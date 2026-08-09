@@ -1364,6 +1364,133 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
+    // Shared program picker used by the read-API sections (pdas, history,
+    // transactions, events). Reuses the admin program list and caches it.
+    async function populateProgramSelect(selectId, { includeAll = false } = {}) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const current = select.value;
+        select.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = includeAll ? 'All programs' : 'Select a program…';
+        placeholder.disabled = !includeAll;
+        placeholder.selected = true;
+        select.appendChild(placeholder);
+
+        const res = await apiCall('GET', '/admin/programs');
+        const list = res.ok ? (res.data?.data || []) : [];
+        if (res.ok) window.__programCache = list;
+        list.forEach(item => {
+            const program = item.program || item;
+            const option = document.createElement('option');
+            option.value = program.id;
+            option.textContent = `${program.id}: ${program.name || formatProgramAddress(program.address)}`;
+            select.appendChild(option);
+        });
+        if (current) select.value = current;
+    }
+
+    // PDAs section --------------------------------------------------------------
+    let pdasList = null;
+
+    function initPdasSection() {
+        populateProgramSelect('pdas-program');
+        pdasList = createListSection({
+            rootId: 'pdas-root', emptyId: 'pdas-empty', countId: 'pdas-count', pagerId: 'pdas-pager',
+            endpoint: () => {
+                const id = document.getElementById('pdas-program')?.value;
+                return id ? `/programs/${id}/accounts` : null;
+            },
+            params: () => {
+                const memcmp = document.getElementById('pdas-memcmp')?.value.trim();
+                const dataSize = document.getElementById('pdas-datasize')?.value.trim();
+                const p = {};
+                if (memcmp) p.memcmp = memcmp;
+                if (dataSize) p.dataSize = dataSize;
+                return p;
+            },
+            renderRows: (rows) => `<div class="dash-list">${rows.map(renderAccountRow).join('')}</div>`,
+            countText: (total) => `${formatCount(total)} account${total === 1 ? '' : 's'}`
+        });
+
+        const apply = () => pdasList.reload();
+        document.getElementById('pdas-apply')?.addEventListener('click', apply);
+        document.getElementById('pdas-program')?.addEventListener('change', apply);
+        ['pdas-memcmp', 'pdas-datasize'].forEach(id => {
+            document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+        });
+
+        pdasList.load();
+    }
+
+    function renderAccountRow(acc) {
+        return `
+            <div class="dash-row clickable" data-account="${escapeHtml(acc.address)}">
+                <div class="dash-row-main">
+                    <span class="dash-row-title mono" title="${escapeHtml(acc.address)}">${escapeHtml(acc.address)}</span>
+                    <span class="dash-row-sub">${escapeHtml(formatCount(acc.lamports))} lamports</span>
+                </div>
+                <span class="status-badge indexed">Slot ${escapeHtml(formatCount(acc.slot))}</span>
+            </div>
+        `;
+    }
+
+    async function openAccountDetail(address) {
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        ['pdas-detail-address', 'pdas-detail-owner', 'pdas-detail-lamports', 'pdas-detail-slot',
+         'pdas-detail-wv', 'pdas-detail-rent', 'pdas-detail-time'].forEach(id => set(id, '…'));
+        set('pdas-detail-data', 'Loading…');
+        openModal('pdas-detail-modal');
+
+        const res = await apiCall('GET', `/accounts/${encodeURIComponent(address)}`);
+        if (!res.ok) {
+            closeModal('pdas-detail-modal');
+            showToast(res.message, 'error');
+            return;
+        }
+        const acc = res.data || {};
+        set('pdas-detail-address', acc.address || address);
+        set('pdas-detail-owner', acc.owner || '—');
+        set('pdas-detail-lamports', formatCount(acc.lamports));
+        set('pdas-detail-slot', formatCount(acc.slot));
+        set('pdas-detail-wv', formatCount(acc.write_version));
+        set('pdas-detail-rent', acc.rent_epoch != null ? formatCount(acc.rent_epoch) : '—');
+        set('pdas-detail-time', acc.block_time != null ? new Date(acc.block_time * 1000).toISOString() : '—');
+
+        const dataEl = document.getElementById('pdas-detail-data');
+        if (dataEl) {
+            dataEl.dataset.b64 = acc.data || '';
+            dataEl.dataset.mode = 'base64';
+            dataEl.textContent = acc.data || '(empty)';
+        }
+        const toggle = document.getElementById('pdas-detail-data-toggle');
+        if (toggle) toggle.textContent = 'Show hex';
+    }
+
+    // Delegated once at module scope so re-swapping the section never stacks them.
+    document.body.addEventListener('click', (e) => {
+        const row = e.target.closest('.dash-row.clickable[data-account]');
+        if (row) return openAccountDetail(row.dataset.account);
+
+        const toggle = e.target.closest('#pdas-detail-data-toggle');
+        if (toggle) {
+            const dataEl = document.getElementById('pdas-detail-data');
+            if (!dataEl) return;
+            const b64 = dataEl.dataset.b64 || '';
+            if (dataEl.dataset.mode === 'base64') {
+                const bytes = b64 ? base64ToBytes(b64) : new Uint8Array();
+                dataEl.textContent = bytes.length ? bytesToHex(bytes) : '(empty)';
+                dataEl.dataset.mode = 'hex';
+                toggle.textContent = 'Show base64';
+            } else {
+                dataEl.textContent = b64 || '(empty)';
+                dataEl.dataset.mode = 'base64';
+                toggle.textContent = 'Show hex';
+            }
+        }
+    });
+
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
@@ -1377,6 +1504,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="dashboard"]') || swapped?.querySelector?.('[data-section="dashboard"]')) {
             initDashboardSection();
+        }
+        if (swapped?.matches?.('[data-section="pdas"]') || swapped?.querySelector?.('[data-section="pdas"]')) {
+            initPdasSection();
         }
     });
 
