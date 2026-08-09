@@ -23,6 +23,7 @@ pub fn app(
         .nest("/admin", routes::admin::routes(state.clone()))
         .nest("/sse", routes::sse::routes())
         .nest("/accounts", routes::accounts::routes())
+        .nest("/programs", routes::programs::routes())
         .merge(routes::root::routes())
         .with_state(state)
         .fallback_service(

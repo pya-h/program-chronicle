@@ -2,7 +2,9 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use solana_sdk::pubkey::Pubkey;
 
-use crate::db::entities::program_accounts::Model as ProgramAccountModel;
+use crate::db::entities::{
+    program_accounts::Model as ProgramAccountModel, slots::Model as SlotModel,
+};
 
 fn pubkey_string(bytes: &[u8]) -> String {
     Pubkey::try_from(bytes)
@@ -35,6 +37,28 @@ impl AccountInfoResponse {
             slot: account.latest_slot,
             write_version: account.latest_write_version,
             block_time,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ProgramAccountsResponse {
+    pub data: Vec<AccountInfoResponse>,
+    pub total: u16,
+    pub pages: u16,
+}
+
+impl ProgramAccountsResponse {
+    pub fn new(rows: Vec<(ProgramAccountModel, Option<SlotModel>)>, total: u16, pages: u16) -> Self {
+        Self {
+            total,
+            pages,
+            data: rows
+                .into_iter()
+                .map(|(account, slot)| {
+                    AccountInfoResponse::from_model(account, slot.and_then(|slot| slot.block_time))
+                })
+                .collect(),
         }
     }
 }

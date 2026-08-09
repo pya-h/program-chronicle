@@ -7457,6 +7457,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "dotenvy",
  "futures",
