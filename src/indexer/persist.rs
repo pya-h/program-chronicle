@@ -5,8 +5,10 @@ use sea_orm::{
     TransactionTrait,
     sea_query::{Expr, OnConflict},
 };
+use tokio::sync::broadcast;
 
 use crate::core::error::SvmIndexerError;
+use crate::core::sse::SseEvent;
 use crate::db::entities::{account_states, program_accounts, slots};
 use crate::indexer::rpc::AccountSnapshot;
 
@@ -50,6 +52,7 @@ pub async fn ensure_slot<C: ConnectionTrait>(
 // `tx_sig` is only supplied by Geyser. Json rpc doesnt provide that; In future we handle that with a workaround.
 pub async fn upsert_account_snapshot(
     db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
     program_id: i32,
     rpc_id: i32,
     snapshot: &AccountSnapshot,
@@ -176,5 +179,13 @@ pub async fn upsert_account_snapshot(
     txn.commit()
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed committing snapshot!", err))?;
+
+    let _ = sse_tx.send(SseEvent::account_changed(
+        program_id,
+        snapshot.address,
+        slot,
+        write_version,
+        snapshot.data.clone(),
+    ));
     Ok(())
 }
