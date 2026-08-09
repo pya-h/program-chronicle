@@ -31,6 +31,9 @@ use crate::indexer::transactions::{catch_up_transactions, stream_transactions};
 
 pub struct Indexer {
     db: DatabaseConnection,
+    /// Ingest level for catch-up and streams. Writes are idempotent do-nothing with no reorg
+    /// overwrite: under `confirmed` the latest cache self-heals on the next change, but a reorged
+    /// slot's history row may linger until a finalized-reconcile pass.
     commitment: CommitmentConfig,
     sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
