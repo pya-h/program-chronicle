@@ -101,7 +101,7 @@ async fn get_rpcs_handler(
                 .all(&state.db)
                 .await
                 .map_err(|err| SvmIndexerError::db_error("Failed fetching rpcs!", err))?;
-            (result.len() as u16, 1_u16, result)
+            (result.len() as u64, 1_u64, result)
         }
     };
     Ok(ApiResponse::ok(GetRpcsResponse::new(rpcs, total, pages)))

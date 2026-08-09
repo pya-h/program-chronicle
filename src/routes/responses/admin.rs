@@ -12,12 +12,12 @@ pub struct RpcWithProgramsResponse {
 #[derive(Serialize)]
 pub struct GetRpcsResponse {
     pub data: Vec<RpcWithProgramsResponse>,
-    pub total: u16,
-    pub pages: u16,
+    pub total: u64,
+    pub pages: u64,
 }
 
 impl GetRpcsResponse {
-    pub fn new(rpcs: Vec<(RpcModel, Vec<ProgramModel>)>, total: u16, pages: u16) -> Self {
+    pub fn new(rpcs: Vec<(RpcModel, Vec<ProgramModel>)>, total: u64, pages: u64) -> Self {
         Self {
             total,
             pages,
@@ -62,12 +62,12 @@ impl ProgramWithRpcResponse {
 #[derive(Serialize)]
 pub struct GetProgramsResponse {
     pub data: Vec<ProgramWithRpcResponse>,
-    pub total: u16,
-    pub pages: u16,
+    pub total: u64,
+    pub pages: u64,
 }
 
 impl GetProgramsResponse {
-    pub fn new(programs: Vec<(ProgramModel, Option<RpcModel>)>, total: u16, pages: u16) -> Self {
+    pub fn new(programs: Vec<(ProgramModel, Option<RpcModel>)>, total: u64, pages: u64) -> Self {
         Self {
             total,
             pages,
