@@ -1,74 +1,141 @@
 # svm-indexer
 
-A Solana/SVM (Fogo) account indexer. Given a set of RPC endpoints and on-chain programs, it fetches and persists account state over time and serves it over an API, so Umbra apps can read on-chain state from one shared, cached source instead of hitting the network RPC directly.
+A Solana/SVM (Fogo) account indexer. Given a set of RPC endpoints and on-chain programs, it fetches and persists account state, transactions, and program events over time and serves them over an HTTP + SSE API, so Umbra apps can read on-chain state from one shared, cached source instead of hitting the network RPC directly.
 
-This README tracks the project's current state, layout, and near-term plans. It is not an exhaustive reference for every module.
+This README tracks the project's current state, layout, and the consumer-facing API.
 
-## What is shipped
+## What it does
 
-- **Admin HTTP API** (`/admin/*`) for managing indexing configuration:
-  - `GET /admin` — validate the admin passkey (used by the panel login gate)
-  - `POST /admin/rpcs` — register a new RPC endpoint
-  - `GET /admin/rpcs` — list RPCs with pagination and their related programs
-  - `GET /admin/rpcs/{id}` — get a single RPC with its related programs
-  - `PATCH /admin/rpcs/{id}` — update RPC URLs
-  - `DELETE /admin/rpcs/{id}` — remove an RPC
-  - `POST /admin/programs` — register a program to index (by `rpc_id` or inline `rpc_url`)
-  - `GET /admin/programs` — list programs with pagination and their RPC
-  - `GET /admin/programs/{id}` — get a single program with its RPC
-  - `PATCH /admin/programs/{id}` — update program settings
-  - `DELETE /admin/programs/{id}` — remove a program
-- **Admin authentication** via the `x-security` header (constant-time comparison).
-- **Health check** at `GET /health`.
-- **Admin panel** — a static HTMX single-page panel served from `static/panel` at `/`. It gates on the admin passkey and provides the navigation shell (Dashboard, RPCs, Programs, PDAs, History, Monitoring, Settings). Section bodies are placeholders pending wiring to the API.
-- **PostgreSQL schema** for the configuration and account tables (see below).
-- **Structured logging**: JSON `tracing` subscriber to stdout plus a panic hook.
+For every registered program the indexer catches up from the program's `start_slot` to the current head, then stays live:
+
+- **Accounts** — a per-account cache of the latest state plus full per-slot history.
+- **Transactions** — transactions touching a tracked program.
+- **Events** — program log events (`Program data:` lines), decoded position-agnostically.
+
+Data is stored raw and program-agnostic (bytes are base64 in responses, addresses/signatures are base58); consumers decode it themselves. `block_time` may be `null` immediately after ingest and is filled in by a background backfill pass.
+
+## Consumer API
+
+All read endpoints are public (no `x-security` header). Byte payloads (`data`) are base64; addresses, owners and signatures are base58. List endpoints share a `{ "data": [...], "total": N, "pages": N }` envelope.
+
+### Accounts
+
+- `GET /accounts/{address}` — latest cached state of one account.
+- `GET /accounts?addresses=a,b,c` — batch fetch; the result is **positional**, with `null` where an address is not indexed.
+- `GET /accounts/{address}/history` — per-slot state history, newest first.
+
+### Programs
+
+- `GET /programs/{id}/accounts` — all cached accounts of a program.
+  - `memcmp=<offset>:<base58>` — match raw bytes at a byte offset (offset is 0-indexed).
+  - `dataSize=<n>` — match accounts whose state is exactly `n` bytes.
+- `GET /programs/{id}/events` — program events, newest first.
+  - `tx_signature=<base58>` — events from one transaction.
+  - `discriminator=<hex>` — match the event's leading 8 bytes (hex, optional `0x` prefix).
+- `GET /programs/{id}/transactions` — a program's transactions, newest first.
+  - `success=true|false` — filter by outcome.
+- `GET /programs/{id}/changes` — account state changes for a program in slot order.
+  - `include_events=true` — also include the program's events in the same window.
+
+### Transactions
+
+- `GET /transactions/{signature}` — a single transaction with its raw payload.
+- `GET /transactions` — recent transactions across all programs, newest first.
+
+### Slot filters & pagination
+
+Read endpoints accept slot bounds where applicable: `since_slot` / `from_slot` (inclusive lower bound) and `to_slot` (inclusive upper bound). Pagination is opt-in: pass **both** `page` and `per_page` (per_page is clamped to 1..=100) to page; omit them to receive the whole result set in a single page.
+
+## Streaming (SSE)
+
+Live updates are delivered as [Server-Sent Events](https://developer.mozilla.org/docs/Web/API/Server-sent_events). Each stream is filtered server-side:
+
+- `GET /sse/accounts/{address}` — changes to one account (`account` events).
+- `GET /sse/programs/{id}/accounts` — every account change for a program (`account` events).
+- `GET /sse/programs/{id}/events` — a program's log events (`event` events).
+
+Event frames carry a JSON body with `slot` (and `write_version` for accounts, `signature` + `log_index` for events) plus the base64 `data`. A slow consumer that falls behind the fan-out buffer receives a `resync` event `{ "since_slot": <last seen slot>, "missed": <count> }` instead of silently losing changes.
+
+### Reconnect pattern
+
+To avoid gaps across reconnects or resyncs:
+
+1. **Subscribe first.** Open the SSE stream before reading, so nothing published during backfill is missed.
+2. **Backfill from the last slot you saw.** Call the matching read endpoint with `since_slot = <last processed slot>` to pull everything up to now.
+3. **Handle `resync`.** When a `resync` frame arrives, treat its `since_slot` as the new backfill anchor: re-pull the gap via the read API, then keep consuming the stream.
+
+The indexed history window starts at each program's `start_slot` — reads never return data older than that.
+
+## Admin API
+
+Admin endpoints require the `x-security` header (constant-time comparison) and manage indexing configuration:
+
+- `GET /admin` — validate the admin passkey (used by the panel login gate).
+- `GET /admin/stats` — indexer stats: counts, per-program progress (`last_processed_slot`), and table size estimates.
+- `POST|GET|PATCH|DELETE /admin/rpcs[/{id}]` — manage RPC endpoints.
+- `POST|GET|PATCH|DELETE /admin/programs[/{id}]` — manage indexed programs (register by `rpc_id` or inline `rpc_url`).
+
+A health check is served at `GET /` and an HTMX admin panel is served from `static/panel` at the root.
 
 ## Database schema
 
-| Table | Status | Purpose |
-|---|---|---|
-| `rpcs` | active | registered RPC endpoints (`http_url`, `ws_url`) |
-| `programs` | active | programs to index, tied to an RPC (`address`, `name`, `last_processed_slot`, `last_processed_at`) |
-| `program_accounts` | created | per-program account registry plus a cached latest state (`state`, `latest_slot`, `latest_tx_signature`, `first_seen_slot`) for fast current-state reads |
-| `account_states` | in progress | per-slot state history for each account (migration still being fleshed out) |
+| Table | Purpose |
+|---|---|
+| `rpcs` | registered RPC endpoints (`http_url`, `ws_url`) |
+| `programs` | programs to index, tied to an RPC (`address`, `name`, `start_slot`, `last_processed_slot`) |
+| `slots` | per-RPC slot dimension (`block_time`, filled once known) |
+| `program_accounts` | per-program account registry plus the cached latest state for fast current-state reads |
+| `account_states` | per-slot state history for each account |
+| `transactions` | transactions touching a tracked program |
+| `program_events` | decoded program log events |
 
-Data is stored raw/program-agnostic; consumers decode it themselves.
+## Configuration
+
+Read from the environment (see `.env.example`); parsed at startup.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | — | PostgreSQL connection string (required) |
+| `ADMIN_PASSKEY` | — | secret for the `x-security` header (required) |
+| `APP_PORT` | `3000` | HTTP listen port |
+| `APP_ENV` | `development` | `development` enables TRACE logging; `production` uses INFO |
+| `INDEXER_COMMITMENT` | `confirmed` | ingest commitment (`confirmed` or `finalized`) |
+| `INDEXER_CATCHUP_CONCURRENCY` | `4` | max programs running bulk catch-up at once |
+| `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
+| `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
+| `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |
+| `DB_IDLE_TIMEOUT_SECS` | `300` | release idle connections when load drops |
+
+Under `confirmed`, reorgs are rare and shallow: the latest cache self-heals on the next change, while a historical row for a reorged slot may linger. Writes are idempotent `DO NOTHING` — there is no overwrite machinery in the MVP.
 
 ## Layout
 
 ```
 src/
-  main.rs             # binary entrypoint: env, db, logging, serve
-  lib.rs              # app(): Router assembly (admin nest, health, static panel fallback)
-  core/               # state, error, response, logging
+  main.rs             # binary entrypoint: env, db pool, logging, indexer, serve
+  lib.rs              # app(): Router assembly (admin, sse, public reads, static panel)
+  core/               # state, error, response, logging, sse event types
   middlewares/        # admin_guard (x-security header check)
-  routes/
-    root.rs           # /health + not-found
-    admin/            # rpcs + programs handlers, admin passkey guard
-    payloads/         # request bodies + pagination query
-    responses/        # response shapes
-  db/entities/        # SeaORM entities (programs, rpcs)
+  indexer/            # supervisor, per-program catch-up + live streams, persistence, rpc client
+  routes/             # accounts, programs, transactions, sse, admin, payloads, responses
+  db/entities/        # SeaORM entities
 migration/            # SeaORM migrations
-static/panel/         # HTMX admin panel (index.html, css, js, fragments)
+static/panel/         # HTMX admin panel
 tests/integration_tests/  # httpc-test suite against a real server + test db
-stuff/                # design notes for the indexer/worker/streaming (reference, not wired in)
 ```
 
 ## Tech stack
 
 - Rust 2024 edition
-- Axum web framework
+- Axum web framework (HTTP + SSE)
 - SeaORM + PostgreSQL
+- Solana RPC client
 - JSON tracing subscriber + panic hook
 
 ## Running locally
 
-1. Copy `.env.example` to `.env` and fill in:
-   - `DATABASE_URL` — PostgreSQL connection string
-   - `ADMIN_PASSKEY` — secret used for the `x-security` header
-   - `APP_PORT` — optional, defaults to `3000`
-   - `APP_ENV` — optional, `development` (default) enables TRACE logging; `production` uses INFO
+1. Copy `.env.example` to `.env` and fill it in (at least `DATABASE_URL` and `ADMIN_PASSKEY`).
 
 2. Run migrations:
    ```bash
@@ -84,7 +151,7 @@ The admin panel is then available at `http://localhost:3000/`.
 
 ## Running tests
 
-Integration tests live in `tests/integration_tests/` and use `httpc-test` against a real server instance backed by its own `<database>_test` database, which is created and migrated automatically. Tests reset their tables before each case and must run single-threaded:
+Integration tests use `httpc-test` against a real server backed by its own `<database>_test` database, created and migrated automatically. They reset their tables before each case and must run single-threaded:
 
 ```bash
 cargo test --test integration_tests -- --test-threads=1
@@ -92,19 +159,6 @@ cargo test --test integration_tests -- --test-threads=1
 
 Set `TEST_DATABASE_URL` to override the test database; otherwise `DATABASE_URL` with a `_test` suffix on the database name is used.
 
-To watch and rerun a specific test (requires `cargo install cargo-watch`):
-
-```bash
-cargo watch -q -c -w tests/ -x "test -q [test_func_name] -- --test-threads=1 --nocapture"
-```
-
 ## REST client
 
-`request.http` contains example calls for all current endpoints and can be used with the VS Code REST Client extension.
-
-## What is coming next
-
-- Block-by-block indexer that polls configured RPCs per program, extracts accounts touched by tracked programs, and persists current state plus history (backfill from a start slot, then stay live). Design notes in `stuff/`.
-- Public API for querying an address's current state and full history.
-- WebSocket push layer for live updates per address.
-- Wiring the admin panel sections to the API, including per-program indexing progress.
+`request.http` contains example calls for every endpoint and works with the VS Code REST Client extension.

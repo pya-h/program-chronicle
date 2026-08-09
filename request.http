@@ -161,3 +161,95 @@ Content-Type: application/json
 ### Delete program (replace 1 with an existing id)
 DELETE {{baseUrl}}/admin/programs/1
 x-security: {{adminPasskey}}
+
+
+### Indexer stats (counts, per-program progress, table estimates)
+GET {{baseUrl}}/admin/stats
+x-security: {{adminPasskey}}
+
+
+### ---------- Accounts (public) ----------
+
+### Get one account's latest cached state
+GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P
+
+
+### Batch fetch (positional result, null where not indexed)
+GET {{baseUrl}}/accounts?addresses=4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P,So11111111111111111111111111111111111111112
+
+
+### Full state history (newest first)
+GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history
+
+
+### History bounded by a slot range
+GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history?from_slot=1000&to_slot=2000
+
+
+### History since a slot, paginated
+GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history?since_slot=1500&page=1&per_page=20
+
+
+### ---------- Program reads (public; replace 1 with a program id) ----------
+
+### All cached accounts of a program
+GET {{baseUrl}}/programs/1/accounts
+
+
+### Program accounts filtered by memcmp (<offset>:<base58>)
+GET {{baseUrl}}/programs/1/accounts?memcmp=0:3xR
+
+
+### Program accounts filtered by exact data size, paginated
+GET {{baseUrl}}/programs/1/accounts?dataSize=165&page=1&per_page=25
+
+
+### Program events (newest first)
+GET {{baseUrl}}/programs/1/events
+
+
+### Program events since a slot
+GET {{baseUrl}}/programs/1/events?since_slot=1500
+
+
+### Program events by discriminator (leading 8 bytes, hex)
+GET {{baseUrl}}/programs/1/events?discriminator=e445a52e51cb9a1d
+
+
+### Program events for a single transaction
+GET {{baseUrl}}/programs/1/events?tx_signature=5wHu1qwD4kLwZzQ3rZ8m9pXr7YcVn8rY3xJqk2Fh6gTn4bScP1aWfE9dMxvUoLpKq8rT2sVbNc3hGyJ7mQwErTy
+
+
+### Program transactions, failed only, in a slot range
+GET {{baseUrl}}/programs/1/transactions?success=false&from_slot=1000&to_slot=2000
+
+
+### Program changes with events included
+GET {{baseUrl}}/programs/1/changes?include_events=true&from_slot=1000&to_slot=2000
+
+
+### ---------- Transactions (public) ----------
+
+### Single transaction by signature
+GET {{baseUrl}}/transactions/5wHu1qwD4kLwZzQ3rZ8m9pXr7YcVn8rY3xJqk2Fh6gTn4bScP1aWfE9dMxvUoLpKq8rT2sVbNc3hGyJ7mQwErTy
+
+
+### Recent transactions across all programs, since a slot
+GET {{baseUrl}}/transactions?since_slot=1500&page=1&per_page=20
+
+
+### ---------- Live streams (SSE) ----------
+
+### Stream one account's changes
+GET {{baseUrl}}/sse/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P
+Accept: text/event-stream
+
+
+### Stream all account changes for a program
+GET {{baseUrl}}/sse/programs/1/accounts
+Accept: text/event-stream
+
+
+### Stream a program's log events
+GET {{baseUrl}}/sse/programs/1/events
+Accept: text/event-stream
