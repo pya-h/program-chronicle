@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 use httpc_test::Client;
+use tokio::sync::{Mutex, MutexGuard};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectOptions, ConnectionTrait, Database,
@@ -179,7 +180,14 @@ pub async fn test_db() -> DatabaseConnection {
         .expect("failed to connect to test database")
 }
 
-pub async fn reset_db() {
+/// Serializes tests against the single shared database: every test starts with `reset_db().await`,
+/// which wipes global state, so two tests running at once would clobber each other's rows and
+/// counts. Each test binds the returned guard (`let _guard = reset_db().await;`) for its whole
+/// body; `tokio::sync::Mutex` is used because it does not poison when a test panics.
+static DB_GUARD: Mutex<()> = Mutex::const_new(());
+
+pub async fn reset_db() -> MutexGuard<'static, ()> {
+    let guard = DB_GUARD.lock().await;
     let db = test_db().await;
     // child rows first so the Restrict foreign keys don't block the truncation
     db.execute_unprepared(
@@ -188,6 +196,7 @@ pub async fn reset_db() {
     )
     .await
     .expect("failed to reset test tables");
+    guard
 }
 
 /// Deterministic 32-byte address from a seed, so tests can round-trip the base58 string.

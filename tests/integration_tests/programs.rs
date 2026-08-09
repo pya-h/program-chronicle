@@ -36,7 +36,7 @@ async fn create_rpc(http_url: &str) -> u64 {
 
 #[tokio::test]
 async fn add_program_with_rpc_id_happy() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-rpc.example.com").await;
 
@@ -64,7 +64,7 @@ async fn add_program_with_rpc_id_happy() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_program_with_rpc_url_creates_rpc() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -92,7 +92,7 @@ async fn add_program_with_rpc_url_creates_rpc() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_program_without_rpc_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -104,7 +104,7 @@ async fn add_program_without_rpc_is_bad_request() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_program_invalid_address_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-rpc-invalid.example.com").await;
 
@@ -121,7 +121,7 @@ async fn add_program_invalid_address_is_bad_request() -> httpc_test::Result<()> 
 
 #[tokio::test]
 async fn add_program_rpc_id_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -136,7 +136,7 @@ async fn add_program_rpc_id_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_program_duplicate_address_on_same_rpc_fails() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-dup.example.com").await;
 
@@ -155,7 +155,7 @@ async fn add_program_duplicate_address_on_same_rpc_fails() -> httpc_test::Result
 
 #[tokio::test]
 async fn add_program_without_auth_is_unauthorized() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .unauthed_client()
@@ -167,7 +167,7 @@ async fn add_program_without_auth_is_unauthorized() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn list_programs_with_pagination() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-list.example.com").await;
     for i in 0..5 {
@@ -195,7 +195,7 @@ async fn list_programs_with_pagination() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn get_single_program_and_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-single.example.com").await;
     let created = server()
@@ -225,7 +225,7 @@ async fn get_single_program_and_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn update_program_happy() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-update.example.com").await;
     let created = server()
@@ -264,7 +264,7 @@ async fn update_program_happy() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn update_program_no_fields_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-update-bad.example.com").await;
     let created = server()
@@ -288,7 +288,7 @@ async fn update_program_no_fields_is_bad_request() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn update_program_invalid_address_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-update-addr.example.com").await;
     let created = server()
@@ -315,7 +315,7 @@ async fn update_program_invalid_address_is_bad_request() -> httpc_test::Result<(
 
 #[tokio::test]
 async fn delete_program_happy() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let rpc_id = create_rpc("https://program-delete.example.com").await;
     let created = server()
@@ -345,7 +345,7 @@ async fn delete_program_happy() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()

@@ -4,7 +4,7 @@ use crate::common::{assert_datetimes_equal, parse_datetime, reset_db, server};
 
 #[tokio::test]
 async fn add_rpc_happy_with_both_urls() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -30,7 +30,7 @@ async fn add_rpc_happy_with_both_urls() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_rpc_without_ws_url_auto_generates() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -46,7 +46,7 @@ async fn add_rpc_without_ws_url_auto_generates() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_rpc_missing_http_url_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -58,7 +58,7 @@ async fn add_rpc_missing_http_url_is_bad_request() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_rpc_invalid_url_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -70,7 +70,7 @@ async fn add_rpc_invalid_url_is_bad_request() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_rpc_without_auth_is_unauthorized() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .unauthed_client()
@@ -82,7 +82,7 @@ async fn add_rpc_without_auth_is_unauthorized() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn add_rpc_duplicate_http_url_fails() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     server()
         .authed_client()
@@ -99,7 +99,7 @@ async fn add_rpc_duplicate_http_url_fails() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn list_rpcs_with_pagination() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     for i in 0..5 {
         server()
@@ -129,7 +129,7 @@ async fn list_rpcs_with_pagination() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn list_rpcs_without_auth_is_unauthorized() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server().unauthed_client().do_get("/admin/rpcs").await?;
     assert_eq!(res.status(), 401);
@@ -138,7 +138,7 @@ async fn list_rpcs_without_auth_is_unauthorized() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn get_single_rpc_and_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let created = server()
         .authed_client()
@@ -167,7 +167,7 @@ async fn get_single_rpc_and_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn update_rpc_happy() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let created = server()
         .authed_client()
@@ -204,7 +204,7 @@ async fn update_rpc_happy() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn update_rpc_no_fields_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let created = server()
         .authed_client()
@@ -230,7 +230,7 @@ async fn update_rpc_no_fields_is_bad_request() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn update_rpc_no_fields_does_not_change_updated_at() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let created = server()
         .authed_client()
@@ -267,7 +267,7 @@ async fn update_rpc_no_fields_does_not_change_updated_at() -> httpc_test::Result
 
 #[tokio::test]
 async fn update_rpc_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server()
         .authed_client()
@@ -279,7 +279,7 @@ async fn update_rpc_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn delete_rpc_happy() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let created = server()
         .authed_client()
@@ -311,7 +311,7 @@ async fn delete_rpc_happy() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn delete_rpc_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let res = server().authed_client().do_delete("/admin/rpcs/9999").await?;
     assert_eq!(res.status(), 404);
@@ -320,7 +320,7 @@ async fn delete_rpc_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn delete_rpc_with_programs_is_blocked() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
 
     let created = server()
         .authed_client()

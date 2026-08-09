@@ -5,3 +5,4 @@ mod reads;
 mod root;
 mod rpcs;
 mod sse;
+mod stats;
