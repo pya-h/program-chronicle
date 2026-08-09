@@ -1,20 +1,78 @@
-<section class="section-shell">
+<section class="section-shell" data-section="monitoring">
     <header class="section-header">
         <div class="section-title-block">
             <h1 class="section-title">Monitoring</h1>
-            <p class="section-description">Live indexing progress, logs, and service health.</p>
+            <p class="section-description">Per-program indexing progress and a live change stream.</p>
         </div>
         <div class="section-actions">
-            <button class="btn btn-secondary">Pause</button>
-            <button class="btn btn-primary">Live logs</button>
+            <button class="btn btn-secondary" id="monitoring-refresh">Refresh</button>
         </div>
     </header>
 
-    <div class="empty-state">
-        <div class="empty-state-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    <article class="card">
+        <div class="card-head">
+            <div class="card-head-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <div>
+                <h2 class="card-head-title">Indexing Progress</h2>
+                <p class="card-head-sub" id="mon-progress-count">Loading…</p>
+            </div>
         </div>
-        <h2 class="empty-state-title">Monitoring & logs</h2>
-        <p class="empty-state-text">Indexing progress bars, per-program slot counters, and a streaming log viewer will live here.</p>
-    </div>
+
+        <div id="mon-progress-root"></div>
+
+        <div class="empty-state" id="mon-progress-empty" hidden>
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <p class="empty-state-title">No programs</p>
+            <p class="empty-state-text">Register a program to see indexing progress here.</p>
+        </div>
+    </article>
+
+    <article class="card">
+        <div class="card-head">
+            <div class="card-head-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+            </div>
+            <div>
+                <h2 class="card-head-title">Live Stream</h2>
+                <p class="card-head-sub">Server-sent account &amp; event changes, newest first.</p>
+            </div>
+            <span class="status-badge pending" id="mon-stream-status">Idle</span>
+        </div>
+
+        <div class="filter-bar">
+            <div class="input-group">
+                <label for="mon-stream-program" class="input-label">Program</label>
+                <div class="select-wrap">
+                    <select id="mon-stream-program" class="input-field select-field">
+                        <option value="" disabled selected>Select a program…</option>
+                    </select>
+                </div>
+            </div>
+            <div class="input-group">
+                <label for="mon-stream-type" class="input-label">Stream</label>
+                <div class="select-wrap">
+                    <select id="mon-stream-type" class="input-field select-field">
+                        <option value="accounts">Account changes</option>
+                        <option value="events">Events</option>
+                    </select>
+                </div>
+            </div>
+            <button type="button" class="btn btn-primary" id="mon-stream-toggle">Connect</button>
+            <button type="button" class="btn btn-secondary" id="mon-stream-clear">Clear</button>
+        </div>
+
+        <div class="stream-log" id="mon-stream-log"></div>
+
+        <div class="empty-state" id="mon-stream-empty">
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+            </div>
+            <p class="empty-state-title">Not streaming</p>
+            <p class="empty-state-text">Pick a program and stream type, then Connect to watch live changes.</p>
+        </div>
+    </article>
 </section>
