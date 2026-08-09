@@ -306,7 +306,11 @@ document.addEventListener('DOMContentLoaded', () => {
     window.umbra = {
         toast: showToast,
         prefs: Prefs,
-        sidebar: { open: openSidebar, close: closeSidebar, toggle: toggleSidebar }
+        sidebar: { open: openSidebar, close: closeSidebar, toggle: toggleSidebar },
+        api: apiCall,
+        buildQuery,
+        createListSection,
+        bytes: { toBase58, fromBase58, toBase64, base64ToBytes, bytesToHex, hexToBytes }
     };
 
     document.addEventListener('keydown', (e) => {
@@ -369,6 +373,135 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             return { ok: false, status: 0, data: null, message: err.message || 'Network error' };
         }
+    }
+
+    // Byte encoders for `data` payloads: the API already delivers `data` as
+    // base64 and addresses/signatures as base58, so these cover the panel's
+    // display needs (base64 → bytes → hex) plus a hex parser for discriminators.
+    function toBase64(bytes) {
+        let bin = '';
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin);
+    }
+
+    function base64ToBytes(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+
+    function bytesToHex(bytes) {
+        return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function hexToBytes(hex) {
+        const clean = hex.trim().replace(/^0x/i, '');
+        if (clean.length === 0 || clean.length % 2 !== 0 || /[^0-9a-f]/i.test(clean)) return null;
+        const out = new Uint8Array(clean.length / 2);
+        for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+        return out;
+    }
+
+    // Serialize a params object into a query string, dropping null/undefined/blank
+    // so unset slot bounds and filters never reach the endpoint.
+    function buildQuery(params) {
+        const pairs = Object.entries(params)
+            .filter(([, v]) => v !== null && v !== undefined && v !== '')
+            .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+        return pairs.length ? `?${pairs.join('&')}` : '';
+    }
+
+    // Reusable list-section scaffold shared by every paginated panel section
+    // (pdas, history, transactions, events). It owns the page cursor, merges the
+    // caller's filters/slot bounds with the page params, fetches the standard
+    // { data, total, pages } envelope, and drives skeleton / empty / error / pager
+    // states against the section's own elements.
+    function createListSection(config) {
+        const {
+            rootId, emptyId, countId, pagerId,
+            endpoint,                 // string | () => string|null (path, no query)
+            perPage = 20,
+            renderRows,               // (items) => html
+            countText,                // (total) => string
+            params = () => ({}),      // () => extra query params (filters + slot bounds)
+        } = config;
+
+        let page = 1;
+        const el = (id) => (id ? document.getElementById(id) : null);
+        const resolveEndpoint = () => (typeof endpoint === 'function' ? endpoint() : endpoint);
+
+        function renderPager(pages) {
+            const pager = el(pagerId);
+            if (!pager) return;
+            if (pages <= 1) { pager.innerHTML = ''; return; }
+            pager.innerHTML = `
+                <button type="button" class="pager-btn" data-pager="prev" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                <span class="pager-status">Page ${page} of ${pages}</span>
+                <button type="button" class="pager-btn" data-pager="next" ${page >= pages ? 'disabled' : ''}>Next</button>
+            `;
+        }
+
+        async function load() {
+            const root = el(rootId);
+            if (!root) return;
+            const empty = el(emptyId);
+            const count = el(countId);
+
+            const path = resolveEndpoint();
+            if (!path) {
+                root.innerHTML = '';
+                if (empty) empty.hidden = false;
+                if (count) count.textContent = '';
+                renderPager(0);
+                return;
+            }
+
+            root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
+            if (empty) empty.hidden = true;
+            if (count) count.textContent = 'Loading…';
+
+            const query = buildQuery({ ...params(), page, per_page: perPage });
+            const res = await apiCall('GET', `${path}${query}`);
+            if (!res.ok) {
+                root.innerHTML = '';
+                if (empty) empty.hidden = false;
+                if (count) count.textContent = 'Failed to load';
+                showToast(res.message, 'error');
+                renderPager(0);
+                return;
+            }
+
+            const rows = res.data?.data || [];
+            const total = res.data?.total ?? rows.length;
+            const pages = res.data?.pages ?? 1;
+            if (count) count.textContent = countText ? countText(total) : `${total} item${total === 1 ? '' : 's'}`;
+
+            if (rows.length === 0) {
+                root.innerHTML = '';
+                if (empty) empty.hidden = false;
+                renderPager(0);
+                return;
+            }
+            if (empty) empty.hidden = true;
+            root.innerHTML = renderRows(rows);
+            renderPager(pages);
+        }
+
+        // A fresh element replaces the pager on every render, so binding once on
+        // the container created for this instance never stacks listeners.
+        el(pagerId)?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-pager]');
+            if (!btn || btn.disabled) return;
+            page = Math.max(1, page + (btn.dataset.pager === 'next' ? 1 : -1));
+            load();
+        });
+
+        return {
+            load,
+            reload() { page = 1; return load(); },
+            get page() { return page; }
+        };
     }
 
     function normalizeHttpUrl(raw) {
