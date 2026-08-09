@@ -20,6 +20,7 @@ use crate::db::entities::{programs, rpcs};
 use crate::indexer::rpc::SvmRpc;
 use crate::indexer::rpc::json_rpc::JsonRpc;
 use crate::indexer::state::{catch_up_state, stream_state};
+use crate::indexer::transactions::{catch_up_transactions, stream_transactions};
 
 
 pub struct Indexer {
@@ -62,8 +63,14 @@ impl Indexer {
         let head = rpc.get_slot().await? as i64;
         let program = self.resolve_start_slot(program, head).await?;
         catch_up_state(rpc.as_ref(), &self.db, &program).await?; // cache up to the head
+        catch_up_transactions(rpc.as_ref(), &self.db, &program).await?; // backfill the downtime gap
         self.advance_cursor(&program, head).await?;
-        stream_state(rpc.as_ref(), &self.db, &program).await?; // now start taking snapshots
+
+        tokio::try_join!(
+            stream_state(rpc.as_ref(), &self.db, &program),
+            stream_transactions(rpc.as_ref(), &self.db, &program),
+        )?; // try_join so when one ends/stops, the other one stops too. When the retry mechanism is implemented,
+        // The end/stop of one leads to stopping both and retrying both again.
         Ok(())
     }
 

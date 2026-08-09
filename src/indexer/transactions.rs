@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use sea_orm::{
     ActiveValue::Set, DatabaseConnection, EntityTrait, TransactionTrait, sea_query::OnConflict,
 };
@@ -46,6 +47,24 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
         if page_len < CATCH_UP_PAGE_SIZE {
             break;
         }
+    }
+    Ok(())
+}
+
+pub async fn stream_transactions<R: SvmRpc + ?Sized>(
+    rpc: &R,
+    db: &DatabaseConnection,
+    program: &programs::Model,
+) -> Result<(), SvmIndexerError> {
+    let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
+        SvmIndexerError::InvalidPublicKey("Stored program address is not a valid pubkey!".to_owned())
+    })?;
+    let mut stream = rpc.subscribe_logs(&address).await?;
+
+    while let Some(notification) = stream.next().await {
+        let notification = notification?;
+        let tx = rpc.get_transaction(&notification.signature).await?;
+        index_transaction(db, program.id, program.rpc_id, &tx).await?;
     }
     Ok(())
 }
