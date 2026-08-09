@@ -7,6 +7,7 @@ use sea_orm::{
     ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, Value, sea_query::Expr,
 };
 use serde::Deserialize;
+use solana_sdk::signature::Signature;
 
 use crate::{
     core::{
@@ -14,8 +15,11 @@ use crate::{
         response::{ApiResponse, FinalResponse},
         state::AppState,
     },
-    db::entities::{program_accounts, slots},
-    routes::{payloads::common::PaginationQuery, responses::accounts::ProgramAccountsResponse},
+    db::entities::{program_accounts, program_events, slots},
+    routes::{
+        payloads::common::PaginationQuery,
+        responses::{accounts::ProgramAccountsResponse, events::ProgramEventsResponse},
+    },
 };
 
 #[derive(Deserialize)]
@@ -95,6 +99,68 @@ async fn get_program_accounts_handler(
     )))
 }
 
+#[derive(Deserialize)]
+struct ProgramEventsQuery {
+    since_slot: Option<i64>,
+    from_slot: Option<i64>,
+    to_slot: Option<i64>,
+    tx_signature: Option<String>,
+    #[serde(flatten)]
+    pagination: PaginationQuery,
+}
+
+async fn get_program_events_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+    Query(query): Query<ProgramEventsQuery>,
+) -> FinalResponse<ProgramEventsResponse> {
+    let mut condition =
+        Condition::all().add(program_events::Column::ProgramId.eq(program_id as i32));
+    if let Some(since_slot) = query.since_slot {
+        condition = condition.add(program_events::Column::Slot.gte(since_slot));
+    }
+    if let Some(from_slot) = query.from_slot {
+        condition = condition.add(program_events::Column::Slot.gte(from_slot));
+    }
+    if let Some(to_slot) = query.to_slot {
+        condition = condition.add(program_events::Column::Slot.lte(to_slot));
+    }
+    if let Some(tx_signature) = &query.tx_signature {
+        let signature = tx_signature.parse::<Signature>().map_err(|_| {
+            SvmIndexerError::BadInput("tx_signature must be a valid base58 signature!".to_owned())
+        })?;
+        condition =
+            condition.add(program_events::Column::TxSignature.eq(signature.as_ref().to_vec()));
+    }
+
+    let events_query = program_events::Entity::find()
+        .filter(condition)
+        .find_also_related(slots::Entity)
+        .order_by_desc(program_events::Column::Slot)
+        .order_by_desc(program_events::Column::Id);
+
+    let (rows, total, pages) = match (query.pagination.per_page, query.pagination.page) {
+        (Some(_), Some(_)) => {
+            query
+                .pagination
+                .paginate(events_query, &state.db, Some("Failed fetching program events!"))
+                .await?
+        }
+        _ => {
+            let rows = events_query.all(&state.db).await.map_err(|err| {
+                SvmIndexerError::db_error("Failed fetching program events!", err)
+            })?;
+            let total = rows.len() as u16;
+            (rows, total, 1_u16)
+        }
+    };
+    Ok(ApiResponse::ok(ProgramEventsResponse::new(
+        rows, total, pages,
+    )))
+}
+
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/{program_id}/accounts", get(get_program_accounts_handler))
+    Router::new()
+        .route("/{program_id}/accounts", get(get_program_accounts_handler))
+        .route("/{program_id}/events", get(get_program_events_handler))
 }
