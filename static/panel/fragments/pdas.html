@@ -1,20 +1,105 @@
-<section class="section-shell">
+<section class="section-shell" data-section="pdas">
     <header class="section-header">
         <div class="section-title-block">
             <h1 class="section-title">PDAs</h1>
-            <p class="section-description">Browse discovered accounts and PDAs across all indexed programs.</p>
-        </div>
-        <div class="section-actions">
-            <button class="btn btn-secondary">Export</button>
-            <button class="btn btn-primary">Search</button>
+            <p class="section-description">Browse the cached accounts of an indexed program.</p>
         </div>
     </header>
 
-    <div class="empty-state">
-        <div class="empty-state-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    <article class="card">
+        <div class="card-head">
+            <div class="card-head-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <div>
+                <h2 class="card-head-title">Accounts</h2>
+                <p class="card-head-sub" id="pdas-count">Select a program to begin.</p>
+            </div>
         </div>
-        <h2 class="empty-state-title">Accounts & PDAs</h2>
-        <p class="empty-state-text">A searchable grid of addresses, latest slots, and quick links to current state / history.</p>
+
+        <div class="filter-bar">
+            <div class="input-group">
+                <label for="pdas-program" class="input-label">Program</label>
+                <div class="select-wrap">
+                    <select id="pdas-program" class="input-field select-field">
+                        <option value="" disabled selected>Select a program…</option>
+                    </select>
+                </div>
+            </div>
+            <div class="input-group">
+                <label for="pdas-memcmp" class="input-label">memcmp</label>
+                <input type="text" id="pdas-memcmp" class="input-field" placeholder="offset:base58" autocomplete="off">
+            </div>
+            <div class="input-group">
+                <label for="pdas-datasize" class="input-label">dataSize</label>
+                <input type="number" id="pdas-datasize" class="input-field" placeholder="bytes" min="0">
+            </div>
+            <button type="button" class="btn btn-primary" id="pdas-apply">Search</button>
+        </div>
+
+        <div id="pdas-root"></div>
+
+        <div class="empty-state" id="pdas-empty" hidden>
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <p class="empty-state-title">No accounts</p>
+            <p class="empty-state-text">Pick a program above, or adjust the memcmp / dataSize filters.</p>
+        </div>
+
+        <div class="list-pager" id="pdas-pager"></div>
+    </article>
+
+    <div class="modal-overlay" id="pdas-detail-modal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pdas-detail-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="pdas-detail-title">Account</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="rpc-detail-block">
+                    <span class="rpc-detail-label">Address</span>
+                    <span class="rpc-detail-value mono" id="pdas-detail-address">—</span>
+                </div>
+                <div class="rpc-detail-block">
+                    <span class="rpc-detail-label">Owner</span>
+                    <span class="rpc-detail-value mono" id="pdas-detail-owner">—</span>
+                </div>
+                <div class="detail-grid">
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Lamports</span>
+                        <span class="rpc-detail-value" id="pdas-detail-lamports">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Slot</span>
+                        <span class="rpc-detail-value" id="pdas-detail-slot">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Write Version</span>
+                        <span class="rpc-detail-value" id="pdas-detail-wv">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Rent Epoch</span>
+                        <span class="rpc-detail-value" id="pdas-detail-rent">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Block Time</span>
+                        <span class="rpc-detail-value" id="pdas-detail-time">—</span>
+                    </div>
+                </div>
+                <div class="rpc-detail-block">
+                    <div class="detail-data-head">
+                        <span class="rpc-detail-label">Data</span>
+                        <button type="button" class="pager-btn" id="pdas-detail-data-toggle">Show hex</button>
+                    </div>
+                    <div class="detail-data" id="pdas-detail-data">—</div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal>Close</button>
+            </div>
+        </div>
     </div>
 </section>
