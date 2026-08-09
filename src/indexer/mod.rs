@@ -1,3 +1,4 @@
+pub mod backfill;
 pub mod events;
 pub mod persist;
 pub mod rpc;
@@ -15,7 +16,7 @@ use sea_orm::{
 };
 use solana_sdk::commitment_config::CommitmentConfig;
 use tokio::{
-    sync::{Mutex, broadcast},
+    sync::{Mutex, Semaphore, broadcast},
     task::JoinHandle,
 };
 
@@ -30,10 +31,16 @@ use crate::indexer::transactions::{catch_up_transactions, stream_transactions};
 
 pub struct Indexer {
     db: DatabaseConnection,
+    /// Ingest level for catch-up and streams. Writes are idempotent do-nothing with no reorg
+    /// overwrite: under `confirmed` the latest cache self-heals on the next change, but a reorged
+    /// slot's history row may linger until a finalized-reconcile pass.
     commitment: CommitmentConfig,
     sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
     handles: Mutex<HashMap<i32, JoinHandle<()>>>,
+    /// Bounds how many programs run their bulk catch-up at once, so a boot or registration burst
+    /// meters backfill instead of stampeding the pool and the RPC. Live streaming is unthrottled.
+    catchup_semaphore: Semaphore,
 }
 
 impl Indexer {
@@ -41,6 +48,7 @@ impl Indexer {
         db: DatabaseConnection,
         commitment: CommitmentConfig,
         sse_tx: broadcast::Sender<SseEvent>,
+        catchup_concurrency: usize,
     ) -> Self {
         Self {
             db,
@@ -48,6 +56,7 @@ impl Indexer {
             sse_tx,
             clients: Mutex::new(HashMap::new()),
             handles: Mutex::new(HashMap::new()),
+            catchup_semaphore: Semaphore::new(catchup_concurrency),
         }
     }
 
@@ -73,8 +82,15 @@ impl Indexer {
     ) -> Result<(), SvmIndexerError> {
         let head = rpc.get_slot().await? as i64;
         let program = self.resolve_start_slot(program, head).await?;
-        catch_up_state(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // cache up to the head
-        catch_up_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // backfill the downtime gap
+        {
+            let _permit = self
+                .catchup_semaphore
+                .acquire()
+                .await
+                .expect("catch-up semaphore is never closed");
+            catch_up_state(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // cache up to the head
+            catch_up_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // backfill the downtime gap
+        } // release the permit before streaming — steady-state is unthrottled
         self.advance_cursor(&program, head).await?;
 
         tokio::try_join!(

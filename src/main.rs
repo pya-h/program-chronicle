@@ -1,6 +1,6 @@
-use std::{env, net::SocketAddr, sync::Arc};
-use sea_orm::Database;
+use sea_orm::{ConnectOptions, Database};
 use solana_sdk::commitment_config::CommitmentConfig;
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use svm_indexer::core::sse::{SSE_CHANNEL_CAPACITY, SseEvent};
 use svm_indexer::indexer::Indexer;
 use tokio::sync::{broadcast, mpsc};
@@ -12,8 +12,24 @@ async fn main() {
         panic!("Logger setup failed: {}", err);
     }
 
+    let env_u64 = |key: &str, default: u64| -> u64 {
+        let raw = env::var(key).unwrap_or_default().trim().to_string();
+        if raw.is_empty() {
+            default
+        } else {
+            raw.parse()
+                .unwrap_or_else(|_| panic!("{key} must be a positive integer!"))
+        }
+    };
+
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL not set!");
-    let database_connection = match Database::connect(&database_url).await {
+    let mut db_options = ConnectOptions::new(database_url);
+    db_options
+        .max_connections(env_u64("DB_MAX_CONNECTIONS", 40) as u32)
+        .min_connections(env_u64("DB_MIN_CONNECTIONS", 5) as u32)
+        .acquire_timeout(Duration::from_secs(env_u64("DB_ACQUIRE_TIMEOUT_SECS", 8)))
+        .idle_timeout(Duration::from_secs(env_u64("DB_IDLE_TIMEOUT_SECS", 300)));
+    let database_connection = match Database::connect(db_options).await {
         Ok(conn) => conn,
         Err(err) => {
             panic!(
@@ -37,7 +53,11 @@ async fn main() {
             _ => CommitmentConfig::confirmed(),
         },
         sse_tx.clone(),
+        env_u64("INDEXER_CATCHUP_CONCURRENCY", 4).max(1) as usize, // 0 permits would deadlock every catch-up
     ));
+
+    let backfill_interval = Duration::from_secs(env_u64("INDEXER_BLOCKTIME_BACKFILL_SECS", 60).max(1)); // interval panics on a zero period
+    tokio::spawn(indexer.clone().run_block_time_backfill(backfill_interval));
     tokio::spawn(async move {
         if let Err(err) = indexer.start(new_program_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");
@@ -45,7 +65,12 @@ async fn main() {
     });
 
     let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
-    let router = svm_indexer::app(database_connection, admin_passkey, Some(new_program_tx), sse_tx);
+    let router = svm_indexer::app(
+        database_connection,
+        admin_passkey,
+        Some(new_program_tx),
+        sse_tx,
+    );
 
     let app_port = {
         let port = env::var("APP_PORT").unwrap_or_default().trim().to_string();
