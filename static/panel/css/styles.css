@@ -1904,6 +1904,104 @@ html.no-anim *::after {
     white-space: pre-wrap;
 }
 
+.progress-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.progress-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.progress-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.progress-slot {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.progress-track {
+    height: 0.5rem;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface-elevated);
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: var(--radius-md);
+    background: var(--success-500);
+    transition: width 0.4s ease;
+}
+
+.progress-meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.stream-log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 26rem;
+    overflow: auto;
+}
+
+.stream-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+}
+
+.stream-row.resync {
+    border-color: var(--warning-500);
+}
+
+.stream-kind {
+    flex: 0 0 auto;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface-elevated);
+    color: var(--text-secondary);
+}
+
+.stream-kind.account { color: var(--success-500); }
+.stream-kind.event { color: var(--accent-500); }
+.stream-kind.resync { color: var(--warning-500); }
+.stream-kind.backfill { color: var(--text-muted); }
+
+.stream-slot {
+    flex: 0 0 auto;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
 .history-address-group {
     flex: 2 1 20rem;
 }

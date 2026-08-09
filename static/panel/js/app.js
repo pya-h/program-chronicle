@@ -1728,6 +1728,180 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Monitoring section --------------------------------------------------------
+    const STREAM_LOG_CAP = 200;
+    let monEventSource = null;
+    let monStreamType = 'accounts';
+    let monStreamProgram = null;
+
+    function initMonitoringSection() {
+        populateProgramSelect('mon-stream-program');
+        loadMonitoringStats();
+        document.getElementById('monitoring-refresh')?.addEventListener('click', loadMonitoringStats);
+        document.getElementById('mon-stream-toggle')?.addEventListener('click', toggleStream);
+        document.getElementById('mon-stream-clear')?.addEventListener('click', clearStreamLog);
+        // A section re-swap discards the old log DOM, so drop any live stream too.
+        disconnectStream();
+    }
+
+    async function loadMonitoringStats() {
+        const root = document.getElementById('mon-progress-root');
+        const count = document.getElementById('mon-progress-count');
+        const empty = document.getElementById('mon-progress-empty');
+        if (!root) return;
+
+        root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
+        if (empty) empty.hidden = true;
+        if (count) count.textContent = 'Loading…';
+
+        const res = await apiCall('GET', '/admin/stats');
+        if (!res.ok) {
+            root.innerHTML = '';
+            if (count) count.textContent = 'Failed to load';
+            if (empty) empty.hidden = false;
+            showToast(res.message, 'error');
+            return;
+        }
+
+        const programs = res.data?.per_program || [];
+        if (count) count.textContent = `${programs.length} program${programs.length === 1 ? '' : 's'}`;
+        if (programs.length === 0) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
+        }
+        if (empty) empty.hidden = true;
+        // Bars are scaled against the furthest program: without a chain tip there
+        // is no absolute target, so this shows relative fleet progress honestly.
+        const maxSlot = programs.reduce((m, p) => Math.max(m, p.last_processed_slot || 0), 0);
+        root.innerHTML = `<div class="progress-list">${programs.map(p => renderProgressBar(p, maxSlot)).join('')}</div>`;
+    }
+
+    function renderProgressBar(p, maxSlot) {
+        const name = p.name || `Program ${p.id}`;
+        const last = p.last_processed_slot || 0;
+        const pct = maxSlot > 0 ? Math.round((last / maxSlot) * 100) : 0;
+        const started = p.start_slot != null ? `from ${formatCount(p.start_slot)}` : 'not started';
+        const when = p.last_processed_at || 'never';
+        return `
+            <div class="progress-item">
+                <div class="progress-head">
+                    <span class="progress-name">${escapeHtml(name)}</span>
+                    <span class="progress-slot mono">${last ? `Slot ${escapeHtml(formatCount(last))}` : 'Pending'}</span>
+                </div>
+                <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+                <div class="progress-meta">
+                    <span class="mono" title="${escapeHtml(p.address)}">${escapeHtml(p.address)}</span>
+                    <span>${escapeHtml(started)} · ${escapeHtml(when)}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    function toggleStream() {
+        if (monEventSource) disconnectStream();
+        else connectStream();
+    }
+
+    function connectStream() {
+        const id = document.getElementById('mon-stream-program')?.value;
+        const type = document.getElementById('mon-stream-type')?.value || 'accounts';
+        if (!id) return showToast('Pick a program to stream.', 'info');
+
+        disconnectStream();
+        monStreamProgram = id;
+        monStreamType = type;
+        document.getElementById('mon-stream-empty')?.setAttribute('hidden', '');
+        setStreamStatus('pending', 'Connecting…');
+
+        const es = new EventSource(`/sse/programs/${id}/${type}`);
+        monEventSource = es;
+        es.onopen = () => setStreamStatus('indexed', 'Live');
+        // EventSource reconnects on its own; surface the gap while it retries.
+        es.onerror = () => setStreamStatus('failed', 'Reconnecting…');
+        es.addEventListener('account', (e) => pushStreamRow('account', safeJson(e.data)));
+        es.addEventListener('event', (e) => pushStreamRow('event', safeJson(e.data)));
+        es.addEventListener('resync', (e) => handleResync(safeJson(e.data)));
+        updateStreamButton();
+    }
+
+    function disconnectStream() {
+        if (monEventSource) { monEventSource.close(); monEventSource = null; }
+        setStreamStatus('pending', 'Idle');
+        updateStreamButton();
+    }
+
+    function updateStreamButton() {
+        const btn = document.getElementById('mon-stream-toggle');
+        if (btn) btn.textContent = monEventSource ? 'Disconnect' : 'Connect';
+    }
+
+    function setStreamStatus(state, text) {
+        const pill = document.getElementById('mon-stream-status');
+        if (!pill) return;
+        pill.className = `status-badge ${state}`;
+        pill.textContent = text;
+    }
+
+    function safeJson(text) {
+        try { return JSON.parse(text); } catch { return {}; }
+    }
+
+    function clearStreamLog() {
+        const log = document.getElementById('mon-stream-log');
+        if (log) log.innerHTML = '';
+        const empty = document.getElementById('mon-stream-empty');
+        if (empty && !monEventSource) empty.hidden = false;
+    }
+
+    function appendStreamHtml(html) {
+        const log = document.getElementById('mon-stream-log');
+        if (!log) return;
+        document.getElementById('mon-stream-empty')?.setAttribute('hidden', '');
+        log.insertAdjacentHTML('afterbegin', html);
+        while (log.children.length > STREAM_LOG_CAP) log.lastElementChild.remove();
+    }
+
+    function pushStreamRow(kind, payload, backfill = false) {
+        const slot = `Slot ${escapeHtml(formatCount(payload.slot))}`;
+        let title, sub;
+        if (kind === 'account') {
+            title = escapeHtml(payload.address || '—');
+            sub = `wv ${escapeHtml(formatCount(payload.write_version))}`;
+        } else {
+            const disc = discriminatorHex(payload.data);
+            title = disc ? escapeHtml(disc) : '(no data)';
+            sub = escapeHtml(shortSig(payload.signature || payload.tx_signature));
+        }
+        const tag = backfill ? `${kind} · backfill` : kind;
+        appendStreamHtml(`
+            <div class="stream-row">
+                <span class="stream-kind ${kind}${backfill ? ' backfill' : ''}">${escapeHtml(tag)}</span>
+                <div class="dash-row-main">
+                    <span class="dash-row-title mono">${title}</span>
+                    <span class="dash-row-sub mono">${sub}</span>
+                </div>
+                <span class="stream-slot mono">${slot}</span>
+            </div>
+        `);
+    }
+
+    // A lagged stream sends a `resync` frame with the last slot it delivered; we
+    // re-pull the missed window from the read API so nothing is silently dropped.
+    async function handleResync(payload) {
+        appendStreamHtml(`<div class="stream-row resync"><span class="stream-kind resync">resync</span><div class="dash-row-main"><span class="dash-row-title">Missed ${escapeHtml(formatCount(payload.missed))} change${payload.missed === 1 ? '' : 's'}</span><span class="dash-row-sub">re-pulling since slot ${escapeHtml(formatCount(payload.since_slot))}</span></div></div>`);
+        if (payload.since_slot == null || !monStreamProgram) return;
+
+        const id = monStreamProgram;
+        if (monStreamType === 'events') {
+            const res = await apiCall('GET', `/programs/${id}/events${buildQuery({ since_slot: payload.since_slot, per_page: 50 })}`);
+            if (res.ok) (res.data?.data || []).slice().reverse().forEach(ev => pushStreamRow('event', ev, true));
+        } else {
+            const res = await apiCall('GET', `/programs/${id}/changes${buildQuery({ from_slot: payload.since_slot, per_page: 50 })}`);
+            if (res.ok) (res.data?.account_states || []).slice().reverse().forEach(a => pushStreamRow('account', a, true));
+        }
+    }
+
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
@@ -1753,6 +1927,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="events"]') || swapped?.querySelector?.('[data-section="events"]')) {
             initEventsSection();
+        }
+        const isMonitoring = swapped?.matches?.('[data-section="monitoring"]') || swapped?.querySelector?.('[data-section="monitoring"]');
+        if (isMonitoring) {
+            initMonitoringSection();
+        } else if (monEventSource) {
+            // Leaving monitoring: tear the live stream down so it never lingers.
+            disconnectStream();
         }
     });
 
