@@ -18,8 +18,8 @@ impl PaginationQuery {
     ) -> Result<
         (
             Vec<<<Q as PaginatorTrait<'db, DatabaseConnection>>::Selector as SelectorTrait>::Item>,
-            u16,
-            u16,
+            u64,
+            u64,
         ),
         SvmIndexerError,
     >
@@ -40,11 +40,11 @@ impl PaginationQuery {
 
         let total = paginator.num_items().await.map_err(|err| {
             SvmIndexerError::db_error("Failed while fetching pagination info!", err)
-        })? as u16;
+        })?;
 
         let total_pages = paginator.num_pages().await.map_err(|err| {
             SvmIndexerError::db_error("Failed while fetching pagination info!", err)
-        })? as u16;
+        })?;
 
         let items = paginator
             .fetch_page((page - 1) as u64)
@@ -72,8 +72,8 @@ impl PaginationQuery {
     ) -> Result<
         (
             Vec<<<Q as PaginatorTrait<'db, DatabaseConnection>>::Selector as SelectorTrait>::Item>,
-            u16,
-            u16,
+            u64,
+            u64,
         ),
         SvmIndexerError,
     >
@@ -93,7 +93,7 @@ impl PaginationQuery {
                     err,
                 )
             })?;
-        let total = items.len() as u16;
+        let total = items.len() as u64;
         Ok((items, total, 1))
     }
 }

@@ -167,9 +167,7 @@ async fn get_programs_handler(
         .paginate_or_all(programs_query, &state.db, Some("Failed fetching programs!"))
         .await?;
     Ok(ApiResponse::ok(GetProgramsResponse::new(
-        programs,
-        total as u16,
-        pages,
+        programs, total, pages,
     )))
 }
 

@@ -76,12 +76,12 @@ impl TransactionSummaryResponse {
 #[derive(Serialize)]
 pub struct TransactionsResponse {
     pub data: Vec<TransactionSummaryResponse>,
-    pub total: u16,
-    pub pages: u16,
+    pub total: u64,
+    pub pages: u64,
 }
 
 impl TransactionsResponse {
-    pub fn new(rows: Vec<(TransactionModel, Option<SlotModel>)>, total: u16, pages: u16) -> Self {
+    pub fn new(rows: Vec<(TransactionModel, Option<SlotModel>)>, total: u64, pages: u64) -> Self {
         Self {
             total,
             pages,

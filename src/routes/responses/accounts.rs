@@ -51,12 +51,12 @@ impl AccountInfoResponse {
 #[derive(Serialize)]
 pub struct ProgramAccountsResponse {
     pub data: Vec<AccountInfoResponse>,
-    pub total: u16,
-    pub pages: u16,
+    pub total: u64,
+    pub pages: u64,
 }
 
 impl ProgramAccountsResponse {
-    pub fn new(rows: Vec<(ProgramAccountModel, Option<SlotModel>)>, total: u16, pages: u16) -> Self {
+    pub fn new(rows: Vec<(ProgramAccountModel, Option<SlotModel>)>, total: u64, pages: u64) -> Self {
         Self {
             total,
             pages,
@@ -125,12 +125,12 @@ impl AccountChangeResponse {
 #[derive(Serialize)]
 pub struct AccountHistoryResponse {
     pub data: Vec<AccountStateResponse>,
-    pub total: u16,
-    pub pages: u16,
+    pub total: u64,
+    pub pages: u64,
 }
 
 impl AccountHistoryResponse {
-    pub fn new(rows: Vec<(AccountStateModel, Option<SlotModel>)>, total: u16, pages: u16) -> Self {
+    pub fn new(rows: Vec<(AccountStateModel, Option<SlotModel>)>, total: u64, pages: u64) -> Self {
         Self {
             total,
             pages,
