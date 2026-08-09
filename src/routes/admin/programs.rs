@@ -128,7 +128,8 @@ async fn add_program_handler(
         )
     })?;
     if let Some(tx) = &state.supervisor_tx {
-        // TODO: Implement a retry process here with N failure submitting error to the panel
+        // The supervisor retries the spawned indexer run with backoff (see spawn_program); a failed
+        // send here only means the supervisor is gone, which a restart resolves.
         let _ = tx.send(ProgramCommand::Start(program.id)).await;
     }
 
@@ -156,8 +157,6 @@ async fn set_program_activation(
         return Err(SvmIndexerError::ItemNotFound(String::from("No such program!")));
     };
 
-    // only touch the row and signal the supervisor when the state actually changes — a redundant
-    // activate/deactivate is a no-op, not a duplicate start/stop
     if program.active != active {
         programs::ActiveModel {
             id: Unchanged(program.id),

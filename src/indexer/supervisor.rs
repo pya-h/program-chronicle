@@ -4,6 +4,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::sync::mpsc;
 
 use crate::core::error::SvmIndexerError;
+use crate::core::retry::retry;
 use crate::core::state::ProgramCommand;
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::Indexer;
@@ -13,7 +14,6 @@ impl Indexer {
         self: Arc<Self>,
         mut commands: mpsc::Receiver<ProgramCommand>,
     ) -> Result<(), SvmIndexerError> {
-        // only active programs are indexed at boot; deactivated ones wait for an explicit start
         let programs = programs::Entity::find()
             .filter(programs::Column::Active.eq(true))
             .find_also_related(rpcs::Entity)
@@ -63,19 +63,23 @@ impl Indexer {
         let program_id = program.id;
         let mut handles = self.handles.lock().await;
         if handles.get(&program_id).is_some_and(|handle| !handle.is_finished()) {
-            return; // already indexing — a duplicate activate or a boot/register race
+            return;
         }
         let client = self.client_for(&rpc).await;
         let indexer = self.clone();
+        let policy = self.retry_policy;
         let handle = tokio::spawn(async move {
-            if let Err(err) = indexer.run_program(program, client).await {
-                tracing::error!(program_id, error = %err, "Program indexer task exited!");
+            let result = retry(policy, "program-indexer", || {
+                indexer.run_program(program.clone(), client.clone())
+            })
+            .await;
+            if let Err(err) = result {
+                tracing::error!(program_id, error = %err, "Program indexer gave up after retries!");
             }
         });
         handles.insert(program_id, handle);
     }
 
-    /// Aborts a program's running task and forgets its handle, so reactivation spawns a fresh one.
     async fn stop_program(&self, program_id: i32) {
         if let Some(handle) = self.handles.lock().await.remove(&program_id) {
             handle.abort();

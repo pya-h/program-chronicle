@@ -22,6 +22,7 @@ use tokio::{
 };
 
 use crate::core::error::SvmIndexerError;
+use crate::core::retry::RetryPolicy;
 use crate::core::sse::SseEvent;
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::rpc::SvmRpc;
@@ -42,6 +43,7 @@ pub struct Indexer {
     /// Bounds how many programs run their bulk catch-up at once, so a boot or registration burst
     /// meters backfill instead of stampeding the pool and the RPC. Live streaming is unthrottled.
     catchup_semaphore: Semaphore,
+    retry_policy: RetryPolicy,
 }
 
 impl Indexer {
@@ -50,6 +52,7 @@ impl Indexer {
         commitment: CommitmentConfig,
         sse_tx: broadcast::Sender<SseEvent>,
         catchup_concurrency: usize,
+        max_retries: u32,
     ) -> Self {
         Self {
             db,
@@ -58,6 +61,7 @@ impl Indexer {
             clients: Mutex::new(HashMap::new()),
             handles: Mutex::new(HashMap::new()),
             catchup_semaphore: Semaphore::new(catchup_concurrency),
+            retry_policy: RetryPolicy::new(max_retries),
         }
     }
 
@@ -97,8 +101,8 @@ impl Indexer {
         tokio::try_join!(
             stream_state(rpc.as_ref(), &self.db, &self.sse_tx, &program),
             stream_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program),
-        )?; // try_join so when one ends/stops, the other one stops too. When the retry mechanism is implemented,
-        // The end/stop of one leads to stopping both and retrying both again.
+        )?; // try_join so when one stream ends/errors the other stops too; the caller
+        // (spawn_program) then retries the whole run with backoff.
         Ok(())
     }
 
