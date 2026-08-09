@@ -1,43 +1,94 @@
-<section class="section-shell">
+<section class="section-shell" data-section="dashboard">
     <header class="section-header">
         <div class="section-title-block">
             <h1 class="section-title">Dashboard</h1>
             <p class="section-description">System overview and indexing health at a glance.</p>
         </div>
         <div class="section-actions">
-            <button class="btn btn-secondary">Refresh</button>
-            <button class="btn btn-primary">Add Program</button>
+            <button class="btn btn-secondary" id="dashboard-refresh">Refresh</button>
         </div>
     </header>
 
     <div class="card-grid">
         <article class="card">
-            <p class="card-label">Active Programs</p>
-            <p class="card-value">—</p>
-            <span class="card-delta">awaiting data</span>
+            <p class="card-label">Programs</p>
+            <p class="card-value" id="stat-programs">—</p>
+            <span class="card-delta">indexed programs</span>
         </article>
         <article class="card">
-            <p class="card-label">Indexed Accounts</p>
-            <p class="card-value">—</p>
-            <span class="card-delta">awaiting data</span>
+            <p class="card-label">RPC Endpoints</p>
+            <p class="card-value" id="stat-rpcs">—</p>
+            <span class="card-delta">configured</span>
         </article>
         <article class="card">
-            <p class="card-label">Latest Slot</p>
-            <p class="card-value">—</p>
-            <span class="card-delta">awaiting data</span>
+            <p class="card-label">Slots</p>
+            <p class="card-value" id="stat-slots">—</p>
+            <span class="card-delta">estimated rows</span>
         </article>
         <article class="card">
-            <p class="card-label">RPC Latency</p>
-            <p class="card-value">—</p>
-            <span class="card-delta">awaiting data</span>
+            <p class="card-label">Transactions</p>
+            <p class="card-value" id="stat-transactions">—</p>
+            <span class="card-delta">estimated rows</span>
+        </article>
+        <article class="card">
+            <p class="card-label">Events</p>
+            <p class="card-value" id="stat-events">—</p>
+            <span class="card-delta">estimated rows</span>
+        </article>
+        <article class="card">
+            <p class="card-label">Cached Accounts</p>
+            <p class="card-value" id="stat-accounts">—</p>
+            <span class="card-delta">estimated rows</span>
         </article>
     </div>
 
-    <div class="empty-state">
-        <div class="empty-state-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
-        </div>
-        <h2 class="empty-state-title">Dashboard body</h2>
-        <p class="empty-state-text">This area will hold live stat cards, indexing progress charts, and recent activity feeds once the backend is wired.</p>
+    <div class="dash-columns">
+        <article class="card">
+            <div class="card-head">
+                <div class="card-head-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                </div>
+                <div>
+                    <h2 class="card-head-title">Program Progress</h2>
+                    <p class="card-head-sub" id="dash-progress-count">Loading…</p>
+                </div>
+            </div>
+
+            <div id="dash-progress-root">
+                <div class="skeleton-table" aria-busy="true" aria-label="Loading progress">
+                    <div class="skeleton-row"></div>
+                    <div class="skeleton-row"></div>
+                </div>
+            </div>
+
+            <div class="empty-state" id="dash-progress-empty" hidden>
+                <p class="empty-state-title">No programs yet</p>
+                <p class="empty-state-text">Register a program to start indexing.</p>
+            </div>
+        </article>
+
+        <article class="card">
+            <div class="card-head">
+                <div class="card-head-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                </div>
+                <div>
+                    <h2 class="card-head-title">Recent Transactions</h2>
+                    <p class="card-head-sub" id="dash-activity-count">Loading…</p>
+                </div>
+            </div>
+
+            <div id="dash-activity-root">
+                <div class="skeleton-table" aria-busy="true" aria-label="Loading activity">
+                    <div class="skeleton-row"></div>
+                    <div class="skeleton-row"></div>
+                </div>
+            </div>
+
+            <div class="empty-state" id="dash-activity-empty" hidden>
+                <p class="empty-state-title">No transactions yet</p>
+                <p class="empty-state-text">Indexed transactions will appear here as they arrive.</p>
+            </div>
+        </article>
     </div>
 </section>

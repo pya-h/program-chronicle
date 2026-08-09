@@ -1255,6 +1255,115 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.umbra.openProgramEdit = openProgramEditById;
 
+    // Dashboard section ---------------------------------------------------------
+    function initDashboardSection() {
+        loadDashboardStats();
+        loadDashboardActivity();
+        document.getElementById('dashboard-refresh')?.addEventListener('click', () => {
+            loadDashboardStats();
+            loadDashboardActivity();
+        });
+    }
+
+    function formatCount(value) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num.toLocaleString('en-US') : '—';
+    }
+
+    async function loadDashboardStats() {
+        const setStat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        const statIds = ['stat-programs', 'stat-rpcs', 'stat-slots', 'stat-transactions', 'stat-events', 'stat-accounts'];
+        const root = document.getElementById('dash-progress-root');
+        const count = document.getElementById('dash-progress-count');
+        const empty = document.getElementById('dash-progress-empty');
+
+        const res = await apiCall('GET', '/admin/stats');
+        if (!res.ok) {
+            statIds.forEach(id => setStat(id, '—'));
+            if (root) root.innerHTML = '';
+            if (count) count.textContent = 'Failed to load';
+            if (empty) empty.hidden = false;
+            showToast(res.message, 'error');
+            return;
+        }
+
+        const stats = res.data || {};
+        const est = stats.estimates || {};
+        setStat('stat-programs', formatCount(stats.programs));
+        setStat('stat-rpcs', formatCount(stats.rpcs));
+        setStat('stat-slots', formatCount(est.slots));
+        setStat('stat-transactions', formatCount(est.transactions));
+        setStat('stat-events', formatCount(est.events));
+        setStat('stat-accounts', formatCount(est.cached_accounts));
+
+        const programs = stats.per_program || [];
+        if (count) count.textContent = `${programs.length} program${programs.length === 1 ? '' : 's'}`;
+        if (!root) return;
+        if (programs.length === 0) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
+        }
+        if (empty) empty.hidden = true;
+        root.innerHTML = `<div class="dash-list">${programs.map(renderProgressRow).join('')}</div>`;
+    }
+
+    function renderProgressRow(p) {
+        const name = p.name || `Program ${p.id}`;
+        const slot = p.last_processed_slot;
+        return `
+            <div class="dash-row">
+                <div class="dash-row-main">
+                    <span class="dash-row-title">${escapeHtml(name)}</span>
+                    <span class="dash-row-sub mono" title="${escapeHtml(p.address)}">${escapeHtml(p.address)}</span>
+                </div>
+                <span class="status-badge ${slot ? 'indexed' : 'pending'}">${slot ? `Slot ${escapeHtml(formatCount(slot))}` : 'Pending'}</span>
+            </div>
+        `;
+    }
+
+    async function loadDashboardActivity() {
+        const root = document.getElementById('dash-activity-root');
+        const count = document.getElementById('dash-activity-count');
+        const empty = document.getElementById('dash-activity-empty');
+        if (!root) return;
+
+        const res = await apiCall('GET', `/transactions${buildQuery({ page: 1, per_page: 8 })}`);
+        if (!res.ok) {
+            root.innerHTML = '';
+            if (count) count.textContent = 'Failed to load';
+            if (empty) empty.hidden = false;
+            showToast(res.message, 'error');
+            return;
+        }
+
+        const rows = res.data?.data || [];
+        if (count) count.textContent = `${formatCount(res.data?.total ?? rows.length)} total`;
+        if (rows.length === 0) {
+            root.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
+        }
+        if (empty) empty.hidden = true;
+        root.innerHTML = `<div class="dash-list">${rows.map(renderActivityRow).join('')}</div>`;
+    }
+
+    function shortSig(sig) {
+        return sig && sig.length > 16 ? `${sig.slice(0, 8)}…${sig.slice(-8)}` : (sig || '');
+    }
+
+    function renderActivityRow(tx) {
+        return `
+            <div class="dash-row">
+                <div class="dash-row-main">
+                    <span class="dash-row-title mono" title="${escapeHtml(tx.signature || '')}">${escapeHtml(shortSig(tx.signature))}</span>
+                    <span class="dash-row-sub">Slot ${escapeHtml(formatCount(tx.slot))}</span>
+                </div>
+                <span class="status-badge ${tx.success ? 'indexed' : 'failed'}">${tx.success ? 'Success' : 'Failed'}</span>
+            </div>
+        `;
+    }
+
     document.body.addEventListener('htmx:afterSwap', (evt) => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
@@ -1265,6 +1374,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="programs"]') || swapped?.querySelector?.('[data-section="programs"]')) {
             initProgramsSection();
+        }
+        if (swapped?.matches?.('[data-section="dashboard"]') || swapped?.querySelector?.('[data-section="dashboard"]')) {
+            initDashboardSection();
         }
     });
 
