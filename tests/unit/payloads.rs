@@ -2,17 +2,34 @@ use crate::routes::payloads::admin::{AddProgramPayload, UpdateProgramPayload};
 
 #[test]
 fn update_program_payload_is_empty_when_no_field_set() {
-    let payload = UpdateProgramPayload { rpc_id: None, rpc_url: None, address: None, name: None };
+    let payload = UpdateProgramPayload {
+        rpc_id: None,
+        rpc_url: None,
+        address: None,
+        name: None,
+        account_filters: None,
+    };
     assert!(payload.is_empty());
 }
 
 #[test]
 fn update_program_payload_not_empty_with_any_field() {
-    let with_rpc = UpdateProgramPayload { rpc_id: Some(1), rpc_url: None, address: None, name: None };
+    let with_rpc = UpdateProgramPayload {
+        rpc_id: Some(1),
+        rpc_url: None,
+        address: None,
+        name: None,
+        account_filters: None,
+    };
     assert!(!with_rpc.is_empty());
 
-    let with_address =
-        UpdateProgramPayload { rpc_id: None, rpc_url: None, address: Some("addr".into()), name: None };
+    let with_address = UpdateProgramPayload {
+        rpc_id: None,
+        rpc_url: None,
+        address: Some("addr".into()),
+        name: None,
+        account_filters: None,
+    };
     assert!(!with_address.is_empty());
 }
 

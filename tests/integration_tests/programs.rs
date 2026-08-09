@@ -412,6 +412,93 @@ async fn activate_unknown_program_is_not_found() -> httpc_test::Result<()> {
 }
 
 #[tokio::test]
+async fn add_program_with_account_filters_persists() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-filters.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": address(0),
+                "account_filters": {
+                    "data_size": 165,
+                    "memcmp": [{ "offset": 0, "bytes": address(3) }]
+                }
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 201);
+    let id = res.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+
+    // durable — a fresh read returns the stored descriptor
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["account_filters"]["data_size"], 165);
+    assert_eq!(body["account_filters"]["memcmp"][0]["offset"], 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_rejects_invalid_account_filters() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-bad-filters.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": address(0),
+                "account_filters": { "addresses": ["not-a-pubkey"] }
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_clears_account_filters() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-clear-filters.example.com").await;
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": address(0),
+                "account_filters": { "data_size": 165 }
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+
+    // an empty descriptor resets the program back to track-all
+    let res = server()
+        .authed_client()
+        .do_patch(&format!("/admin/programs/{}", id), json!({"account_filters": {}}))
+        .await?;
+    assert_eq!(res.status(), 200);
+    assert!(res.json_body_as::<serde_json::Value>()?["account_filters"].is_null());
+
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    assert!(res.json_body_as::<serde_json::Value>()?["account_filters"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 

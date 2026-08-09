@@ -1166,6 +1166,21 @@ body {
     100% { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18); }
 }
 
+.textarea-field {
+    padding-right: 1rem;
+    min-height: 6.5rem;
+    line-height: 1.5;
+    resize: vertical;
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: auto;
+}
+
+.label-optional {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
 .input-toggle {
     position: absolute;
     right: 0.625rem;

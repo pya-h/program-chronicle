@@ -1,5 +1,6 @@
 pub mod backfill;
 pub mod events;
+pub mod filter;
 pub mod persist;
 pub mod rpc;
 pub mod state;

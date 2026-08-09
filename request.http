@@ -121,6 +121,32 @@ Content-Type: application/json
 }
 
 
+### Add a shared program narrowed by account_filters (only its matching accounts get indexed)
+POST {{baseUrl}}/admin/programs
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "rpc_id": 1,
+  "name": "token-subset",
+  "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "account_filters": {
+    "data_size": 165,
+    "memcmp": [{ "offset": 0, "bytes": "So11111111111111111111111111111111111111112" }]
+  }
+}
+
+
+### Clear a program's account_filters (back to tracking every account it owns)
+PATCH {{baseUrl}}/admin/programs/1
+x-security: {{adminPasskey}}
+Content-Type: application/json
+
+{
+  "account_filters": {}
+}
+
+
 ### Add program - invalid address (should return 400)
 POST {{baseUrl}}/admin/programs
 x-security: {{adminPasskey}}

@@ -34,6 +34,11 @@
                     <input type="number" id="program-add-start-slot" name="start_slot" class="input-field" placeholder="Auto" min="0">
                     <span class="field-hint">Optional. Backfill begins at this slot.</span>
                 </div>
+                <div class="input-group program-filters-group">
+                    <label for="program-add-account-filters" class="input-label">Account Filters <span class="label-optional">(advanced)</span></label>
+                    <textarea id="program-add-account-filters" name="account_filters" class="input-field textarea-field" rows="4" autocomplete="off" spellcheck="false" placeholder='{ "data_size": 165, "memcmp": [{ "offset": 0, "bytes": "<base58>" }], "addresses": [] }'></textarea>
+                    <span class="field-hint">Optional JSON. Narrows which of a shared program's accounts are indexed. Leave empty to track every account it owns.</span>
+                </div>
             </div>
 
             <div class="program-rpc-mode">
@@ -133,6 +138,11 @@
                         <label for="program-edit-name" class="input-label">Name</label>
                         <input type="text" id="program-edit-name" name="name" class="input-field" placeholder="Token Program" autocomplete="off">
                         <span class="field-hint">Leave empty to keep current name.</span>
+                    </div>
+                    <div class="input-group program-filters-group">
+                        <label for="program-edit-account-filters" class="input-label">Account Filters <span class="label-optional">(advanced)</span></label>
+                        <textarea id="program-edit-account-filters" name="account_filters" class="input-field textarea-field" rows="4" autocomplete="off" spellcheck="false" placeholder='{ "data_size": 165, "memcmp": [{ "offset": 0, "bytes": "<base58>" }], "addresses": [] }'></textarea>
+                        <span class="field-hint">Optional JSON. Empty clears the filter (track every account). Leave unchanged to keep the current one.</span>
                     </div>
 
                     <div class="program-rpc-mode">

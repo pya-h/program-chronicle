@@ -90,6 +90,13 @@ pub trait SvmRpc: Send + Sync {
         filter: Option<&AccountFilter>,
     ) -> RpcResult<Vec<AccountSnapshot>>;
 
+    /// Snapshots an explicit set of accounts — the address-allowlist short-circuit that avoids
+    /// scanning every account a (shared) program owns. Missing accounts are simply absent.
+    async fn get_multiple_accounts(
+        &self,
+        addresses: &[Pubkey],
+    ) -> RpcResult<Vec<AccountSnapshot>>;
+
     /// Pages newest→oldest; `before` is exclusive.
     async fn get_signatures_for_address(
         &self,
@@ -104,6 +111,13 @@ pub trait SvmRpc: Send + Sync {
         &self,
         program: &Pubkey,
         filter: Option<&AccountFilter>,
+    ) -> RpcResult<SubStream<AccountSnapshot>>;
+
+    /// Live updates for an explicit set of accounts — the streaming half of the address-allowlist
+    /// short-circuit. Merges one `accountSubscribe` per key into a single stream.
+    async fn subscribe_accounts(
+        &self,
+        addresses: &[Pubkey],
     ) -> RpcResult<SubStream<AccountSnapshot>>;
 
     async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>>;

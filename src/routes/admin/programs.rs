@@ -26,12 +26,30 @@ use axum::{
     response::NoContent,
     routing::{get, post},
 };
+use crate::indexer::rpc::AccountFilter;
 use sea_orm::{
-    ActiveModelTrait,
+    ActiveModelTrait, ActiveValue,
     ActiveValue::{NotSet, Set, Unchanged},
     ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QueryOrder, SelectExt,
 };
 use solana_sdk::pubkey::Pubkey;
+
+/// Validates a filter descriptor and turns it into the `account_filters` column value: an empty or
+/// absent descriptor keeps the column untouched, a populated one stores its JSON.
+fn account_filters_value(
+    filter: Option<AccountFilter>,
+) -> Result<ActiveValue<Option<serde_json::Value>>, SvmIndexerError> {
+    match filter {
+        Some(filter) if !filter.is_empty() => {
+            filter.validate()?;
+            let json = serde_json::to_value(&filter)
+                .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?;
+            Ok(Set(Some(json)))
+        }
+        Some(_) => Ok(Set(None)), // an explicit empty descriptor clears the filter (track-all)
+        None => Ok(NotSet),
+    }
+}
 
 async fn get_or_add_rpc(
     state: &AppState,
@@ -98,6 +116,7 @@ async fn add_program_handler(
         address: Set(address.to_bytes().to_vec()),
         start_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
         name: payload.name.map_or(NotSet, |name| Set(Some(name))),
+        account_filters: account_filters_value(payload.account_filters)?,
         ..Default::default()
     };
 
@@ -291,6 +310,7 @@ async fn update_program_handler(
             }
         }),
         rpc_id: changed_rpc.clone().map_or(NotSet, |nr| Set(nr.id)),
+        account_filters: account_filters_value(payload.account_filters)?,
         ..Default::default()
     }
     .update(&state.db)

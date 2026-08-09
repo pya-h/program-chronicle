@@ -1017,6 +1017,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return payload;
     }
 
+    // Reads an account-filters textarea. Empty → { value: undefined } (omit the field); valid JSON →
+    // { value: <object> }; malformed → { error }.
+    function parseAccountFilters(fieldId) {
+        const raw = (document.getElementById(fieldId)?.value || '').trim();
+        if (!raw) return { value: undefined };
+        try {
+            return { value: JSON.parse(raw) };
+        } catch {
+            return { error: 'Account filters must be valid JSON.' };
+        }
+    }
+
     function bindAddProgramForm() {
         const form = document.getElementById('program-add-form');
         if (!form) return;
@@ -1044,10 +1056,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 return showFieldFeedback(feedback, 'Select an existing RPC or provide a new RPC URL.');
             }
 
+            const filters = parseAccountFilters('program-add-account-filters');
+            if (filters.error) return showFieldFeedback(feedback, filters.error);
+
             const name = document.getElementById('program-add-name').value.trim() || null;
             const payload = { address: address.value, ...rpcPayload };
             if (name) payload.name = name;
             if (startSlot !== null) payload.start_slot = startSlot;
+            if (filters.value !== undefined) payload.account_filters = filters.value;
 
             setBtnLoading(btn, true);
             const res = await apiCall('POST', '/admin/programs', payload);
@@ -1105,7 +1121,9 @@ document.addEventListener('DOMContentLoaded', () => {
         programEditOriginal = {
             address,
             name: program.name || '',
-            rpc_id: String(program.rpc_id || '')
+            rpc_id: String(program.rpc_id || ''),
+            // compact form for change detection; the textarea shows a pretty-printed copy
+            account_filters: program.account_filters ? JSON.stringify(program.account_filters) : ''
         };
 
         const switchToPrograms = () => {
@@ -1137,6 +1155,12 @@ document.addEventListener('DOMContentLoaded', () => {
         idEl.value = program.id;
         document.getElementById('program-edit-address').value = programEditOriginal.address;
         document.getElementById('program-edit-name').value = programEditOriginal.name;
+        const filtersField = document.getElementById('program-edit-account-filters');
+        if (filtersField) {
+            filtersField.value = program.account_filters
+                ? JSON.stringify(program.account_filters, null, 2)
+                : '';
+        }
         const rpcSelect = document.getElementById('program-edit-rpc-id');
         if (rpcSelect) rpcSelect.value = '';
 
@@ -1179,6 +1203,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (String(rpcPayload.rpc_id) !== programEditOriginal.rpc_id) payload.rpc_id = rpcPayload.rpc_id;
             } else if (rpcPayload.rpc_url) {
                 payload.rpc_url = rpcPayload.rpc_url;
+            }
+
+            const filters = parseAccountFilters('program-edit-account-filters');
+            if (filters.error) return showFieldFeedback(feedback, filters.error);
+            if (filters.value !== undefined) {
+                // send only when the descriptor actually changed
+                if (JSON.stringify(filters.value) !== programEditOriginal.account_filters) {
+                    payload.account_filters = filters.value;
+                }
+            } else if (programEditOriginal.account_filters) {
+                // cleared textarea → empty descriptor resets to track-all
+                payload.account_filters = {};
             }
 
             if (Object.keys(payload).length === 0) {

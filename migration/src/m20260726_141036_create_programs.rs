@@ -19,6 +19,7 @@ enum Programs {
     LastProcessedAt,
     StartSlot,
     Active,
+    AccountFilters,
     CreatedAt,
     UpdatedAt,
 }
@@ -64,6 +65,9 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(true), // NULL-free: a program is indexed unless explicitly paused
                     )
+                    // NULL = track every account the program owns; a descriptor narrows ingestion to
+                    // a subset (only needed for chain-wide shared programs like SPL Token/Metaplex)
+                    .col(ColumnDef::new(Programs::AccountFilters).json_binary().null())
                     .col(
                         ColumnDef::new(Programs::CreatedAt)
                             .timestamp()

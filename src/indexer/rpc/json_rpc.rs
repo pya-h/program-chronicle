@@ -3,6 +3,7 @@ use futures::StreamExt;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
+use solana_client::rpc_filter::RpcFilterType;
 use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{
     RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
@@ -62,7 +63,7 @@ impl SvmRpc for JsonRpc {
     async fn get_program_accounts(
         &self,
         program: &Pubkey,
-        _filter: Option<&AccountFilter>,
+        filter: Option<&AccountFilter>,
     ) -> RpcResult<Vec<AccountSnapshot>> {
         let slot = self
             .client
@@ -70,6 +71,7 @@ impl SvmRpc for JsonRpc {
             .await
             .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
         let config = RpcProgramAccountsConfig {
+            filters: rpc_filters(filter),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64Zstd),
                 ..Default::default()
@@ -93,6 +95,40 @@ impl SvmRpc for JsonRpc {
                 executable: acct.executable,
                 slot,
                 write_version: None,
+            })
+            .collect())
+    }
+
+    async fn get_multiple_accounts(
+        &self,
+        addresses: &[Pubkey],
+    ) -> RpcResult<Vec<AccountSnapshot>> {
+        let config = RpcAccountInfoConfig {
+            encoding: Some(UiAccountEncoding::Base64Zstd),
+            ..Default::default()
+        };
+        let response = self
+            .client
+            .get_multiple_accounts_with_config(addresses, config)
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+        let slot = response.context.slot;
+
+        Ok(addresses
+            .iter()
+            .zip(response.value)
+            .filter_map(|(address, acct)| {
+                let acct = acct?; // an unindexed / closed account is simply absent
+                Some(AccountSnapshot {
+                    address: *address,
+                    owner: acct.owner,
+                    lamports: acct.lamports,
+                    data: acct.data,
+                    rent_epoch: acct.rent_epoch,
+                    executable: acct.executable,
+                    slot,
+                    write_version: None,
+                })
             })
             .collect())
     }
@@ -168,10 +204,11 @@ impl SvmRpc for JsonRpc {
     async fn subscribe_program(
         &self,
         program: &Pubkey,
-        _filter: Option<&AccountFilter>,
+        filter: Option<&AccountFilter>,
     ) -> RpcResult<SubStream<AccountSnapshot>> {
         let client = self.connect().await?;
         let config = RpcProgramAccountsConfig {
+            filters: rpc_filters(filter),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64Zstd),
                 commitment: Some(self.commitment),
@@ -207,6 +244,42 @@ impl SvmRpc for JsonRpc {
         })))
     }
 
+    async fn subscribe_accounts(
+        &self,
+        addresses: &[Pubkey],
+    ) -> RpcResult<SubStream<AccountSnapshot>> {
+        let client = self.connect().await?;
+        let config = RpcAccountInfoConfig {
+            encoding: Some(UiAccountEncoding::Base64Zstd),
+            commitment: Some(self.commitment),
+            ..Default::default()
+        };
+        let mut streams: Vec<SubStream<AccountSnapshot>> = Vec::with_capacity(addresses.len());
+        for &address in addresses {
+            // accountSubscribe notifications carry no pubkey, so tag each stream with its known key
+            let (stream, _unsub) = client
+                .account_subscribe(&address, Some(config.clone()))
+                .await
+                .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
+            streams.push(Box::pin(stream.map(move |response| {
+                let account = response.value.decode::<Account>().ok_or_else(|| {
+                    SvmIndexerError::SubscriptionFailed(format!("undecodable account {address}"))
+                })?;
+                Ok(AccountSnapshot {
+                    address,
+                    owner: account.owner,
+                    lamports: account.lamports,
+                    data: account.data,
+                    rent_epoch: account.rent_epoch,
+                    executable: account.executable,
+                    slot: response.context.slot,
+                    write_version: None,
+                })
+            })));
+        }
+        Ok(Box::pin(futures::stream::select_all(streams)))
+    }
+
     async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>> {
         let client = self.connect().await?;
         let config = RpcTransactionLogsConfig {
@@ -234,6 +307,13 @@ impl SvmRpc for JsonRpc {
             })
         })))
     }
+}
+
+/// Server-side filters for a descriptor, or `None` when nothing narrows — in which case the RPC
+/// returns/streams every account the program owns.
+fn rpc_filters(filter: Option<&AccountFilter>) -> Option<Vec<RpcFilterType>> {
+    let filters = filter?.rpc_filters();
+    (!filters.is_empty()).then_some(filters)
 }
 
 /// fee payer is always the first account key

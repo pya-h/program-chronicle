@@ -74,7 +74,7 @@ Admin endpoints require the `x-security` header (constant-time comparison) and m
 - `GET /admin` — validate the admin passkey (used by the panel login gate).
 - `GET /admin/stats` — indexer stats: counts, per-program progress (`last_processed_slot`), and table size estimates.
 - `POST|GET|PATCH|DELETE /admin/rpcs[/{id}]` — manage RPC endpoints.
-- `POST|GET|PATCH|DELETE /admin/programs[/{id}]` — manage indexed programs (register by `rpc_id` or inline `rpc_url`).
+- `POST|GET|PATCH|DELETE /admin/programs[/{id}]` — manage indexed programs (register by `rpc_id` or inline `rpc_url`). An optional `account_filters` descriptor (`{ data_size, memcmp[], addresses[] }`) narrows ingestion to a subset of a program's accounts — only needed for chain-wide shared programs; omit it to track everything the program owns.
 - `POST /admin/programs/{id}/activate` and `.../deactivate` — resume or pause indexing a program without deleting it.
 
 A health check is served at `GET /` and an HTMX admin panel is served from `static/panel` at the root.
@@ -84,7 +84,7 @@ A health check is served at `GET /` and an HTMX admin panel is served from `stat
 | Table | Purpose |
 |---|---|
 | `rpcs` | registered RPC endpoints (`http_url`, `ws_url`) |
-| `programs` | programs to index, tied to an RPC (`address`, `name`, `start_slot`, `last_processed_slot`, `active`) |
+| `programs` | programs to index, tied to an RPC (`address`, `name`, `start_slot`, `last_processed_slot`, `active`, `account_filters`) |
 | `slots` | per-RPC slot dimension (`block_time`, filled once known) |
 | `program_accounts` | per-program account registry plus the cached latest state for fast current-state reads |
 | `account_states` | per-slot state history for each account |
