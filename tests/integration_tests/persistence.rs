@@ -32,7 +32,7 @@ async fn history_rows(
 
 #[tokio::test]
 async fn ensure_slot_fills_block_time_once_and_is_idempotent() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://ensure-slot.example.com").await;
 
@@ -53,7 +53,7 @@ async fn ensure_slot_fills_block_time_once_and_is_idempotent() {
 
 #[tokio::test]
 async fn double_apply_identical_snapshot_appends_no_extra_history() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://double-apply.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -71,7 +71,7 @@ async fn double_apply_identical_snapshot_appends_no_extra_history() {
 
 #[tokio::test]
 async fn newer_slot_advances_cache_and_appends_history() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://newer-slot.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -89,7 +89,7 @@ async fn newer_slot_advances_cache_and_appends_history() {
 
 #[tokio::test]
 async fn older_slot_does_not_regress_cache_but_records_history() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://older-slot.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -109,7 +109,7 @@ async fn older_slot_does_not_regress_cache_but_records_history() {
 
 #[tokio::test]
 async fn higher_write_version_advances_cache_within_same_slot() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://write-version.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;

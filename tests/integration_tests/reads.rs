@@ -14,7 +14,7 @@ fn b64(bytes: &[u8]) -> String {
 
 #[tokio::test]
 async fn get_account_returns_latest_state() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://get-account.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -43,7 +43,7 @@ async fn get_account_returns_latest_state() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn get_account_unknown_is_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let res = server()
         .unauthed_client()
         .do_get(&format!("/accounts/{}", pubkey(99)))
@@ -54,7 +54,7 @@ async fn get_account_unknown_is_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn get_account_invalid_address_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let res = server()
         .unauthed_client()
         .do_get("/accounts/not-a-real-address")
@@ -65,7 +65,7 @@ async fn get_account_invalid_address_is_bad_request() -> httpc_test::Result<()> 
 
 #[tokio::test]
 async fn get_multiple_accounts_is_positional_with_nulls() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://multi-account.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -94,7 +94,7 @@ async fn get_multiple_accounts_is_positional_with_nulls() -> httpc_test::Result<
 
 #[tokio::test]
 async fn get_multiple_accounts_empty_query_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let res = server()
         .unauthed_client()
         .do_get("/accounts?addresses=%20")
@@ -105,7 +105,7 @@ async fn get_multiple_accounts_empty_query_is_bad_request() -> httpc_test::Resul
 
 #[tokio::test]
 async fn get_account_history_with_range_and_pagination() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://history.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -158,7 +158,7 @@ async fn get_account_history_with_range_and_pagination() -> httpc_test::Result<(
 
 #[tokio::test]
 async fn get_account_history_unknown_is_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let res = server()
         .unauthed_client()
         .do_get(&format!("/accounts/{}/history", pubkey(98)))
@@ -171,7 +171,7 @@ async fn get_account_history_unknown_is_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn program_accounts_memcmp_and_data_size_filters() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://gpa.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -222,7 +222,7 @@ async fn program_accounts_memcmp_and_data_size_filters() -> httpc_test::Result<(
 
 #[tokio::test]
 async fn program_accounts_malformed_memcmp_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://gpa-bad.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -239,7 +239,7 @@ async fn program_accounts_malformed_memcmp_is_bad_request() -> httpc_test::Resul
 
 #[tokio::test]
 async fn program_events_filters() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://events.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -287,7 +287,7 @@ async fn program_events_filters() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn program_events_invalid_discriminator_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://events-bad.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -304,7 +304,7 @@ async fn program_events_invalid_discriminator_is_bad_request() -> httpc_test::Re
 
 #[tokio::test]
 async fn program_transactions_success_and_range_filters() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://ptx.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -339,7 +339,7 @@ async fn program_transactions_success_and_range_filters() -> httpc_test::Result<
 
 #[tokio::test]
 async fn get_transaction_by_signature_and_list() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://tx.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
@@ -371,7 +371,7 @@ async fn get_transaction_by_signature_and_list() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn get_transaction_unknown_is_not_found() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let res = server()
         .unauthed_client()
         .do_get(&format!("/transactions/{}", signature(99)))
@@ -382,7 +382,7 @@ async fn get_transaction_unknown_is_not_found() -> httpc_test::Result<()> {
 
 #[tokio::test]
 async fn get_transaction_invalid_signature_is_bad_request() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let res = server()
         .unauthed_client()
         .do_get("/transactions/not-a-signature")
@@ -395,7 +395,7 @@ async fn get_transaction_invalid_signature_is_bad_request() -> httpc_test::Resul
 
 #[tokio::test]
 async fn program_changes_optionally_includes_events() -> httpc_test::Result<()> {
-    reset_db().await;
+    let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://changes.example.com").await;
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;

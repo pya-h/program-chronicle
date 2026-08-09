@@ -25,7 +25,7 @@ async fn read_until(resp: &mut reqwest::Response, needle: &str) -> String {
 
 #[tokio::test]
 async fn sse_streams_a_published_account_event() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let srv = server();
 
     let mut resp = reqwest::Client::new()
@@ -56,7 +56,7 @@ async fn sse_streams_a_published_account_event() {
 
 #[tokio::test]
 async fn sse_streams_a_published_program_event() {
-    reset_db().await;
+    let _guard = reset_db().await;
     let srv = server();
 
     let mut resp = reqwest::Client::new()
