@@ -7461,6 +7461,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "futures",
+ "hex",
  "httpc-test",
  "migration",
  "reqwest",

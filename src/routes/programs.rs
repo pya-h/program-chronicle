@@ -94,6 +94,7 @@ struct ProgramEventsQuery {
     from_slot: Option<i64>,
     to_slot: Option<i64>,
     tx_signature: Option<String>,
+    discriminator: Option<String>,
     #[serde(flatten)]
     pagination: PaginationQuery,
 }
@@ -120,6 +121,21 @@ async fn get_program_events_handler(
         })?;
         condition =
             condition.add(program_events::Column::TxSignature.eq(signature.as_ref().to_vec()));
+    }
+    if let Some(discriminator) = &query.discriminator {
+        let bytes = hex::decode(discriminator.strip_prefix("0x").unwrap_or(discriminator))
+            .ok()
+            .filter(|bytes| bytes.len() == 8)
+            .ok_or_else(|| {
+                SvmIndexerError::BadInput(
+                    "discriminator must be the event's leading 8 bytes as hex!".to_owned(),
+                )
+            })?;
+        // keep byte-identical to the expression index so the planner uses it
+        condition = condition.add(Expr::cust_with_values(
+            "substr(data, 1, 8) = ?",
+            [Value::from(bytes)],
+        ));
     }
 
     let events_query = program_events::Entity::find()
