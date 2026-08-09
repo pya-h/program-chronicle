@@ -14,9 +14,13 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_query::Expr,
 };
 use solana_sdk::commitment_config::CommitmentConfig;
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{
+    sync::{Mutex, broadcast},
+    task::JoinHandle,
+};
 
 use crate::core::error::SvmIndexerError;
+use crate::core::sse::SseEvent;
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::rpc::SvmRpc;
 use crate::indexer::rpc::json_rpc::JsonRpc;
@@ -27,15 +31,21 @@ use crate::indexer::transactions::{catch_up_transactions, stream_transactions};
 pub struct Indexer {
     db: DatabaseConnection,
     commitment: CommitmentConfig,
+    sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
     handles: Mutex<HashMap<i32, JoinHandle<()>>>,
 }
 
 impl Indexer {
-    pub fn new(db: DatabaseConnection, commitment: CommitmentConfig) -> Self {
+    pub fn new(
+        db: DatabaseConnection,
+        commitment: CommitmentConfig,
+        sse_tx: broadcast::Sender<SseEvent>,
+    ) -> Self {
         Self {
             db,
             commitment,
+            sse_tx,
             clients: Mutex::new(HashMap::new()),
             handles: Mutex::new(HashMap::new()),
         }
