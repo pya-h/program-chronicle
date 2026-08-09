@@ -12,13 +12,14 @@ use solana_sdk::{
     account::Account, commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature,
 };
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiMessage, UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiLoadedAddresses, UiMessage,
+    UiTransactionEncoding,
 };
 
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
     AccountFilter, AccountSnapshot, LogsNotification, RawTransaction, RpcResult, SignatureInfo,
-    SubStream, SvmRpc,
+    SubStream, SvmRpc, TxAccount,
 };
 
 pub struct JsonRpc {
@@ -158,6 +159,7 @@ impl SvmRpc for JsonRpc {
             fee: meta.map(|m| m.fee),
             fee_payer: fee_payer(&tx),
             logs,
+            accounts: account_keys(&tx),
             raw: serde_json::to_value(&tx)
                 .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?,
         })
@@ -243,4 +245,58 @@ fn fee_payer(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Option<Pubkey> {
         UiMessage::Raw(raw) => raw.account_keys.first()?.parse().ok(),
         UiMessage::Parsed(parsed) => parsed.account_keys.first()?.pubkey.parse().ok(),
     }
+}
+
+/// Every account the transaction touches, with its writable flag. Static keys are classified from
+/// the message header; address-lookup-table keys (versioned txs) come from the meta, writable first.
+fn account_keys(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Vec<TxAccount> {
+    let EncodedTransaction::Json(ui_tx) = &tx.transaction.transaction else {
+        return Vec::new();
+    };
+    let UiMessage::Raw(raw) = &ui_tx.message else {
+        return Vec::new();
+    };
+
+    let signers = raw.header.num_required_signatures as usize;
+    let readonly_signed = raw.header.num_readonly_signed_accounts as usize;
+    let readonly_unsigned = raw.header.num_readonly_unsigned_accounts as usize;
+    let writable_signers = signers.saturating_sub(readonly_signed);
+    let writable_unsigned = raw
+        .account_keys
+        .len()
+        .saturating_sub(signers)
+        .saturating_sub(readonly_unsigned);
+
+    let mut accounts: Vec<TxAccount> = raw
+        .account_keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| {
+            let address = key.parse().ok()?;
+            let writable = if index < signers {
+                index < writable_signers
+            } else {
+                index - signers < writable_unsigned
+            };
+            Some(TxAccount { address, writable })
+        })
+        .collect();
+
+    let loaded = tx
+        .transaction
+        .meta
+        .as_ref()
+        .and_then(|meta| Option::<UiLoadedAddresses>::from(meta.loaded_addresses.clone()));
+    if let Some(loaded) = loaded {
+        let writable = loaded
+            .writable
+            .iter()
+            .filter_map(|key| Some(TxAccount { address: key.parse().ok()?, writable: true }));
+        let readonly = loaded
+            .readonly
+            .iter()
+            .filter_map(|key| Some(TxAccount { address: key.parse().ok()?, writable: false }));
+        accounts.extend(writable.chain(readonly));
+    }
+    accounts
 }

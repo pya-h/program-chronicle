@@ -8,4 +8,5 @@ pub mod program_events;
 pub mod programs;
 pub mod rpcs;
 pub mod slots;
+pub mod transaction_accounts;
 pub mod transactions;

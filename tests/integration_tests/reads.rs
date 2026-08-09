@@ -2,8 +2,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
 use crate::common::{
-    pubkey, reset_db, seed_account, seed_event, seed_program, seed_rpc, seed_transaction, server,
-    signature, test_db,
+    pubkey, reset_db, seed_account, seed_event, seed_program, seed_rpc, seed_transaction,
+    seed_transaction_account, server, signature, test_db,
 };
 
 fn b64(bytes: &[u8]) -> String {
@@ -386,6 +386,79 @@ async fn get_transaction_invalid_signature_is_bad_request() -> httpc_test::Resul
     let res = server()
         .unauthed_client()
         .do_get("/transactions/not-a-signature")
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn account_transactions_by_address_with_range() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://acct-tx.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let address = pubkey(10);
+    // three transactions touch the address; a fourth touches a different one
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 600, true, Some(1001)).await;
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(42), 700, false, Some(1002)).await;
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(43), 800, true, Some(1003)).await;
+    seed_transaction_account(&db, &signature(40), &address, 500, true).await;
+    seed_transaction_account(&db, &signature(41), &address, 600, false).await;
+    seed_transaction_account(&db, &signature(42), &address, 700, true).await;
+    seed_transaction_account(&db, &signature(43), &pubkey(11), 800, true).await;
+
+    // all mentions of the address, newest slot first
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/accounts/{}/transactions", address))
+        .await?;
+    assert_eq!(res.status(), 200);
+    let body = res.json_body_as::<Value>()?;
+    assert_eq!(body["total"], 3);
+    let sigs: Vec<String> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["signature"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        sigs,
+        vec![
+            signature(42).to_string(),
+            signature(41).to_string(),
+            signature(40).to_string(),
+        ]
+    );
+
+    // bounded range keeps only the middle transaction
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/accounts/{}/transactions?from_slot=600&to_slot=600", address))
+        .await?;
+    let body = res.json_body_as::<Value>()?;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["signature"], signature(41).to_string());
+
+    // pagination envelope
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/accounts/{}/transactions?page=1&per_page=2", address))
+        .await?;
+    let body = res.json_body_as::<Value>()?;
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["pages"], 2);
+    assert_eq!(body["data"].as_array().unwrap().len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn account_transactions_invalid_address_is_bad_request() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let res = server()
+        .unauthed_client()
+        .do_get("/accounts/not-a-real-address/transactions")
         .await?;
     assert_eq!(res.status(), 400);
     Ok(())

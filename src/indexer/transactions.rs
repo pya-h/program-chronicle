@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 
 use crate::core::error::SvmIndexerError;
 use crate::core::sse::SseEvent;
-use crate::db::entities::{program_events, programs, transactions};
+use crate::db::entities::{program_events, programs, transaction_accounts, transactions};
 use crate::indexer::events::{EventParser, ParsedEvent, RawLogParser};
 use crate::indexer::persist::ensure_slot;
 use crate::indexer::rpc::{RawTransaction, SvmRpc};
@@ -115,6 +115,8 @@ pub async fn index_transaction(
     .await
     .map_err(|err| SvmIndexerError::db_error("Failed persisting transaction!", err))?;
 
+    index_transaction_accounts(&txn, slot, tx, now).await?;
+
     let events = index_events_from_tx(&txn, program_id, address, slot, slot_id, tx, now).await?;
 
     txn.commit()
@@ -131,6 +133,41 @@ pub async fn index_transaction(
             event.data.clone(),
         ));
     }
+    Ok(())
+}
+
+/// Records every account the transaction references so an address can be mapped back to its
+/// transactions (the `getSignaturesForAddress` replacement) and writes can be attributed later.
+async fn index_transaction_accounts<C: ConnectionTrait>(
+    db: &C,
+    slot: i64,
+    tx: &RawTransaction,
+    now: chrono::NaiveDateTime,
+) -> Result<(), SvmIndexerError> {
+    if tx.accounts.is_empty() {
+        return Ok(());
+    }
+    let signature = tx.signature.as_ref().to_vec();
+    let rows = tx.accounts.iter().map(|account| transaction_accounts::ActiveModel {
+        tx_signature: Set(signature.clone()),
+        account_address: Set(account.address.to_bytes().to_vec()),
+        slot: Set(slot),
+        writable: Set(account.writable),
+        created_at: Set(now),
+        ..Default::default()
+    });
+    transaction_accounts::Entity::insert_many(rows)
+        .on_conflict(
+            OnConflict::columns([
+                transaction_accounts::Column::TxSignature,
+                transaction_accounts::Column::AccountAddress,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed persisting transaction accounts!", err))?;
     Ok(())
 }
 

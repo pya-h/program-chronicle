@@ -43,7 +43,15 @@ pub struct RawTransaction {
     pub fee: Option<u64>,
     pub fee_payer: Option<Pubkey>,
     pub logs: Vec<String>,
+    /// Every account the transaction references, with its writable flag; drives `transaction_accounts`.
+    pub accounts: Vec<TxAccount>,
     pub raw: serde_json::Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct TxAccount {
+    pub address: Pubkey,
+    pub writable: bool,
 }
 
 #[derive(Clone, Debug)]

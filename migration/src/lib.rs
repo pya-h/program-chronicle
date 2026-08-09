@@ -15,6 +15,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260802_113000_create_program_events::Migration),
             Box::new(m20260809_120000_index_program_events_discriminator::Migration),
             Box::new(m20260809_120100_index_transactions_program_slot::Migration),
+            Box::new(m20260809_130000_create_transaction_accounts::Migration),
         ]
     }
 }
@@ -27,3 +28,4 @@ mod m20260802_110000_create_transactions;
 mod m20260802_113000_create_program_events;
 mod m20260809_120000_index_program_events_discriminator;
 mod m20260809_120100_index_transactions_program_slot;
+mod m20260809_130000_create_transaction_accounts;

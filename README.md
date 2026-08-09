@@ -23,6 +23,7 @@ All read endpoints are public (no `x-security` header). Byte payloads (`data`) a
 - `GET /accounts/{address}` — latest cached state of one account.
 - `GET /accounts?addresses=a,b,c` — batch fetch; the result is **positional**, with `null` where an address is not indexed.
 - `GET /accounts/{address}/history` — per-slot state history, newest first.
+- `GET /accounts/{address}/transactions` — indexed transactions that referenced the address, newest first (the `getSignaturesForAddress` replacement).
 
 ### Programs
 
@@ -87,6 +88,7 @@ A health check is served at `GET /` and an HTMX admin panel is served from `stat
 | `program_accounts` | per-program account registry plus the cached latest state for fast current-state reads |
 | `account_states` | per-slot state history for each account |
 | `transactions` | transactions touching a tracked program |
+| `transaction_accounts` | per-transaction account references (with a `writable` flag) for address → transaction lookup |
 | `program_events` | decoded program log events |
 
 ## Configuration
@@ -102,6 +104,7 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_COMMITMENT` | `confirmed` | ingest commitment (`confirmed` or `finalized`) |
 | `INDEXER_CATCHUP_CONCURRENCY` | `4` | max programs running bulk catch-up at once |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
+| `INDEXER_TXSIG_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
 | `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
 | `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |

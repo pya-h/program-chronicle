@@ -15,10 +15,11 @@ use crate::{
         response::{ApiResponse, FinalResponse},
         state::AppState,
     },
-    db::entities::{account_states, program_accounts, slots},
+    db::entities::{account_states, program_accounts, slots, transaction_accounts, transactions},
     routes::{
         payloads::common::PaginationQuery,
         responses::accounts::{AccountHistoryResponse, AccountInfoResponse},
+        responses::transactions::TransactionsResponse,
     },
 };
 
@@ -40,6 +41,15 @@ struct MultiAccountQuery {
 
 #[derive(Deserialize)]
 struct HistoryQuery {
+    since_slot: Option<i64>,
+    from_slot: Option<i64>,
+    to_slot: Option<i64>,
+    #[serde(flatten)]
+    pagination: PaginationQuery,
+}
+
+#[derive(Deserialize)]
+struct AccountTransactionsQuery {
     since_slot: Option<i64>,
     from_slot: Option<i64>,
     to_slot: Option<i64>,
@@ -156,9 +166,63 @@ async fn get_account_history_handler(
     )))
 }
 
+/// `getSignaturesForAddress` replacement: every indexed transaction that referenced the address,
+/// newest slot first, resolved through the `transaction_accounts` lookup.
+async fn get_account_transactions_handler(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+    Query(query): Query<AccountTransactionsQuery>,
+) -> FinalResponse<TransactionsResponse> {
+    let address = parse_address(&address)?;
+    let mut condition =
+        Condition::all().add(transaction_accounts::Column::AccountAddress.eq(address));
+    if let Some(since_slot) = query.since_slot {
+        condition = condition.add(transaction_accounts::Column::Slot.gte(since_slot));
+    }
+    if let Some(from_slot) = query.from_slot {
+        condition = condition.add(transaction_accounts::Column::Slot.gte(from_slot));
+    }
+    if let Some(to_slot) = query.to_slot {
+        condition = condition.add(transaction_accounts::Column::Slot.lte(to_slot));
+    }
+
+    let mentions_query = transaction_accounts::Entity::find()
+        .filter(condition)
+        .order_by_desc(transaction_accounts::Column::Slot)
+        .order_by_desc(transaction_accounts::Column::Id);
+
+    let (mentions, total, pages) = query
+        .pagination
+        .paginate_or_all(mentions_query, &state.db, Some("Failed fetching account transactions!"))
+        .await?;
+
+    let signatures: Vec<Vec<u8>> = mentions.iter().map(|row| row.tx_signature.clone()).collect();
+    let found = transactions::Entity::find()
+        .filter(transactions::Column::Signature.is_in(signatures))
+        .find_also_related(slots::Entity)
+        .all(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed fetching account transactions!", err))?;
+
+    let by_signature: HashMap<Vec<u8>, (transactions::Model, Option<slots::Model>)> = found
+        .into_iter()
+        .map(|(tx, slot)| (tx.signature.clone(), (tx, slot)))
+        .collect();
+    // keep the paged newest-first order the mentions came back in
+    let ordered = mentions
+        .iter()
+        .filter_map(|row| by_signature.get(&row.tx_signature).cloned())
+        .collect();
+
+    Ok(ApiResponse::ok(TransactionsResponse::new(
+        ordered, total, pages,
+    )))
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(get_multiple_accounts_handler))
         .route("/{address}", get(get_account_handler))
         .route("/{address}/history", get(get_account_history_handler))
+        .route("/{address}/transactions", get(get_account_transactions_handler))
 }

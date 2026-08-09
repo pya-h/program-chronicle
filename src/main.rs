@@ -58,6 +58,9 @@ async fn main() {
 
     let backfill_interval = Duration::from_secs(env_u64("INDEXER_BLOCKTIME_BACKFILL_SECS", 60).max(1)); // interval panics on a zero period
     tokio::spawn(indexer.clone().run_block_time_backfill(backfill_interval));
+    let tx_signature_backfill_interval =
+        Duration::from_secs(env_u64("INDEXER_TXSIG_BACKFILL_SECS", 120).max(1));
+    tokio::spawn(indexer.clone().run_tx_signature_backfill(tx_signature_backfill_interval));
     tokio::spawn(async move {
         if let Err(err) = indexer.start(new_program_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");

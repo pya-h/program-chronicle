@@ -6,4 +6,5 @@ pub use super::program_events::Entity as ProgramEvents;
 pub use super::programs::Entity as Programs;
 pub use super::rpcs::Entity as Rpcs;
 pub use super::slots::Entity as Slots;
+pub use super::transaction_accounts::Entity as TransactionAccounts;
 pub use super::transactions::Entity as Transactions;

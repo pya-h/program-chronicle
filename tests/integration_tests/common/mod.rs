@@ -14,7 +14,9 @@ use tokio::sync::broadcast;
 use url::Url;
 
 use svm_indexer::core::sse::SseEvent;
-use svm_indexer::db::entities::{program_events, programs, rpcs, transactions};
+use svm_indexer::db::entities::{
+    program_events, programs, rpcs, transaction_accounts, transactions,
+};
 use svm_indexer::indexer::persist::{ensure_slot, upsert_account_snapshot};
 use svm_indexer::indexer::rpc::AccountSnapshot;
 
@@ -191,8 +193,9 @@ pub async fn reset_db() -> MutexGuard<'static, ()> {
     let db = test_db().await;
     // child rows first so the Restrict foreign keys don't block the truncation
     db.execute_unprepared(
-        "DELETE FROM account_states; DELETE FROM program_events; DELETE FROM transactions; \
-         DELETE FROM program_accounts; DELETE FROM slots; DELETE FROM programs; DELETE FROM rpcs;",
+        "DELETE FROM account_states; DELETE FROM program_events; DELETE FROM transaction_accounts; \
+         DELETE FROM transactions; DELETE FROM program_accounts; DELETE FROM slots; \
+         DELETE FROM programs; DELETE FROM rpcs;",
     )
     .await
     .expect("failed to reset test tables");
@@ -301,6 +304,27 @@ pub async fn seed_transaction(
     .insert(db)
     .await
     .expect("failed to seed transaction");
+}
+
+pub async fn seed_transaction_account(
+    db: &DatabaseConnection,
+    signature: &Signature,
+    address: &Pubkey,
+    slot: i64,
+    writable: bool,
+) {
+    let now = chrono::Utc::now().naive_utc();
+    transaction_accounts::ActiveModel {
+        tx_signature: Set(signature.as_ref().to_vec()),
+        account_address: Set(address.to_bytes().to_vec()),
+        slot: Set(slot),
+        writable: Set(writable),
+        created_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("failed to seed transaction account");
 }
 
 pub async fn seed_event(

@@ -190,6 +190,10 @@ GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history?fr
 GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history?since_slot=1500&page=1&per_page=20
 
 
+### Transactions that referenced the address (getSignaturesForAddress replacement)
+GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/transactions?since_slot=1500&page=1&per_page=20
+
+
 ### ---------- Program reads (public; replace 1 with a program id) ----------
 
 ### All cached accounts of a program
