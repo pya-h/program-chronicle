@@ -4,10 +4,12 @@ use sea_orm::{
     sea_query::OnConflict,
 };
 use solana_sdk::pubkey::Pubkey;
+use tokio::sync::broadcast;
 
 use crate::core::error::SvmIndexerError;
+use crate::core::sse::SseEvent;
 use crate::db::entities::{program_events, programs, transactions};
-use crate::indexer::events::{EventParser, RawLogParser};
+use crate::indexer::events::{EventParser, ParsedEvent, RawLogParser};
 use crate::indexer::persist::ensure_slot;
 use crate::indexer::rpc::{RawTransaction, SvmRpc};
 
@@ -17,6 +19,7 @@ const CATCH_UP_PAGE_SIZE: usize = 1000;
 pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
     rpc: &R,
     db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
@@ -44,7 +47,7 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
                 break 'pages;
             }
             let tx = rpc.get_transaction(&sig.signature).await?;
-            index_transaction(db, program.id, program.rpc_id, &address, &tx).await?;
+            index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx).await?;
         }
         if page_len < CATCH_UP_PAGE_SIZE {
             break;
@@ -56,6 +59,7 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
 pub async fn stream_transactions<R: SvmRpc + ?Sized>(
     rpc: &R,
     db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
@@ -66,13 +70,14 @@ pub async fn stream_transactions<R: SvmRpc + ?Sized>(
     while let Some(notification) = stream.next().await {
         let notification = notification?;
         let tx = rpc.get_transaction(&notification.signature).await?;
-        index_transaction(db, program.id, program.rpc_id, &address, &tx).await?;
+        index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx).await?;
     }
     Ok(())
 }
 
 pub async fn index_transaction(
     db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
     program_id: i32,
     rpc_id: i32,
     address: &Pubkey,
@@ -110,11 +115,22 @@ pub async fn index_transaction(
     .await
     .map_err(|err| SvmIndexerError::db_error("Failed persisting transaction!", err))?;
 
-    index_events_from_tx(&txn, program_id, address, slot, slot_id, tx, now).await?;
+    let events = index_events_from_tx(&txn, program_id, address, slot, slot_id, tx, now).await?;
 
     txn.commit()
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed committing transaction!", err))?;
+
+    let signature = tx.signature.as_ref().to_vec();
+    for event in &events {
+        let _ = sse_tx.send(SseEvent::program_event(
+            program_id,
+            signature.clone(),
+            event.log_index as i32,
+            slot,
+            event.data.clone(),
+        ));
+    }
     Ok(())
 }
 
@@ -126,19 +142,19 @@ async fn index_events_from_tx<C: ConnectionTrait>(
     slot_id: i64,
     tx: &RawTransaction,
     now: chrono::NaiveDateTime,
-) -> Result<(), SvmIndexerError> {
+) -> Result<Vec<ParsedEvent>, SvmIndexerError> {
     let events = RawLogParser.parse(address, &tx.logs);
     if events.is_empty() {
-        return Ok(());
+        return Ok(events);
     }
     let signature = tx.signature.as_ref().to_vec();
-    let rows = events.into_iter().map(|event| program_events::ActiveModel {
+    let rows = events.iter().map(|event| program_events::ActiveModel {
         program_id: Set(program_id),
         tx_signature: Set(signature.clone()),
         slot: Set(slot),
         slot_id: Set(slot_id),
         log_index: Set(event.log_index as i32),
-        data: Set(event.data),
+        data: Set(event.data.clone()),
         created_at: Set(now),
         ..Default::default()
     });
@@ -154,5 +170,5 @@ async fn index_events_from_tx<C: ConnectionTrait>(
         .exec_without_returning(db)
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed persisting program events!", err))?;
-    Ok(())
+    Ok(events)
 }

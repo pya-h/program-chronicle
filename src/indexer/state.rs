@@ -1,8 +1,10 @@
 use futures::StreamExt;
 use sea_orm::DatabaseConnection;
 use solana_sdk::pubkey::Pubkey;
+use tokio::sync::broadcast;
 
 use crate::core::error::SvmIndexerError;
+use crate::core::sse::SseEvent;
 use crate::db::entities::programs;
 use crate::indexer::persist::upsert_account_snapshot;
 use crate::indexer::rpc::SvmRpc;
@@ -11,6 +13,7 @@ use crate::indexer::rpc::SvmRpc;
 pub async fn catch_up_state<R: SvmRpc + ?Sized>(
     rpc: &R,
     db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
@@ -25,7 +28,8 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
     };
 
     for snapshot in &snapshots {
-        upsert_account_snapshot(db, program.id, program.rpc_id, snapshot, None, block_time).await?;
+        upsert_account_snapshot(db, sse_tx, program.id, program.rpc_id, snapshot, None, block_time)
+            .await?;
     }
     Ok(())
 }
@@ -33,6 +37,7 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
 pub async fn stream_state<R: SvmRpc + ?Sized>(
     rpc: &R,
     db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
@@ -42,7 +47,8 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
 
     while let Some(snapshot) = stream.next().await {
         let snapshot = snapshot?;
-        upsert_account_snapshot(db, program.id, program.rpc_id, &snapshot, None, None).await?;
+        upsert_account_snapshot(db, sse_tx, program.id, program.rpc_id, &snapshot, None, None)
+            .await?;
     }
     Ok(())
 }
