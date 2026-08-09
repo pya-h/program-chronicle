@@ -5,5 +5,5 @@ pub mod programs;
 pub mod sse;
 pub mod transactions;
 
-mod payloads;
-mod responses;
+pub(crate) mod payloads;
+pub(crate) mod responses;

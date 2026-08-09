@@ -4,6 +4,10 @@ pub mod indexer;
 pub mod middlewares;
 pub mod routes;
 
+#[cfg(test)]
+#[path = "../tests/unit/mod.rs"]
+mod unit;
+
 use axum::{Router, routing::get};
 use sea_orm::DatabaseConnection;
 use tokio::sync::{broadcast, mpsc};

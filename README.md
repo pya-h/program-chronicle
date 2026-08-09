@@ -122,6 +122,7 @@ src/
   db/entities/        # SeaORM entities
 migration/            # SeaORM migrations
 static/panel/         # HTMX admin panel
+tests/unit/               # in-crate unit tests (pure logic, no db)
 tests/integration_tests/  # httpc-test suite against a real server + test db
 ```
 
@@ -151,10 +152,24 @@ The admin panel is then available at `http://localhost:3000/`.
 
 ## Running tests
 
-Integration tests use `httpc-test` against a real server backed by its own `<database>_test` database, created and migrated automatically. They reset their tables before each case and must run single-threaded:
+The suite has two tiers:
+
+**Unit tests** (`tests/unit/`) cover the pure logic in isolation — the event log parser (CPI-stack attribution), URL validation, error→status mapping, pagination query coercion, and the `from_model` response conversions. They compile *into* the crate (a `#[cfg(test)]` `#[path]` module in `lib.rs`) so they can reach `pub(crate)`/internal items, and they touch **no database** (models are built in memory, nothing is mocked), so they need no `DATABASE_URL` and run instantly:
+
+```bash
+cargo test --lib
+```
+
+**Integration tests** (`tests/integration_tests/`) use `httpc-test` against a real server backed by its own `<database>_test` database, created and migrated automatically. They reset their tables before each case and must run single-threaded:
 
 ```bash
 cargo test --test integration_tests -- --test-threads=1
+```
+
+To run **everything** in one go, pass the single-threaded flag (required by the integration tests) — the unit tests run fine under it too:
+
+```bash
+cargo test -- --test-threads=1
 ```
 
 Set `TEST_DATABASE_URL` to override the test database; otherwise `DATABASE_URL` with a `_test` suffix on the database name is used.
