@@ -147,21 +147,10 @@ async fn get_account_history_handler(
         .order_by_desc(account_states::Column::Slot)
         .order_by_desc(account_states::Column::WriteVersion);
 
-    let (rows, total, pages) = match (query.pagination.per_page, query.pagination.page) {
-        (Some(_), Some(_)) => {
-            query
-                .pagination
-                .paginate(history_query, &state.db, Some("Failed fetching account history!"))
-                .await?
-        }
-        _ => {
-            let rows = history_query.all(&state.db).await.map_err(|err| {
-                SvmIndexerError::db_error("Failed fetching account history!", err)
-            })?;
-            let total = rows.len() as u16;
-            (rows, total, 1_u16)
-        }
-    };
+    let (rows, total, pages) = query
+        .pagination
+        .paginate_or_all(history_query, &state.db, Some("Failed fetching account history!"))
+        .await?;
     Ok(ApiResponse::ok(AccountHistoryResponse::new(
         rows, total, pages,
     )))

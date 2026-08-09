@@ -62,4 +62,38 @@ impl PaginationQuery {
 
         Ok((items, total, total_pages))
     }
+
+    /// Paginate when both `page` and `per_page` are given, otherwise return every row in one page.
+    pub async fn paginate_or_all<'db, Q>(
+        &self,
+        query: Q,
+        db: &'db DatabaseConnection,
+        specific_error_message: Option<&str>,
+    ) -> Result<
+        (
+            Vec<<<Q as PaginatorTrait<'db, DatabaseConnection>>::Selector as SelectorTrait>::Item>,
+            u16,
+            u16,
+        ),
+        SvmIndexerError,
+    >
+    where
+        Q: PaginatorTrait<'db, DatabaseConnection>,
+    {
+        if self.per_page.is_some() && self.page.is_some() {
+            return self.paginate(query, db, specific_error_message).await;
+        }
+        let items = query
+            .paginate(db, u32::MAX as u64) // one page wide enough to hold the whole result set
+            .fetch_page(0)
+            .await
+            .map_err(|err| {
+                SvmIndexerError::db_error(
+                    specific_error_message.unwrap_or("Failed fetching items!"),
+                    err,
+                )
+            })?;
+        let total = items.len() as u16;
+        Ok((items, total, 1))
+    }
 }

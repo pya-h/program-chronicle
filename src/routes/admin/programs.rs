@@ -163,21 +163,9 @@ async fn get_programs_handler(
         .find_also_related(rpcs::Entity)
         .order_by_asc(programs::Column::Id);
 
-    let (programs, total, pages) = match (pagination.per_page, pagination.page) {
-        (Some(_), Some(_)) => {
-            pagination
-                .paginate(programs_query, &state.db, Some("Failed fetching programs!"))
-                .await?
-        }
-        _ => {
-            let programs = programs_query
-                .all(&state.db)
-                .await
-                .map_err(|err| SvmIndexerError::db_error("Failed fetching programs!", err))?;
-            let total = programs.len() as u16;
-            (programs, total, 1_u16)
-        }
-    };
+    let (programs, total, pages) = pagination
+        .paginate_or_all(programs_query, &state.db, Some("Failed fetching programs!"))
+        .await?;
     Ok(ApiResponse::ok(GetProgramsResponse::new(
         programs,
         total as u16,

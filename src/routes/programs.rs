@@ -79,21 +79,10 @@ async fn get_program_accounts_handler(
         .find_also_related(slots::Entity)
         .order_by_asc(program_accounts::Column::Id);
 
-    let (rows, total, pages) = match (query.pagination.per_page, query.pagination.page) {
-        (Some(_), Some(_)) => {
-            query
-                .pagination
-                .paginate(accounts_query, &state.db, Some("Failed fetching program accounts!"))
-                .await?
-        }
-        _ => {
-            let rows = accounts_query.all(&state.db).await.map_err(|err| {
-                SvmIndexerError::db_error("Failed fetching program accounts!", err)
-            })?;
-            let total = rows.len() as u16;
-            (rows, total, 1_u16)
-        }
-    };
+    let (rows, total, pages) = query
+        .pagination
+        .paginate_or_all(accounts_query, &state.db, Some("Failed fetching program accounts!"))
+        .await?;
     Ok(ApiResponse::ok(ProgramAccountsResponse::new(
         rows, total, pages,
     )))
@@ -139,21 +128,10 @@ async fn get_program_events_handler(
         .order_by_desc(program_events::Column::Slot)
         .order_by_desc(program_events::Column::Id);
 
-    let (rows, total, pages) = match (query.pagination.per_page, query.pagination.page) {
-        (Some(_), Some(_)) => {
-            query
-                .pagination
-                .paginate(events_query, &state.db, Some("Failed fetching program events!"))
-                .await?
-        }
-        _ => {
-            let rows = events_query.all(&state.db).await.map_err(|err| {
-                SvmIndexerError::db_error("Failed fetching program events!", err)
-            })?;
-            let total = rows.len() as u16;
-            (rows, total, 1_u16)
-        }
-    };
+    let (rows, total, pages) = query
+        .pagination
+        .paginate_or_all(events_query, &state.db, Some("Failed fetching program events!"))
+        .await?;
     Ok(ApiResponse::ok(ProgramEventsResponse::new(
         rows, total, pages,
     )))
