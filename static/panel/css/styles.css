@@ -1900,6 +1900,10 @@ html.no-anim *::after {
     overflow: auto;
 }
 
+.detail-data.pre {
+    white-space: pre-wrap;
+}
+
 .history-address-group {
     flex: 2 1 20rem;
 }
