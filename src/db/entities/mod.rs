@@ -3,6 +3,7 @@
 pub mod prelude;
 
 pub mod account_states;
+pub mod indexer_errors;
 pub mod program_accounts;
 pub mod program_events;
 pub mod programs;
