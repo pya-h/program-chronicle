@@ -4,6 +4,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::sync::mpsc;
 
 use crate::core::error::SvmIndexerError;
+use crate::core::indexer_error::{IndexerErrorKind, record};
 use crate::core::retry::retry;
 use crate::core::state::ProgramCommand;
 use crate::db::entities::{programs, rpcs};
@@ -75,6 +76,14 @@ impl Indexer {
             .await;
             if let Err(err) = result {
                 tracing::error!(program_id, error = %err, "Program indexer gave up after retries!");
+                record(
+                    &indexer.db,
+                    IndexerErrorKind::Indexing,
+                    err.to_string(),
+                    Some(program_id),
+                    None,
+                )
+                .await;
             }
         });
         handles.insert(program_id, handle);

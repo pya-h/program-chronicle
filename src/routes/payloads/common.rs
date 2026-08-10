@@ -16,6 +16,18 @@ where
     }
 }
 
+pub(crate) fn de_opt_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        Some(raw) if !raw.trim().is_empty() => {
+            raw.trim().parse::<bool>().map(Some).map_err(de::Error::custom)
+        }
+        _ => Ok(None),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct PaginationQuery {
     #[serde(default, deserialize_with = "de_opt_u16")]
@@ -78,7 +90,6 @@ impl PaginationQuery {
         Ok((items, total, total_pages))
     }
 
-    /// Paginate when both `page` and `per_page` are given, otherwise return every row in one page.
     pub async fn paginate_or_all<'db, Q>(
         &self,
         query: Q,

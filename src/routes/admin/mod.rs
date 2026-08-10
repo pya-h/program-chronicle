@@ -8,6 +8,7 @@ use crate::{
 };
 
 pub mod common;
+mod errors;
 pub mod programs;
 mod rpcs;
 mod stats;
@@ -21,6 +22,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .nest("/rpcs", rpcs::routes())
         .nest("/programs", programs::routes())
         .nest("/stats", stats::routes())
+        .nest("/errors", errors::routes())
         .route("/", get(validate_admin_handler))
         // add routes here
         .route_layer(axum::middleware::from_fn_with_state(state, admin_guard))

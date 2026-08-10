@@ -1,5 +1,21 @@
-use crate::db::entities::{programs::Model as ProgramModel, rpcs::Model as RpcModel};
+use crate::db::entities::{
+    indexer_errors::Model as IndexerErrorModel, programs::Model as ProgramModel,
+    rpcs::Model as RpcModel,
+};
 use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct GetIndexerErrorsResponse {
+    pub data: Vec<IndexerErrorModel>,
+    pub total: u64,
+    pub pages: u64,
+}
+
+impl GetIndexerErrorsResponse {
+    pub fn new(errors: Vec<IndexerErrorModel>, total: u64, pages: u64) -> Self {
+        Self { data: errors, total, pages }
+    }
+}
 
 #[derive(Serialize)]
 pub struct RpcWithProgramsResponse {

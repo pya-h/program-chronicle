@@ -1,6 +1,15 @@
 use serde::Deserialize;
 
 use crate::indexer::rpc::AccountFilter;
+use crate::routes::payloads::common::{PaginationQuery, de_opt_bool};
+
+#[derive(Deserialize)]
+pub struct IndexerErrorsQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationQuery,
+    #[serde(default, deserialize_with = "de_opt_bool")]
+    pub seen: Option<bool>,
+}
 
 #[derive(Deserialize)]
 pub struct AddRpcPayload {
