@@ -221,6 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 swap: 'innerHTML transition:true',
                 indicator: '#content-loader'
             });
+            initNotifications();
             showToast('Welcome to the Umbra SVM Indexer admin panel.', 'success', 4000);
         };
 
@@ -334,6 +335,123 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.location.protocol !== 'file:') {
         setTimeout(() => showToast('Welcome to the Umbra SVM Indexer admin panel.', 'info', 4000), 900);
+    }
+
+    // Notifications (indexer errors) --------------------------------------------
+    const NOTIF_POLL_MS = 30000;
+    let notifInited = false;
+
+    // Bound once, after unlock: the bell polls unseen indexer errors and lets the
+    // operator dismiss (mark seen) each one.
+    function initNotifications() {
+        if (notifInited) return;
+        const toggle = document.getElementById('notif-toggle');
+        const panel = document.getElementById('notif-panel');
+        const list = document.getElementById('notif-list');
+        if (!toggle || !panel || !list) return;
+        notifInited = true;
+
+        toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            panel.hasAttribute('hidden') ? openNotifPanel() : closeNotifPanel();
+        });
+        document.addEventListener('click', (e) => {
+            if (!panel.hasAttribute('hidden') && !e.target.closest('#notif-wrap')) closeNotifPanel();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !panel.hasAttribute('hidden')) closeNotifPanel();
+        });
+        list.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-notif-dismiss]');
+            if (!btn) return;
+            setBtnLoading(btn, true);
+            const res = await apiCall('PATCH', `/admin/errors/${btn.dataset.notifDismiss}`);
+            if (!res.ok) { setBtnLoading(btn, false); return showToast(res.message, 'error'); }
+            refreshNotifications();
+        });
+
+        refreshNotifications();
+        setInterval(() => refreshNotifications(), NOTIF_POLL_MS);
+    }
+
+    function openNotifPanel() {
+        document.getElementById('notif-panel')?.removeAttribute('hidden');
+        document.getElementById('notif-toggle')?.setAttribute('aria-expanded', 'true');
+        refreshNotifications();
+    }
+
+    function closeNotifPanel() {
+        document.getElementById('notif-panel')?.setAttribute('hidden', '');
+        document.getElementById('notif-toggle')?.setAttribute('aria-expanded', 'false');
+    }
+
+    // Silent on failure: this runs on a background poll, so a down server must not
+    // spawn a toast every tick.
+    async function refreshNotifications() {
+        const res = await apiCall('GET', `/admin/errors${buildQuery({ seen: false, page: 1, per_page: 20 })}`);
+        if (!res.ok) return;
+        const rows = res.data?.data || [];
+        const total = res.data?.total ?? rows.length;
+        renderNotifBadge(total);
+        renderNotifList(rows, total);
+    }
+
+    function renderNotifBadge(count) {
+        const badge = document.getElementById('notif-badge');
+        if (!badge) return;
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.hidden = count === 0;
+    }
+
+    function renderNotifList(rows, total) {
+        const list = document.getElementById('notif-list');
+        const empty = document.getElementById('notif-empty');
+        const count = document.getElementById('notif-count');
+        if (count) count.textContent = total > 0 ? `${total} unread` : 'All clear';
+        if (!list) return;
+        if (rows.length === 0) {
+            list.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
+        }
+        if (empty) empty.hidden = true;
+        list.innerHTML = rows.map(renderNotifRow).join('');
+    }
+
+    function renderNotifRow(err) {
+        const meta = [];
+        if (err.program_id != null) meta.push(`Program ${escapeHtml(err.program_id)}`);
+        if (err.slot != null) meta.push(`Slot ${escapeHtml(formatCount(err.slot))}`);
+        meta.push(escapeHtml(formatRelativeTime(err.created_at)));
+        return `
+            <div class="notif-item">
+                <div class="notif-item-head">
+                    <span class="notif-kind ${escapeHtml(err.kind)}">${escapeHtml(err.kind)}</span>
+                    <button type="button" class="notif-dismiss" data-notif-dismiss="${escapeHtml(err.id)}" aria-label="Mark as read" title="Mark as read">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </button>
+                </div>
+                <p class="notif-message">${escapeHtml(err.message)}</p>
+                <div class="notif-meta">${meta.join(' · ')}</div>
+            </div>
+        `;
+    }
+
+    // Naive-UTC timestamps arrive without a zone; pin them to UTC before diffing.
+    function formatRelativeTime(raw) {
+        if (!raw) return '—';
+        const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}Z`;
+        const then = new Date(iso).getTime();
+        if (!Number.isFinite(then)) return raw;
+        const sec = Math.round((Date.now() - then) / 1000);
+        if (sec < 60) return 'just now';
+        const min = Math.round(sec / 60);
+        if (min < 60) return `${min}m ago`;
+        const hr = Math.round(min / 60);
+        if (hr < 24) return `${hr}h ago`;
+        const day = Math.round(hr / 24);
+        if (day < 7) return `${day}d ago`;
+        return new Date(then).toLocaleDateString();
     }
 
     // RPC section ---------------------------------------------------------------
