@@ -179,7 +179,9 @@ impl Indexer {
                     TransactionCommitment::Confirmed.as_str(),
                 ]))
                 .filter(transactions::Column::Slot.gte(floor))
-                .order_by_desc(transactions::Column::Slot)
+                // oldest first: rows nearest `floor` are about to age out of the window, so resolve
+                // them before a backlog past STATUS_BATCH strands them at a non-final level
+                .order_by_asc(transactions::Column::Slot)
                 .limit(STATUS_BATCH)
                 .all(&self.db)
                 .await

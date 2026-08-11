@@ -1,5 +1,6 @@
 mod support;
 
+mod commitment;
 mod errors;
 mod events;
 mod filter;
