@@ -14,11 +14,12 @@ pub struct RetryPolicy {
 
 impl RetryPolicy {
     pub fn new(max_attempts: u32) -> Self {
+        let max_delay = Duration::from_secs(30);
         Self {
             max_attempts: max_attempts.max(1),
             base_delay: Duration::from_millis(500),
-            max_delay: Duration::from_secs(30),
-            reset_after: Duration::from_secs(60),
+            max_delay,
+            reset_after: max_delay * 2,
         }
     }
 

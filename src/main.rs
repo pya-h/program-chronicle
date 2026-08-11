@@ -42,6 +42,9 @@ async fn main() {
 
     let (supervisor_tx, supervisor_rx) = mpsc::channel::<ProgramCommand>(32);
     let (sse_tx, _) = broadcast::channel::<SseEvent>(SSE_CHANNEL_CAPACITY);
+    let restart_cooldown_secs = env_u64("INDEXER_RESTART_COOLDOWN_SECS", 300);
+    let restart_cooldown_cap_secs =
+        env_u64("INDEXER_RESTART_COOLDOWN_CAP_SECS", 43_200).max(restart_cooldown_secs);
     let indexer = Arc::new(Indexer::new(
         database_connection.clone(),
         match env::var("INDEXER_COMMITMENT")
@@ -56,7 +59,8 @@ async fn main() {
         sse_tx.clone(),
         env_u64("INDEXER_CATCHUP_CONCURRENCY", 4).max(1) as usize, // 0 permits would deadlock every catch-up
         env_u64("INDEXER_MAX_RETRIES", 5) as u32, // RetryPolicy clamps to at least one attempt
-        Duration::from_secs(env_u64("INDEXER_RESTART_COOLDOWN_SECS", 300)),
+        Duration::from_secs(restart_cooldown_secs),
+        Duration::from_secs(restart_cooldown_cap_secs),
     ));
 
     let backfill_interval =

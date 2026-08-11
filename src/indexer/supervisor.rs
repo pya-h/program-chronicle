@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 
 use crate::core::error::SvmIndexerError;
 use crate::core::indexer_error::{IndexerErrorKind, record};
@@ -71,10 +71,13 @@ impl Indexer {
         let client = self.client_for(&rpc).await;
         let indexer = self.clone();
         let policy = self.retry_policy;
-        let cooldown = self.restart_cooldown;
+        let base_cooldown = self.restart_cooldown;
+        let cooldown_cap = self.restart_cooldown_cap;
 
         let handle = tokio::spawn(async move {
+            let mut cooldown = base_cooldown;
             loop {
+                let started = Instant::now();
                 match retry(policy, "program-indexer", || {
                     indexer.run_program(program.clone(), client.clone())
                 })
@@ -95,7 +98,14 @@ impl Indexer {
                         .await;
                     }
                 }
+                // a run that stayed healthy past the reset window earns a fresh cooldown
+                let healthy = started.elapsed() >= policy.reset_after;
                 sleep(cooldown).await;
+                cooldown = if healthy {
+                    base_cooldown
+                } else {
+                    cooldown.checked_mul(2).map_or(cooldown_cap, |next| next.min(cooldown_cap))
+                };
             }
         });
         handles.insert(program_id, handle);

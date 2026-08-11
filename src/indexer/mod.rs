@@ -45,6 +45,7 @@ pub struct Indexer {
     catchup_semaphore: Semaphore,
     retry_policy: RetryPolicy,
     restart_cooldown: Duration,
+    restart_cooldown_cap: Duration,
 }
 
 impl Indexer {
@@ -55,6 +56,7 @@ impl Indexer {
         catchup_concurrency: usize,
         max_retries: u32,
         restart_cooldown: Duration,
+        restart_cooldown_cap: Duration,
     ) -> Self {
         Self {
             db,
@@ -65,6 +67,7 @@ impl Indexer {
             catchup_semaphore: Semaphore::new(catchup_concurrency),
             retry_policy: RetryPolicy::new(max_retries),
             restart_cooldown,
+            restart_cooldown_cap,
         }
     }
 

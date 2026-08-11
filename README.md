@@ -105,7 +105,8 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_COMMITMENT` | `confirmed` | ingest commitment (`confirmed` or `finalized`) |
 | `INDEXER_CATCHUP_CONCURRENCY` | `4` | max programs running bulk catch-up at once |
 | `INDEXER_MAX_RETRIES` | `5` | rapid attempts (backoff + jitter) before a program indexer drops into cooldown; a healthy run resets the count |
-| `INDEXER_RESTART_COOLDOWN_SECS` | `300` | pause before a program's task restarts its retry cycle after the rapid-retry budget is exhausted |
+| `INDEXER_RESTART_COOLDOWN_SECS` | `300` | base pause before a program's task restarts after the rapid-retry budget is exhausted; doubles on each consecutive rapid give-up and resets to the base after a healthy run |
+| `INDEXER_RESTART_COOLDOWN_CAP_SECS` | `43200` | ceiling (12h) for the doubling cooldown, so a persistently broken program keeps retrying but only rarely; clamped up to the base if set lower |
 | `INDEXER_RECONCILE_INTERVAL_SECS` | `300` | interval of the reconcile pass that respawns active programs whose task died out-of-band (e.g. a panic) |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
 | `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
