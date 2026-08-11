@@ -1,14 +1,18 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use tokio::time::sleep;
+
 use crate::core::retry::{RetryPolicy, retry};
 
-/// Zero delays so the retry loop spins without real sleeping.
+/// Zero delays so the retry loop spins without real sleeping; `reset_after` far above any test run
+/// so failures always accumulate unless a test deliberately outlasts it.
 fn fast_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy {
         max_attempts,
         base_delay: Duration::ZERO,
         max_delay: Duration::ZERO,
+        reset_after: Duration::from_secs(3600),
     }
 }
 
@@ -52,6 +56,33 @@ async fn gives_up_after_max_attempts() {
     .await;
     assert_eq!(result.unwrap_err(), "always");
     assert_eq!(calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn a_healthy_run_resets_the_failure_budget() {
+    // each run outlasts reset_after before failing, so the streak never reaches max_attempts
+    let policy = RetryPolicy {
+        max_attempts: 3,
+        base_delay: Duration::ZERO,
+        max_delay: Duration::ZERO,
+        reset_after: Duration::from_millis(5),
+    };
+    let calls = AtomicU32::new(0);
+    let result: Result<u32, String> = retry(policy, "op", || {
+        let n = calls.fetch_add(1, Ordering::SeqCst);
+        async move {
+            if n < 5 {
+                sleep(Duration::from_millis(20)).await; // stayed healthy past reset_after
+                Err(format!("drop {n}"))
+            } else {
+                Ok(n)
+            }
+        }
+    })
+    .await;
+    // without the reset it would give up at attempt 3; instead it retries through all five drops
+    assert_eq!(result.unwrap(), 5);
+    assert_eq!(calls.load(Ordering::SeqCst), 6);
 }
 
 #[test]

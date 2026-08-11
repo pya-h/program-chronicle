@@ -106,7 +106,7 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_CATCHUP_CONCURRENCY` | `4` | max programs running bulk catch-up at once |
 | `INDEXER_MAX_RETRIES` | `5` | attempts (backoff + jitter) before a program indexer gives up |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
-| `INDEXER_TXSIG_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
+| `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
 | `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
 | `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |
