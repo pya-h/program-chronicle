@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use std::future::Future;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::hash::{BuildHasher, RandomState};
+use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
 
@@ -35,10 +36,9 @@ fn jitter(span: Duration) -> Duration {
     if span.is_zero() {
         return Duration::ZERO;
     }
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    span.mul_f64(nanos as f64 / 1_000_000_000.0)
+    // a per-call random key, not the wall clock, so tasks failing at the same instant don't retry in lockstep
+    let bits = RandomState::new().hash_one(0u8);
+    span.mul_f64((bits >> 11) as f64 / (1u64 << 53) as f64)
 }
 
 pub async fn retry<T, E, F, Fut>(
