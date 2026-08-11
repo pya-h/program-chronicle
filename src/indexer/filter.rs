@@ -71,9 +71,6 @@ impl AccountFilter {
         }
         filters
     }
-
-    /// In-code predicate: `true` when the snapshot satisfies every clause. Used to drop non-matches
-    /// on the live path (the RPC filter is best-effort) and to apply the `addresses` clause.
     pub fn matches(&self, account: &AccountSnapshot) -> bool {
         if self.data_size.is_some_and(|size| account.data.len() as u64 != size) {
             return false;
@@ -82,7 +79,9 @@ impl AccountFilter {
             let Some(bytes) = memcmp.raw_bytes() else {
                 return false;
             };
-            let end = memcmp.offset + bytes.len();
+            let Some(end) = memcmp.offset.checked_add(bytes.len()) else {
+                return false;
+            };
             if account.data.len() < end || account.data[memcmp.offset..end] != bytes[..] {
                 return false;
             }

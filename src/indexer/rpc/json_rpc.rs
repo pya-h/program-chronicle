@@ -23,6 +23,8 @@ use crate::indexer::rpc::{
     SubStream, SvmRpc, TxAccount,
 };
 
+const MAX_MULTIPLE_ACCOUNTS: usize = 100;
+
 pub struct JsonRpc {
     client: RpcClient,
     ws_url: String,
@@ -107,17 +109,16 @@ impl SvmRpc for JsonRpc {
             encoding: Some(UiAccountEncoding::Base64Zstd),
             ..Default::default()
         };
-        let response = self
-            .client
-            .get_multiple_accounts_with_config(addresses, config)
-            .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
-        let slot = response.context.slot;
+        let mut snapshots = Vec::new();
 
-        Ok(addresses
-            .iter()
-            .zip(response.value)
-            .filter_map(|(address, acct)| {
+        for chunk in addresses.chunks(MAX_MULTIPLE_ACCOUNTS) {
+            let response = self
+                .client
+                .get_multiple_accounts_with_config(chunk, config.clone())
+                .await
+                .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            let slot = response.context.slot;
+            snapshots.extend(chunk.iter().zip(response.value).filter_map(|(address, acct)| {
                 let acct = acct?; // an unindexed / closed account is simply absent
                 Some(AccountSnapshot {
                     address: *address,
@@ -129,8 +130,9 @@ impl SvmRpc for JsonRpc {
                     slot,
                     write_version: None,
                 })
-            })
-            .collect())
+            }));
+        }
+        Ok(snapshots)
     }
 
     async fn get_signatures_for_address(
