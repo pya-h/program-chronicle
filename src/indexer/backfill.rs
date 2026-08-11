@@ -61,6 +61,41 @@ pub async fn backfill_tx_signatures_once(
     Ok(filled)
 }
 
+pub async fn backfill_latest_tx_signatures_once(
+    db: &DatabaseConnection,
+) -> Result<u64, SvmIndexerError> {
+    const SQL: &str = "\
+        UPDATE program_accounts pa \
+        SET latest_tx_signature = m.sig, updated_at = CURRENT_TIMESTAMP \
+        FROM ( \
+            SELECT pa.id AS program_account_id, \
+                   (ARRAY_AGG(DISTINCT ta.tx_signature))[1] AS sig \
+            FROM program_accounts pa \
+            JOIN transaction_accounts ta \
+              ON ta.account_address = pa.address AND ta.slot = pa.latest_slot \
+            WHERE ta.writable \
+              AND pa.latest_tx_signature IS NULL \
+            GROUP BY pa.id \
+            HAVING COUNT(DISTINCT ta.tx_signature) = 1 \
+            LIMIT 500 \
+        ) m \
+        WHERE pa.id = m.program_account_id \
+          AND pa.latest_tx_signature IS NULL";
+
+    let mut filled = 0u64;
+    for _ in 0..TX_SIGNATURE_BACKFILL_MAX_BATCHES {
+        let result = db.execute_unprepared(SQL).await.map_err(|err| {
+            SvmIndexerError::db_error("Failed backfilling program_accounts.latest_tx_signature!", err)
+        })?;
+        let affected = result.rows_affected();
+        filled += affected;
+        if affected == 0 {
+            break;
+        }
+    }
+    Ok(filled)
+}
+
 impl Indexer {
     /// Fills `slots.block_time` left NULL at ingest.
     pub async fn run_block_time_backfill(self: Arc<Self>, interval: Duration) {
@@ -83,6 +118,15 @@ impl Indexer {
                 }
                 Ok(_) => {}
                 Err(err) => tracing::error!(error = %err, "tx_signature backfill pass failed!"),
+            }
+            match backfill_latest_tx_signatures_once(&self.db).await {
+                Ok(filled) if filled > 0 => {
+                    tracing::info!(filled, "tx_signature backfill attributed latest cache")
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::error!(error = %err, "latest_tx_signature backfill pass failed!")
+                }
             }
         }
     }

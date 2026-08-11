@@ -1,7 +1,9 @@
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use svm_indexer::db::entities::{account_states, program_accounts, slots};
-use svm_indexer::indexer::backfill::backfill_tx_signatures_once;
+use svm_indexer::indexer::backfill::{
+    backfill_latest_tx_signatures_once, backfill_tx_signatures_once,
+};
 use svm_indexer::indexer::persist::ensure_slot;
 
 use crate::common::{
@@ -158,6 +160,52 @@ async fn tx_signature_backfill_leaves_ambiguous_slot_null() {
     let account = cached_account(&db, program_id, &address).await;
     let states = history_rows(&db, account.id).await;
     assert_eq!(states[0].tx_signature, None, "an ambiguous slot stays unattributed");
+}
+
+#[tokio::test]
+async fn latest_tx_signature_backfill_attributes_unambiguous_write() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://latest-txsig-backfill.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let address = pubkey(10);
+    // json-rpc ingest leaves latest_tx_signature NULL at the cache's latest_slot
+    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    // a single writable transaction touched the account at latest_slot
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction_account(&db, &signature(40), &address, 500, true).await;
+    // a readonly mention at the same slot must not count
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction_account(&db, &signature(41), &address, 500, false).await;
+
+    let filled = backfill_latest_tx_signatures_once(&db).await.unwrap();
+    assert_eq!(filled, 1);
+
+    let account = cached_account(&db, program_id, &address).await;
+    assert_eq!(account.latest_tx_signature, Some(signature(40).as_ref().to_vec()));
+}
+
+#[tokio::test]
+async fn latest_tx_signature_backfill_leaves_ambiguous_slot_null() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://latest-txsig-ambiguous.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let address = pubkey(10);
+    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    // two distinct writable transactions wrote the account at latest_slot → ambiguous
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction_account(&db, &signature(40), &address, 500, true).await;
+    seed_transaction_account(&db, &signature(41), &address, 500, true).await;
+
+    let filled = backfill_latest_tx_signatures_once(&db).await.unwrap();
+    assert_eq!(filled, 0);
+
+    let account = cached_account(&db, program_id, &address).await;
+    assert_eq!(account.latest_tx_signature, None, "an ambiguous latest_slot stays unattributed");
 }
 
 #[tokio::test]
