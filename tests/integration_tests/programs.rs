@@ -509,3 +509,83 @@ async fn delete_program_not_found() -> httpc_test::Result<()> {
     assert_eq!(res.status(), 404);
     Ok(())
 }
+
+#[tokio::test]
+async fn add_program_with_addresses_allowlist_persists() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-allowlist.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": address(0),
+                "account_filters": { "addresses": [address(3), address(4)] }
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 201);
+    let id = res.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+
+    let body = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?
+        .json_body_as::<serde_json::Value>()?;
+    let addresses = body["account_filters"]["addresses"].as_array().unwrap();
+    assert_eq!(addresses.len(), 2);
+    assert_eq!(addresses[0], address(3));
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_rejects_invalid_memcmp_bytes() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-bad-memcmp.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({
+                "rpc_id": rpc_id,
+                "address": address(0),
+                "account_filters": { "memcmp": [{ "offset": 0, "bytes": "0OIl" }] }
+            }),
+        )
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn deactivate_unknown_program_is_not_found() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let res = server()
+        .authed_client()
+        .do_post("/admin/programs/9999/deactivate", json!({}))
+        .await?;
+    assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
+async fn activation_endpoints_require_auth() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let activate = server()
+        .unauthed_client()
+        .do_post("/admin/programs/1/activate", json!({}))
+        .await?;
+    assert_eq!(activate.status(), 401);
+
+    let deactivate = server()
+        .unauthed_client()
+        .do_post("/admin/programs/1/deactivate", json!({}))
+        .await?;
+    assert_eq!(deactivate.status(), 401);
+    Ok(())
+}

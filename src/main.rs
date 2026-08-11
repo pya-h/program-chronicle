@@ -101,7 +101,7 @@ async fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], app_port));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .expect(&format!("Failed listening on the port: {}", app_port));
+        .unwrap_or_else(|_| panic!("Failed listening on the port: {}", app_port));
     tracing::info!("Listening on {}...", addr);
     axum::serve(listener, router)
         .await

@@ -24,7 +24,7 @@ impl RetryPolicy {
         }
     }
 
-    fn backoff(&self, retry: u32) -> Duration {
+    pub(crate) fn backoff(&self, retry: u32) -> Duration {
         let exp = self.base_delay.saturating_mul(1u32 << retry.min(16));
         let capped = exp.min(self.max_delay);
         let half = capped / 2;
@@ -32,7 +32,7 @@ impl RetryPolicy {
     }
 }
 
-fn jitter(span: Duration) -> Duration {
+pub(crate) fn jitter(span: Duration) -> Duration {
     if span.is_zero() {
         return Duration::ZERO;
     }

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tokio::time::sleep;
 
-use crate::core::retry::{RetryPolicy, retry};
+use crate::core::retry::{RetryPolicy, jitter, retry};
 
 /// Zero delays so the retry loop spins without real sleeping; `reset_after` far above any test run
 /// so failures always accumulate unless a test deliberately outlasts it.
@@ -89,4 +89,38 @@ async fn a_healthy_run_resets_the_failure_budget() {
 fn policy_clamps_attempts_to_at_least_one() {
     assert_eq!(RetryPolicy::new(0).max_attempts, 1);
     assert_eq!(RetryPolicy::new(5).max_attempts, 5);
+}
+
+#[test]
+fn new_derives_the_delay_bounds() {
+    let policy = RetryPolicy::new(5);
+    assert_eq!(policy.base_delay, Duration::from_millis(500));
+    assert_eq!(policy.max_delay, Duration::from_secs(30));
+    assert_eq!(policy.reset_after, Duration::from_secs(60)); // max_delay * 2
+}
+
+#[test]
+fn backoff_stays_within_its_jittered_window_and_saturates() {
+    let policy = RetryPolicy::new(5);
+    for retry in 0..20 {
+        let capped = (policy.base_delay * (1u32 << retry.min(16))).min(policy.max_delay);
+        let delay = policy.backoff(retry);
+        assert!(delay >= capped / 2 && delay <= capped);
+    }
+    // a huge retry count saturates at the max_delay window instead of overflowing
+    let delay = policy.backoff(64);
+    assert!(delay >= policy.max_delay / 2 && delay <= policy.max_delay);
+}
+
+#[test]
+fn jitter_is_bounded_and_decorrelated() {
+    let span = Duration::from_secs(10);
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..64 {
+        let j = jitter(span);
+        assert!(j < span);
+        seen.insert(j.as_nanos());
+    }
+    assert!(seen.len() > 1); // independent draws, not the lockstep the wall clock produced
+    assert_eq!(jitter(Duration::ZERO), Duration::ZERO);
 }

@@ -1,4 +1,6 @@
+mod admin;
 mod common;
+mod errors;
 mod persistence;
 mod programs;
 mod reads;

@@ -193,9 +193,9 @@ pub async fn reset_db() -> MutexGuard<'static, ()> {
     let db = test_db().await;
     // child rows first so the Restrict foreign keys don't block the truncation
     db.execute_unprepared(
-        "DELETE FROM account_states; DELETE FROM program_events; DELETE FROM transaction_accounts; \
-         DELETE FROM transactions; DELETE FROM program_accounts; DELETE FROM slots; \
-         DELETE FROM programs; DELETE FROM rpcs;",
+        "DELETE FROM indexer_errors; DELETE FROM account_states; DELETE FROM program_events; \
+         DELETE FROM transaction_accounts; DELETE FROM transactions; DELETE FROM program_accounts; \
+         DELETE FROM slots; DELETE FROM programs; DELETE FROM rpcs;",
     )
     .await
     .expect("failed to reset test tables");
