@@ -9,6 +9,7 @@ use solana_sdk::signature::Signature;
 
 use crate::{
     core::{
+        commitment::TransactionCommitment,
         error::SvmIndexerError,
         response::{ApiResponse, FinalResponse},
         state::AppState,
@@ -25,8 +26,17 @@ struct TransactionsQuery {
     since_slot: Option<i64>,
     from_slot: Option<i64>,
     to_slot: Option<i64>,
+    commitment: Option<String>,
     #[serde(flatten)]
     pagination: PaginationQuery,
+}
+
+fn commitment_condition(commitment: &Option<String>) -> Condition {
+    match commitment {
+        Some(level) => Condition::all().add(transactions::Column::Commitment.eq(level.as_str())),
+        None => Condition::all()
+            .add(transactions::Column::Commitment.ne(TransactionCommitment::Dropped.as_str())),
+    }
 }
 
 async fn get_transaction_handler(
@@ -58,7 +68,7 @@ async fn get_transactions_handler(
     State(state): State<AppState>,
     Query(query): Query<TransactionsQuery>,
 ) -> FinalResponse<TransactionsResponse> {
-    let mut condition = Condition::all();
+    let mut condition = commitment_condition(&query.commitment);
     if let Some(since_slot) = query.since_slot {
         condition = condition.add(transactions::Column::Slot.gte(since_slot));
     }

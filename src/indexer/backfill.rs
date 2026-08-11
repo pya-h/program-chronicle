@@ -3,21 +3,25 @@ use std::time::Duration;
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect,
+    QuerySelect, sea_query::Expr,
 };
+use solana_sdk::signature::Signature;
 
+use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
-use crate::db::entities::{rpcs, slots};
+use crate::db::entities::{programs, rpcs, slots, transactions};
 use crate::indexer::Indexer;
 use crate::indexer::persist::ensure_slot;
 
 const BACKFILL_BATCH: u64 = 500;
 /// Cap the work per tx_signature backfill pass; leftovers are picked up on the next tick.
 const TX_SIGNATURE_BACKFILL_MAX_BATCHES: usize = 40;
+/// `getSignatureStatuses` caps at 256 signatures per call.
+const STATUS_BATCH: u64 = 256;
+/// Only sweep transactions within this many slots of the head — inside the node's recent status-cache
+/// retention, so an absent signature is a reorg drop, not an aged-out finalized tx.
+const COMMITMENT_RECENT_SLOTS: i64 = 150;
 
-/// Attributes each `account_states` row to the transaction that wrote it, but only when a single
-/// writable transaction touched that account at that slot — an ambiguous slot is left NULL. Runs as
-/// batched set-based `UPDATE`s so a large backlog drains over several statements instead of one lock.
 pub async fn backfill_tx_signatures_once(
     db: &DatabaseConnection,
 ) -> Result<u64, SvmIndexerError> {
@@ -69,7 +73,6 @@ impl Indexer {
         }
     }
 
-    /// Fills `account_states.tx_signature` left NULL by json-rpc ingest, using `transaction_accounts`.
     pub async fn run_tx_signature_backfill(self: Arc<Self>, interval: Duration) {
         let mut ticker = tokio::time::interval(interval);
         loop {
@@ -82,6 +85,112 @@ impl Indexer {
                 Err(err) => tracing::error!(error = %err, "tx_signature backfill pass failed!"),
             }
         }
+    }
+
+    pub async fn run_commitment_worker(self: Arc<Self>, interval: Duration) {
+        if !self.ingests_confirmed() {
+            return;
+        }
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            if let Err(err) = self.promote_commitments_once().await {
+                tracing::error!(error = %err, "commitment promote/sweep pass failed!");
+            }
+        }
+    }
+
+    async fn promote_commitments_once(&self) -> Result<(), SvmIndexerError> {
+        let networks = rpcs::Entity::find().all(&self.db).await.map_err(|err| {
+            SvmIndexerError::db_error("Failed loading rpcs for commitment sweep!", err)
+        })?;
+
+        for rpc in networks {
+            let program_ids: Vec<i32> = programs::Entity::find()
+                .filter(programs::Column::RpcId.eq(rpc.id))
+                .all(&self.db)
+                .await
+                .map_err(|err| SvmIndexerError::db_error("Failed loading rpc programs!", err))?
+                .into_iter()
+                .map(|program| program.id)
+                .collect();
+            if program_ids.is_empty() {
+                continue;
+            }
+
+            let client = self.client_for(&rpc).await;
+            let head = match client.get_slot().await {
+                Ok(head) => head as i64,
+                Err(err) => {
+                    tracing::warn!(rpc_id = rpc.id, error = %err, "Failed reading head for commitment sweep!");
+                    continue;
+                }
+            };
+            let floor = (head - COMMITMENT_RECENT_SLOTS).max(0);
+
+            let pending = transactions::Entity::find()
+                .filter(transactions::Column::ProgramId.is_in(program_ids))
+                .filter(transactions::Column::Commitment.is_in([
+                    TransactionCommitment::Processed.as_str(),
+                    TransactionCommitment::Confirmed.as_str(),
+                ]))
+                .filter(transactions::Column::Slot.gte(floor))
+                .order_by_desc(transactions::Column::Slot)
+                .limit(STATUS_BATCH)
+                .all(&self.db)
+                .await
+                .map_err(|err| {
+                    SvmIndexerError::db_error("Failed loading pending commitments!", err)
+                })?;
+
+            let mut sigs = Vec::with_capacity(pending.len());
+            let mut sig_bytes = Vec::with_capacity(pending.len());
+            for tx in &pending {
+                if let Ok(sig) = Signature::try_from(tx.signature.as_slice()) {
+                    sigs.push(sig);
+                    sig_bytes.push(tx.signature.clone());
+                }
+            }
+            if sigs.is_empty() {
+                continue;
+            }
+
+            let statuses = client.get_signature_statuses(&sigs).await?;
+            let mut finalized = Vec::new();
+            let mut dropped = Vec::new();
+            for (bytes, status) in sig_bytes.into_iter().zip(statuses) {
+                match status {
+                    Some(TransactionCommitment::Finalized) => finalized.push(bytes),
+                    Some(_) => {} // still processed/confirmed — re-checked next tick
+                    None => dropped.push(bytes), // recent yet absent from the cache => reorged away
+                }
+            }
+
+            self.set_commitment(finalized, TransactionCommitment::Finalized).await?;
+            self.set_commitment(dropped, TransactionCommitment::Dropped).await?;
+        }
+        Ok(())
+    }
+
+    async fn set_commitment(
+        &self,
+        signatures: Vec<Vec<u8>>,
+        commitment: TransactionCommitment,
+    ) -> Result<(), SvmIndexerError> {
+        if signatures.is_empty() {
+            return Ok(());
+        }
+        let count = signatures.len();
+        transactions::Entity::update_many()
+            .col_expr(transactions::Column::Commitment, Expr::value(commitment.as_str()))
+            .filter(transactions::Column::Signature.is_in(signatures))
+            .exec(&self.db)
+            .await
+            .map_err(|err| {
+                SvmIndexerError::db_error("Failed updating transaction commitment!", err)
+            })?;
+        tracing::info!(count, commitment = commitment.as_str(), "advanced transaction commitment");
+        Ok(())
     }
 
     async fn backfill_block_times_once(&self) -> Result<(), SvmIndexerError> {

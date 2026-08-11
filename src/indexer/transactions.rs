@@ -6,6 +6,7 @@ use sea_orm::{
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::broadcast;
 
+use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::core::sse::SseEvent;
 use crate::db::entities::{program_events, programs, transaction_accounts, transactions};
@@ -21,6 +22,7 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
     db: &DatabaseConnection,
     sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
+    commitment: TransactionCommitment,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
         SvmIndexerError::InvalidPublicKey(
@@ -47,7 +49,8 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
                 break 'pages;
             }
             let tx = rpc.get_transaction(&sig.signature).await?;
-            index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx).await?;
+            index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx, commitment)
+                .await?;
         }
         if page_len < CATCH_UP_PAGE_SIZE {
             break;
@@ -61,6 +64,7 @@ pub async fn stream_transactions<R: SvmRpc + ?Sized>(
     db: &DatabaseConnection,
     sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
+    commitment: TransactionCommitment,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
         SvmIndexerError::InvalidPublicKey("Stored program address is not a valid pubkey!".to_owned())
@@ -70,7 +74,8 @@ pub async fn stream_transactions<R: SvmRpc + ?Sized>(
     while let Some(notification) = stream.next().await {
         let notification = notification?;
         let tx = rpc.get_transaction(&notification.signature).await?;
-        index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx).await?;
+        index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx, commitment)
+            .await?;
     }
     // a live subscription never ends on its own; a closed stream means the connection dropped
     Err(SvmIndexerError::SubscriptionFailed(
@@ -85,6 +90,7 @@ pub async fn index_transaction(
     rpc_id: i32,
     address: &Pubkey,
     tx: &RawTransaction,
+    commitment: TransactionCommitment,
 ) -> Result<(), SvmIndexerError> {
     let now = chrono::Utc::now().naive_utc();
     let slot = tx.slot as i64;
@@ -103,6 +109,7 @@ pub async fn index_transaction(
         slot_id: Set(slot_id),
         success: Set(tx.success),
         error: Set(tx.err.clone()),
+        commitment: Set(commitment.as_str().to_owned()),
         fee: Set(tx.fee.map(|fee| fee as i64)),
         fee_payer: Set(tx.fee_payer.map(|payer| payer.to_bytes().to_vec())),
         raw: Set(tx.raw.clone()),

@@ -18,6 +18,7 @@ use solana_transaction_status::{
 };
 use tokio::sync::mpsc;
 
+use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
     AccountFilter, AccountSnapshot, LogsNotification, RawTransaction, RpcResult, SignatureInfo,
@@ -211,6 +212,30 @@ impl SvmRpc for JsonRpc {
             raw: serde_json::to_value(&tx)
                 .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?,
         })
+    }
+
+    async fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<TransactionCommitment>>> {
+        let statuses = self
+            .client
+            .get_signature_statuses(signatures)
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?
+            .value;
+        Ok(statuses
+            .into_iter()
+            .map(|status| {
+                status.map(|status| {
+                    status
+                        .confirmation_status
+                        .as_ref()
+                        .map(TransactionCommitment::from)
+                        .unwrap_or(TransactionCommitment::Processed)
+                })
+            })
+            .collect())
     }
 
     async fn subscribe_program(

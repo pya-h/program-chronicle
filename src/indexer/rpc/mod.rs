@@ -6,6 +6,7 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
+use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 
 pub type RpcResult<T> = Result<T, SvmIndexerError>;
@@ -106,6 +107,11 @@ pub trait SvmRpc: Send + Sync {
     ) -> RpcResult<Vec<SignatureInfo>>;
 
     async fn get_transaction(&self, signature: &Signature) -> RpcResult<RawTransaction>;
+
+    async fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<TransactionCommitment>>>;
 
     async fn subscribe_program(
         &self,

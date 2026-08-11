@@ -31,6 +31,7 @@ enum Transactions {
     SlotId,
     Success,
     Err,
+    Commitment,
     Fee,
     FeePayer,
     Raw,
@@ -60,6 +61,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Transactions::SlotId).big_integer().not_null())
                     .col(ColumnDef::new(Transactions::Success).boolean().not_null())
                     .col(ColumnDef::new(Transactions::Err).json_binary().null())
+                    .col(
+                        ColumnDef::new(Transactions::Commitment)
+                            .string()
+                            .not_null()
+                            .default("confirmed"),
+                    )
                     .col(ColumnDef::new(Transactions::Fee).big_integer().null())
                     .check(Expr::cust(r#""fee" IS NULL OR "fee" >= 0"#))
                     .col(ColumnDef::new(Transactions::FeePayer).binary().null())
@@ -117,6 +124,16 @@ impl MigrationTrait for Migration {
                     .name("idx-transactions-fee-payer")
                     .table(Transactions::Table)
                     .col(Transactions::FeePayer)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-transactions-commitment-slot")
+                    .table(Transactions::Table)
+                    .col(Transactions::Commitment)
+                    .col(Transactions::Slot)  // the commitment promote/sweep worker scans recent non-final rows
                     .to_owned(),
             )
             .await?;

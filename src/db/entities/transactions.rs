@@ -18,6 +18,7 @@ pub struct Model {
     #[sea_orm(column_name = "err", column_type = "JsonBinary", nullable)]
     #[serde(rename = "err")]
     pub error: Option<Json>,
+    pub commitment: String,
     pub fee: Option<i64>,
     #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
     pub fee_payer: Option<Vec<u8>>,

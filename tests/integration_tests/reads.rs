@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::common::{
     pubkey, reset_db, seed_account, seed_event, seed_program, seed_rpc, seed_transaction,
-    seed_transaction_account, server, signature, test_db,
+    seed_transaction_account, server, set_transaction_commitment, signature, test_db,
 };
 
 fn b64(bytes: &[u8]) -> String {
@@ -377,6 +377,56 @@ async fn get_transaction_unknown_is_not_found() -> httpc_test::Result<()> {
         .do_get(&format!("/transactions/{}", signature(99)))
         .await?;
     assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+#[tokio::test]
+async fn transactions_surface_commitment_and_hide_dropped_by_default() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://commitment.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    // ingest defaults to `confirmed`; mark one row reorged
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 600, true, Some(1001)).await;
+    set_transaction_commitment(&db, &signature(41), "dropped").await;
+
+    // default list hides the dropped row and surfaces the commitment field
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions", program_id))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["signature"], signature(40).to_string());
+    assert_eq!(body["data"][0]["commitment"], "confirmed");
+
+    // an explicit filter selects exactly that level
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?commitment=dropped", program_id))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["data"][0]["signature"], signature(41).to_string());
+    assert_eq!(body["data"][0]["commitment"], "dropped");
+
+    // the global list hides it too
+    let body = server()
+        .unauthed_client()
+        .do_get("/transactions")
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["total"], 1);
+
+    // a single fetch by signature still returns the dropped row, with its commitment
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/transactions/{}", signature(41)))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["commitment"], "dropped");
     Ok(())
 }
 

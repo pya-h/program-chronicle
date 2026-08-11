@@ -70,6 +70,7 @@ fn tx_model(fee_payer: Option<Vec<u8>>) -> transactions::Model {
         slot_id: 1,
         success: true,
         error: None,
+        commitment: "confirmed".to_owned(),
         fee: Some(5000),
         fee_payer,
         raw: serde_json::json!({"k": "v"}),

@@ -22,6 +22,7 @@ use tokio::{
     task::JoinHandle,
 };
 
+use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::core::retry::RetryPolicy;
 use crate::core::sse::SseEvent;
@@ -86,11 +87,20 @@ impl Indexer {
         client
     }
 
+    fn ingest_commitment(&self) -> TransactionCommitment {
+        TransactionCommitment::from_ingest(self.commitment)
+    }
+
+    pub fn ingests_confirmed(&self) -> bool {
+        self.commitment == CommitmentConfig::confirmed()
+    }
+
     async fn run_program(
         &self,
         program: programs::Model,
         rpc: Arc<dyn SvmRpc>,
     ) -> Result<(), SvmIndexerError> {
+        let commitment = self.ingest_commitment();
         let head = rpc.get_slot().await? as i64;
         let program = self.resolve_start_slot(program, head).await?;
         {
@@ -100,13 +110,14 @@ impl Indexer {
                 .await
                 .expect("catch-up semaphore is never closed");
             catch_up_state(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // cache up to the head
-            catch_up_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // backfill the downtime gap
+            catch_up_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program, commitment)
+                .await?; // backfill the downtime gap
         } // release the permit before streaming — steady-state is unthrottled
         self.advance_cursor(&program, head).await?;
 
         tokio::try_join!(
             stream_state(rpc.as_ref(), &self.db, &self.sse_tx, &program),
-            stream_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program),
+            stream_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program, commitment),
         )?; // try_join so when one stream ends/errors the other stops too; the caller
         // (spawn_program) then retries the whole run with backoff, then cools down and restarts.
         Ok(())

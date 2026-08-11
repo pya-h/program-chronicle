@@ -13,6 +13,7 @@ use solana_sdk::signature::Signature;
 
 use crate::{
     core::{
+        commitment::TransactionCommitment,
         error::SvmIndexerError,
         response::{ApiResponse, FinalResponse},
         state::AppState,
@@ -166,6 +167,7 @@ struct ProgramTransactionsQuery {
     from_slot: Option<i64>,
     to_slot: Option<i64>,
     success: Option<bool>,
+    commitment: Option<String>,
     #[serde(flatten)]
     pagination: PaginationQuery,
 }
@@ -177,6 +179,16 @@ async fn get_program_transactions_handler(
 ) -> FinalResponse<TransactionsResponse> {
     let mut condition =
         Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32));
+    // an explicit ?commitment= matches that level; otherwise reorg-ed `dropped` rows are hidden
+    match &query.commitment {
+        Some(level) => {
+            condition = condition.add(transactions::Column::Commitment.eq(level.as_str()))
+        }
+        None => {
+            condition = condition
+                .add(transactions::Column::Commitment.ne(TransactionCommitment::Dropped.as_str()))
+        }
+    }
     if let Some(since_slot) = query.since_slot {
         condition = condition.add(transactions::Column::Slot.gte(since_slot));
     }

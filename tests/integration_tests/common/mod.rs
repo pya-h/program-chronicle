@@ -4,8 +4,8 @@ use httpc_test::Client;
 use tokio::sync::{Mutex, MutexGuard};
 use migration::MigratorTrait;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectOptions, ConnectionTrait, Database,
-    DatabaseConnection,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectOptions, ConnectionTrait, Database,
+    DatabaseConnection, EntityTrait, QueryFilter, sea_query::Expr,
 };
 use serde_json::Value;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
@@ -304,6 +304,19 @@ pub async fn seed_transaction(
     .insert(db)
     .await
     .expect("failed to seed transaction");
+}
+
+pub async fn set_transaction_commitment(
+    db: &DatabaseConnection,
+    signature: &Signature,
+    commitment: &str,
+) {
+    transactions::Entity::update_many()
+        .col_expr(transactions::Column::Commitment, Expr::value(commitment))
+        .filter(transactions::Column::Signature.eq(signature.as_ref().to_vec()))
+        .exec(db)
+        .await
+        .expect("failed to set transaction commitment");
 }
 
 pub async fn seed_transaction_account(

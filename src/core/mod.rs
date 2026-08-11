@@ -1,3 +1,4 @@
+pub mod commitment;
 pub mod indexer_error;
 pub mod response;
 pub mod retry;
