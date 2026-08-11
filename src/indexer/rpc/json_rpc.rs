@@ -16,6 +16,7 @@ use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiLoadedAddresses, UiMessage,
     UiTransactionEncoding,
 };
+use tokio::sync::mpsc;
 
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
@@ -40,12 +41,21 @@ impl JsonRpc {
         }
     }
 
-    async fn connect(&self) -> RpcResult<&'static PubsubClient> {
-        let pubsub = PubsubClient::new(&self.ws_url)
+    async fn connect(&self) -> RpcResult<PubsubClient> {
+        PubsubClient::new(&self.ws_url)
             .await
-            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
-        Ok(Box::leak(Box::new(pubsub)))
+            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))
     }
+}
+
+const SUB_CHANNEL_CAPACITY: usize = 1024;
+
+/// Wraps a channel receiver as an owned `'static` stream — nothing borrowed, so the caller can hold
+/// it without pinning the pubsub client alive.
+fn receiver_stream<T: Send + 'static>(rx: mpsc::Receiver<RpcResult<T>>) -> SubStream<T> {
+    Box::pin(futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|item| (item, rx))
+    }))
 }
 
 #[async_trait]
@@ -218,32 +228,54 @@ impl SvmRpc for JsonRpc {
             },
             ..Default::default()
         };
-        let (stream, _unsub) = client
-            .program_subscribe(program, Some(config))
-            .await
-            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
-
-        Ok(Box::pin(stream.map(|response| {
-            let slot = response.context.slot;
-            let keyed = response.value;
-            let address = keyed
-                .pubkey
-                .parse()
-                .map_err(|_| SvmIndexerError::SubscriptionFailed(keyed.pubkey.clone()))?;
-            let account = keyed.account.decode::<Account>().ok_or_else(|| {
-                SvmIndexerError::SubscriptionFailed(format!("undecodable account {}", keyed.pubkey))
-            })?;
-            Ok(AccountSnapshot {
-                address,
-                owner: account.owner,
-                lamports: account.lamports,
-                data: account.data,
-                rent_epoch: account.rent_epoch,
-                executable: account.executable,
-                slot,
-                write_version: None,
-            })
-        })))
+        let program = *program;
+        let (tx, rx) = mpsc::channel(SUB_CHANNEL_CAPACITY);
+        tokio::spawn(async move {
+            let (mut stream, _unsub) = match client.program_subscribe(&program, Some(config)).await {
+                Ok(pair) => pair,
+                Err(err) => {
+                    let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                    return;
+                }
+            };
+            loop {
+                let response = tokio::select! {
+                    _ = tx.closed() => break, // consumer gone; drop the subscription and close the socket
+                    response = stream.next() => match response {
+                        Some(response) => response,
+                        None => break,
+                    },
+                };
+                let slot = response.context.slot;
+                let keyed = response.value;
+                let item = keyed
+                    .pubkey
+                    .parse()
+                    .map_err(|_| SvmIndexerError::SubscriptionFailed(keyed.pubkey.clone()))
+                    .and_then(|address| {
+                        let account = keyed.account.decode::<Account>().ok_or_else(|| {
+                            SvmIndexerError::SubscriptionFailed(format!(
+                                "undecodable account {}",
+                                keyed.pubkey
+                            ))
+                        })?;
+                        Ok(AccountSnapshot {
+                            address,
+                            owner: account.owner,
+                            lamports: account.lamports,
+                            data: account.data,
+                            rent_epoch: account.rent_epoch,
+                            executable: account.executable,
+                            slot,
+                            write_version: None,
+                        })
+                    });
+                if tx.send(item).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(receiver_stream(rx))
     }
 
     async fn subscribe_accounts(
@@ -256,30 +288,50 @@ impl SvmRpc for JsonRpc {
             commitment: Some(self.commitment),
             ..Default::default()
         };
-        let mut streams: Vec<SubStream<AccountSnapshot>> = Vec::with_capacity(addresses.len());
-        for &address in addresses {
-            // accountSubscribe notifications carry no pubkey, so tag each stream with its known key
-            let (stream, _unsub) = client
-                .account_subscribe(&address, Some(config.clone()))
-                .await
-                .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
-            streams.push(Box::pin(stream.map(move |response| {
-                let account = response.value.decode::<Account>().ok_or_else(|| {
-                    SvmIndexerError::SubscriptionFailed(format!("undecodable account {address}"))
-                })?;
-                Ok(AccountSnapshot {
-                    address,
-                    owner: account.owner,
-                    lamports: account.lamports,
-                    data: account.data,
-                    rent_epoch: account.rent_epoch,
-                    executable: account.executable,
-                    slot: response.context.slot,
-                    write_version: None,
-                })
-            })));
-        }
-        Ok(Box::pin(futures::stream::select_all(streams)))
+        let addresses = addresses.to_vec();
+        let (tx, rx) = mpsc::channel(SUB_CHANNEL_CAPACITY);
+        tokio::spawn(async move {
+            let mut streams = Vec::with_capacity(addresses.len());
+            for address in addresses {
+                // accountSubscribe notifications carry no pubkey, so tag each stream with its known key
+                let (stream, _unsub) = match client.account_subscribe(&address, Some(config.clone())).await {
+                    Ok(pair) => pair,
+                    Err(err) => {
+                        let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                        return;
+                    }
+                };
+                streams.push(stream.map(move |response| {
+                    let account = response.value.decode::<Account>().ok_or_else(|| {
+                        SvmIndexerError::SubscriptionFailed(format!("undecodable account {address}"))
+                    })?;
+                    Ok(AccountSnapshot {
+                        address,
+                        owner: account.owner,
+                        lamports: account.lamports,
+                        data: account.data,
+                        rent_epoch: account.rent_epoch,
+                        executable: account.executable,
+                        slot: response.context.slot,
+                        write_version: None,
+                    })
+                }));
+            }
+            let mut merged = futures::stream::select_all(streams);
+            loop {
+                let item = tokio::select! {
+                    _ = tx.closed() => break,
+                    item = merged.next() => match item {
+                        Some(item) => item,
+                        None => break,
+                    },
+                };
+                if tx.send(item).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(receiver_stream(rx))
     }
 
     async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>> {
@@ -287,27 +339,42 @@ impl SvmRpc for JsonRpc {
         let config = RpcTransactionLogsConfig {
             commitment: Some(self.commitment),
         };
-        let (stream, _unsub) = client
-            .logs_subscribe(
-                RpcTransactionLogsFilter::Mentions(vec![program.to_string()]),
-                config,
-            )
-            .await
-            .map_err(|err| SvmIndexerError::SubscriptionFailed(err.to_string()))?;
-
-        Ok(Box::pin(stream.map(|response| {
-            let slot = response.context.slot;
-            let value = response.value;
-            Ok(LogsNotification {
-                signature: value
+        let filter = RpcTransactionLogsFilter::Mentions(vec![program.to_string()]);
+        let (tx, rx) = mpsc::channel(SUB_CHANNEL_CAPACITY);
+        tokio::spawn(async move {
+            let (mut stream, _unsub) = match client.logs_subscribe(filter, config).await {
+                Ok(pair) => pair,
+                Err(err) => {
+                    let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                    return;
+                }
+            };
+            loop {
+                let response = tokio::select! {
+                    _ = tx.closed() => break,
+                    response = stream.next() => match response {
+                        Some(response) => response,
+                        None => break,
+                    },
+                };
+                let slot = response.context.slot;
+                let value = response.value;
+                let item = value
                     .signature
                     .parse()
-                    .map_err(|_| SvmIndexerError::SubscriptionFailed(value.signature.clone()))?,
-                slot,
-                err: value.err.map(|e| serde_json::to_value(e).unwrap_or_default()),
-                logs: value.logs,
-            })
-        })))
+                    .map_err(|_| SvmIndexerError::SubscriptionFailed(value.signature.clone()))
+                    .map(|signature| LogsNotification {
+                        signature,
+                        slot,
+                        err: value.err.map(|e| serde_json::to_value(e).unwrap_or_default()),
+                        logs: value.logs,
+                    });
+                if tx.send(item).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(receiver_stream(rx))
     }
 }
 
