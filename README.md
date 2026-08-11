@@ -104,7 +104,9 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `APP_ENV` | `development` | `development` enables TRACE logging; `production` uses INFO |
 | `INDEXER_COMMITMENT` | `confirmed` | ingest commitment (`confirmed` or `finalized`) |
 | `INDEXER_CATCHUP_CONCURRENCY` | `4` | max programs running bulk catch-up at once |
-| `INDEXER_MAX_RETRIES` | `5` | attempts (backoff + jitter) before a program indexer gives up |
+| `INDEXER_MAX_RETRIES` | `5` | rapid attempts (backoff + jitter) before a program indexer drops into cooldown; a healthy run resets the count |
+| `INDEXER_RESTART_COOLDOWN_SECS` | `300` | pause before a program's task restarts its retry cycle after the rapid-retry budget is exhausted |
+| `INDEXER_RECONCILE_INTERVAL_SECS` | `300` | interval of the reconcile pass that respawns active programs whose task died out-of-band (e.g. a panic) |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
 | `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |

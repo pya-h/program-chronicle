@@ -56,6 +56,7 @@ async fn main() {
         sse_tx.clone(),
         env_u64("INDEXER_CATCHUP_CONCURRENCY", 4).max(1) as usize, // 0 permits would deadlock every catch-up
         env_u64("INDEXER_MAX_RETRIES", 5) as u32, // RetryPolicy clamps to at least one attempt
+        Duration::from_secs(env_u64("INDEXER_RESTART_COOLDOWN_SECS", 300)),
     ));
 
     let backfill_interval =
@@ -68,6 +69,9 @@ async fn main() {
             .clone()
             .run_tx_signature_backfill(tx_signature_backfill_interval),
     );
+    let reconcile_interval =
+        Duration::from_secs(env_u64("INDEXER_RECONCILE_INTERVAL_SECS", 300).max(1));
+    tokio::spawn(indexer.clone().run_reconciler(reconcile_interval));
     tokio::spawn(async move {
         if let Err(err) = indexer.start(supervisor_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");

@@ -69,5 +69,8 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
         upsert_account_snapshot(db, sse_tx, program.id, program.rpc_id, &snapshot, None, None)
             .await?;
     }
-    Ok(())
+    // a live subscription never ends on its own; a closed stream means the connection dropped
+    Err(SvmIndexerError::SubscriptionFailed(
+        "account state subscription ended".to_owned(),
+    ))
 }

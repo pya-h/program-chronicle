@@ -9,6 +9,7 @@ pub mod transactions;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use sea_orm::{
     ActiveModelTrait,
@@ -40,10 +41,10 @@ pub struct Indexer {
     sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
     handles: Mutex<HashMap<i32, JoinHandle<()>>>,
-    /// Bounds how many programs run their bulk catch-up at once, so a boot or registration burst
-    /// meters backfill instead of stampeding the pool and the RPC. Live streaming is unthrottled.
+    /// Bounds how many programs run their bulk catch-up at once
     catchup_semaphore: Semaphore,
     retry_policy: RetryPolicy,
+    restart_cooldown: Duration,
 }
 
 impl Indexer {
@@ -53,6 +54,7 @@ impl Indexer {
         sse_tx: broadcast::Sender<SseEvent>,
         catchup_concurrency: usize,
         max_retries: u32,
+        restart_cooldown: Duration,
     ) -> Self {
         Self {
             db,
@@ -62,6 +64,7 @@ impl Indexer {
             handles: Mutex::new(HashMap::new()),
             catchup_semaphore: Semaphore::new(catchup_concurrency),
             retry_policy: RetryPolicy::new(max_retries),
+            restart_cooldown,
         }
     }
 
@@ -102,7 +105,7 @@ impl Indexer {
             stream_state(rpc.as_ref(), &self.db, &self.sse_tx, &program),
             stream_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program),
         )?; // try_join so when one stream ends/errors the other stops too; the caller
-        // (spawn_program) then retries the whole run with backoff.
+        // (spawn_program) then retries the whole run with backoff, then cools down and restarts.
         Ok(())
     }
 

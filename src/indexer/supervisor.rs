@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 use crate::core::error::SvmIndexerError;
 use crate::core::indexer_error::{IndexerErrorKind, record};
@@ -69,21 +71,31 @@ impl Indexer {
         let client = self.client_for(&rpc).await;
         let indexer = self.clone();
         let policy = self.retry_policy;
+        let cooldown = self.restart_cooldown;
+
         let handle = tokio::spawn(async move {
-            let result = retry(policy, "program-indexer", || {
-                indexer.run_program(program.clone(), client.clone())
-            })
-            .await;
-            if let Err(err) = result {
-                tracing::error!(program_id, error = %err, "Program indexer gave up after retries!");
-                record(
-                    &indexer.db,
-                    IndexerErrorKind::Indexing,
-                    err.to_string(),
-                    Some(program_id),
-                    None,
-                )
-                .await;
+            loop {
+                match retry(policy, "program-indexer", || {
+                    indexer.run_program(program.clone(), client.clone())
+                })
+                .await
+                {
+                    Ok(()) => {
+                        tracing::warn!(program_id, "Program indexer run ended; restarting after cooldown.")
+                    }
+                    Err(err) => {
+                        tracing::error!(program_id, error = %err, "Program indexer failed rapidly; restarting after cooldown.");
+                        record(
+                            &indexer.db,
+                            IndexerErrorKind::Indexing,
+                            err.to_string(),
+                            Some(program_id),
+                            None,
+                        )
+                        .await;
+                    }
+                }
+                sleep(cooldown).await;
             }
         });
         handles.insert(program_id, handle);
@@ -93,6 +105,49 @@ impl Indexer {
         if let Some(handle) = self.handles.lock().await.remove(&program_id) {
             handle.abort();
             tracing::info!(program_id, "Deactivated program; stopped its indexer task.");
+        }
+    }
+
+    /// Level-triggered safety net: every tick, re-spawn any active program whose task is missing or finished
+    pub async fn run_reconciler(self: Arc<Self>, interval: Duration) {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await; // consume the immediate first tick; boot already spawned everything
+        loop {
+            ticker.tick().await;
+            self.clone().reconcile_once().await;
+        }
+    }
+
+    async fn reconcile_once(self: Arc<Self>) {
+        let found = programs::Entity::find()
+            .filter(programs::Column::Active.eq(true))
+            .find_also_related(rpcs::Entity)
+            .all(&self.db)
+            .await;
+        let programs = match found {
+            Ok(programs) => programs,
+            Err(err) => return tracing::error!(error = %err, "Reconcile pass failed loading programs!"),
+        };
+        for (program, rpc) in programs {
+            let Some(rpc) = rpc else { continue };
+            let program_id = program.id;
+            let stopped = {
+                let handles = self.handles.lock().await;
+                handles.get(&program_id).is_none_or(|handle| handle.is_finished())
+            };
+            if !stopped {
+                continue; // its running or cooling down
+            }
+            tracing::warn!(program_id, "Found an active program which wasn't being indexed as expected! Respawing...");
+            record(
+                &self.db,
+                IndexerErrorKind::Indexing,
+                "indexer task was not running; reconciler respawned it".to_owned(),
+                Some(program_id),
+                None,
+            )
+            .await;
+            self.clone().spawn_program(program, rpc).await;
         }
     }
 }

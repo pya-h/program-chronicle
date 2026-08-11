@@ -72,7 +72,10 @@ pub async fn stream_transactions<R: SvmRpc + ?Sized>(
         let tx = rpc.get_transaction(&notification.signature).await?;
         index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx).await?;
     }
-    Ok(())
+    // a live subscription never ends on its own; a closed stream means the connection dropped
+    Err(SvmIndexerError::SubscriptionFailed(
+        "transaction log subscription ended".to_owned(),
+    ))
 }
 
 pub async fn index_transaction(
@@ -136,8 +139,7 @@ pub async fn index_transaction(
     Ok(())
 }
 
-/// Records every account the transaction references so an address can be mapped back to its
-/// transactions (the `getSignaturesForAddress` replacement) and writes can be attributed later.
+/// Records every account the transaction references so an address can be mapped back to its transactions
 async fn index_transaction_accounts<C: ConnectionTrait>(
     db: &C,
     slot: i64,
