@@ -28,17 +28,21 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
         None => rpc.get_program_accounts(&address, filter.as_ref()).await?,
     };
 
-    // every snapshot shares the fetch slot, so resolve its block_time once
-    let block_time = match snapshots.first() {
-        Some(first) => rpc.get_block_time(first.slot).await?,
+    // a program-scan shares one slot, but a chunked getMultipleAccounts can straddle a slot boundary,
+    // so the resolved block_time only applies to snapshots on that same slot; the rest are left for
+    // the block_time backfill, which fetches each slot's own time
+    let head_slot = match snapshots.first() {
+        Some(first) => first.slot,
         None => return Ok(()),
     };
+    let head_block_time = rpc.get_block_time(head_slot).await?;
 
     for snapshot in &snapshots {
         // the RPC already narrowed data_size/memcmp; this also applies a combined addresses clause
         if filter.as_ref().is_some_and(|f| !f.matches(snapshot)) {
             continue;
         }
+        let block_time = (snapshot.slot == head_slot).then_some(head_block_time).flatten();
         upsert_account_snapshot(db, sse_tx, program.id, program.rpc_id, snapshot, None, block_time)
             .await?;
     }

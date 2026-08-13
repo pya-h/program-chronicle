@@ -9,5 +9,6 @@ mod payloads;
 mod response;
 mod responses;
 mod retry;
+mod rpc;
 mod sse;
 mod urls;

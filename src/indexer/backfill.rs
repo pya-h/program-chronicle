@@ -22,6 +22,26 @@ const STATUS_BATCH: u64 = 256;
 /// retention, so an absent signature is a reorg drop, not an aged-out finalized tx.
 const COMMITMENT_RECENT_SLOTS: i64 = 150;
 
+/// Splits a swept batch by its freshly fetched status: rows the node reports finalized are promoted,
+/// rows absent from the recent status cache (`None`) are treated as reorged away and dropped; anything
+/// still processed/confirmed is left untouched for the next tick. Callers must only pass signatures
+/// within the recent-slots window, where an absent status means a drop rather than an aged-out row.
+pub(crate) fn classify_commitment_sweep(
+    signatures: Vec<Vec<u8>>,
+    statuses: Vec<Option<TransactionCommitment>>,
+) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    let mut finalized = Vec::new();
+    let mut dropped = Vec::new();
+    for (bytes, status) in signatures.into_iter().zip(statuses) {
+        match status {
+            Some(TransactionCommitment::Finalized) => finalized.push(bytes),
+            Some(_) => {}
+            None => dropped.push(bytes),
+        }
+    }
+    (finalized, dropped)
+}
+
 pub async fn backfill_tx_signatures_once(
     db: &DatabaseConnection,
 ) -> Result<u64, SvmIndexerError> {
@@ -202,15 +222,7 @@ impl Indexer {
             }
 
             let statuses = client.get_signature_statuses(&sigs).await?;
-            let mut finalized = Vec::new();
-            let mut dropped = Vec::new();
-            for (bytes, status) in sig_bytes.into_iter().zip(statuses) {
-                match status {
-                    Some(TransactionCommitment::Finalized) => finalized.push(bytes),
-                    Some(_) => {} // still processed/confirmed — re-checked next tick
-                    None => dropped.push(bytes), // recent yet absent from the cache => reorged away
-                }
-            }
+            let (finalized, dropped) = classify_commitment_sweep(sig_bytes, statuses);
 
             self.set_commitment(finalized, TransactionCommitment::Finalized).await?;
             self.set_commitment(dropped, TransactionCommitment::Dropped).await?;

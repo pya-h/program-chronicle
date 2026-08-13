@@ -137,7 +137,15 @@ pub async fn upsert_account_snapshot(
             account_states::Column::Slot,
             account_states::Column::WriteVersion,
         ])
-        .do_nothing()
+        // json-rpc has no write_version, so it collapses to 0: two distinct values in one slot
+        // collide on the key. the later arrival is the slot's newer state, so let it win here too
+        .update_columns([
+            account_states::Column::Data,
+            account_states::Column::Lamports,
+            account_states::Column::Owner,
+            account_states::Column::TxSignature,
+            account_states::Column::UpdatedAt,
+        ])
         .to_owned(),
     )
     .exec_without_returning(&txn)
@@ -169,7 +177,9 @@ pub async fn upsert_account_snapshot(
                 .add(
                     Condition::all()
                         .add(program_accounts::Column::LatestSlot.eq(slot))
-                        .add(program_accounts::Column::LatestWriteVersion.lt(write_version)),
+                        // `lte`, not `lt`: a same-slot json-rpc rewrite (write_version 0 == 0) must
+                        // still advance the cache to the newer value, matching the history row above
+                        .add(program_accounts::Column::LatestWriteVersion.lte(write_version)),
                 ),
         )
         .exec(&txn)

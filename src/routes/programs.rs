@@ -32,13 +32,23 @@ use crate::{
     },
 };
 
+/// Solana's hard account-data cap; a memcmp offset past it can never match, and bounding here keeps
+/// `offset + 1` from overflowing the i32 the `substr` expression takes.
+const MAX_ACCOUNT_DATA_LEN: i64 = 10 * 1024 * 1024;
+
 fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
     let (offset, encoded) = raw.split_once(':').ok_or_else(|| {
         SvmIndexerError::BadInput("memcmp must be formatted as `<offset>:<base58>`!".to_owned())
     })?;
-    let offset = offset.parse::<i64>().ok().filter(|off| *off >= 0).ok_or_else(|| {
-        SvmIndexerError::BadInput("memcmp offset must be a non-negative integer!".to_owned())
-    })?;
+    let offset = offset
+        .parse::<i64>()
+        .ok()
+        .filter(|off| (0..=MAX_ACCOUNT_DATA_LEN).contains(off))
+        .ok_or_else(|| {
+            SvmIndexerError::BadInput(
+                "memcmp offset must be an integer in [0, 10485760]!".to_owned(),
+            )
+        })?;
     let bytes = bs58::decode(encoded).into_vec().map_err(|_| {
         SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned())
     })?;
@@ -149,14 +159,11 @@ async fn get_program_transactions_handler(
     Query(query): Query<ProgramTransactionsQuery>,
 ) -> FinalResponse<TransactionsResponse> {
     let correlated = query.correlated.unwrap_or(false);
-    // the derived participation query is a multi-hop join; keep it bounded to a slot range
-    if correlated
-        && query.since_slot.is_none()
-        && query.from_slot.is_none()
-        && query.to_slot.is_none()
-    {
+    // the derived participation query is a multi-hop join; require a lower bound so it can't scan all
+    // history (a lone to_slot still leaves it unbounded below)
+    if correlated && query.since_slot.is_none() && query.from_slot.is_none() {
         return Err(SvmIndexerError::BadInput(
-            "correlated=true needs a slot bound (since_slot/from_slot/to_slot)!".to_owned(),
+            "correlated=true needs a lower slot bound (since_slot or from_slot)!".to_owned(),
         ));
     }
 
@@ -173,6 +180,11 @@ async fn get_program_transactions_handler(
     // an explicit ?commitment= matches that level; otherwise reorg-ed `dropped` rows are hidden
     match &query.commitment {
         Some(level) => {
+            let level = TransactionCommitment::from_query(level).ok_or_else(|| {
+                SvmIndexerError::BadInput(
+                    "commitment must be one of processed/confirmed/finalized/dropped!".to_owned(),
+                )
+            })?;
             condition = condition.add(transactions::Column::Commitment.eq(level.as_str()))
         }
         None => {

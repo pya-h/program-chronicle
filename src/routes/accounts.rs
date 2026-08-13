@@ -40,6 +40,8 @@ async fn get_account_handler(
     let address = parse_address(&address)?;
     let found = program_accounts::Entity::find()
         .filter(program_accounts::Column::Address.eq(address))
+        // one address can be tracked by several programs; pick deterministically, not arbitrarily
+        .order_by_asc(program_accounts::Column::ProgramId)
         .find_also_related(slots::Entity)
         .one(&state.db)
         .await
@@ -75,6 +77,9 @@ async fn get_multiple_accounts_handler(
 
     let rows = program_accounts::Entity::find()
         .filter(program_accounts::Column::Address.is_in(requested.clone()))
+        // descending so the last write into the address-keyed map is the lowest program_id, matching
+        // the deterministic pick in the single-account read
+        .order_by_desc(program_accounts::Column::ProgramId)
         .find_also_related(slots::Entity)
         .all(&state.db)
         .await
@@ -105,6 +110,8 @@ async fn get_account_history_handler(
     let address = parse_address(&address)?;
     let account = program_accounts::Entity::find()
         .filter(program_accounts::Column::Address.eq(address))
+        // deterministic pick when several programs track this address, matching the single-account read
+        .order_by_asc(program_accounts::Column::ProgramId)
         .one(&state.db)
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed fetching account info!", err))?;

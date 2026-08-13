@@ -38,8 +38,11 @@ pub async fn add_rpc(
     let http_url = common::validate_http_url(http_url)?;
     let ws_url = if let Some(ws_url) = ws_url {
         common::validate_ws_url(ws_url)?
+    } else if let Some(rest) = http_url.strip_prefix("https://") {
+        // swap only the scheme; a blind replace("http","ws") also mangles hosts/paths holding "http"
+        format!("wss://{rest}")
     } else {
-        http_url.replace("http", "ws")
+        format!("ws://{}", http_url.strip_prefix("http://").unwrap_or(&http_url))
     };
     let new_rpc = rpcs::ActiveModel {
         http_url: Set(http_url),
@@ -76,7 +79,16 @@ async fn get_rpcs_handler(
     let rpcs_query = rpcs::Entity::find().order_by_asc(rpcs::Column::Id);
 
     let (total, pages, rpcs) = match (pagination.per_page, pagination.page) {
-        (Some(_), Some(_)) => {
+        // only a request with neither param returns the whole set; either one paginates (with defaults)
+        (None, None) => {
+            let result = rpcs_query
+                .find_with_related(programs::Entity)
+                .all(&state.db)
+                .await
+                .map_err(|err| SvmIndexerError::db_error("Failed fetching rpcs!", err))?;
+            (result.len() as u64, 1_u64, result)
+        }
+        _ => {
             let (rpcs, total, total_pages) = pagination
                 .paginate(rpcs_query, &state.db, Some("Failed fetching rpcs!"))
                 .await?;
@@ -94,14 +106,6 @@ async fn get_rpcs_handler(
                 total_pages,
                 rpcs.into_iter().zip(programs_by_rpc).collect(),
             )
-        }
-        _ => {
-            let result = rpcs_query
-                .find_with_related(programs::Entity)
-                .all(&state.db)
-                .await
-                .map_err(|err| SvmIndexerError::db_error("Failed fetching rpcs!", err))?;
-            (result.len() as u64, 1_u64, result)
         }
     };
     Ok(ApiResponse::ok(GetRpcsResponse::new(rpcs, total, pages)))

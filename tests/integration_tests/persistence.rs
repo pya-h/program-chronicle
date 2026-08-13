@@ -226,3 +226,27 @@ async fn higher_write_version_advances_cache_within_same_slot() {
     assert_eq!(account.state, vec![2]);
     assert_eq!(history_rows(&db, account.id).await.len(), 2);
 }
+
+#[tokio::test]
+async fn same_slot_json_rpc_rewrite_wins_last() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://same-slot.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let address = pubkey(10);
+    let owner = pubkey(20);
+    // json-rpc has no write_version, so both writes collapse to 0 at the same slot: two txs in one
+    // block each touch the account. the later value is the block's final state and must win.
+    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 700, 0, Some(1000)).await;
+    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 700, 0, Some(1000)).await;
+
+    let account = cached_account(&db, program_id, &address).await;
+    assert_eq!(account.latest_slot, 700);
+    assert_eq!(account.state, vec![2], "the later same-slot write must win the cache");
+    // the (slot, write_version) key collapses to a single row; it reflects the final value, so the
+    // cache and history agree instead of the cache silently keeping the stale first value
+    let history = history_rows(&db, account.id).await;
+    assert_eq!(history.len(), 1, "one row per (slot, write_version)");
+    assert_eq!(history[0].data, vec![2], "the surviving history row is the final value");
+}

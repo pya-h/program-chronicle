@@ -624,3 +624,186 @@ async fn program_changes_optionally_includes_events() -> httpc_test::Result<()> 
     assert_eq!(body["account_states"][0]["slot"], 500);
     Ok(())
 }
+
+// ---------- validation & pagination edges ----------
+
+#[tokio::test]
+async fn partial_pagination_still_paginates() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://partial-page.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    for seed in 40..43 {
+        seed_transaction(&db, Some(program_id), rpc_id, &signature(seed), 500 + seed as i64, true, Some(1000)).await;
+    }
+
+    // a lone per_page must paginate (default page 1), not dump the whole table in one page
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?per_page=2", program_id))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["pages"], 2, "3 rows / 2 per page => 2 pages");
+    assert_eq!(body["data"].as_array().unwrap().len(), 2);
+
+    // a lone page uses the default per_page; page 0 is treated as page 1
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?page=0", program_id))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["data"].as_array().unwrap().len(), 3);
+    Ok(())
+}
+
+#[tokio::test]
+async fn commitment_query_rejects_unknown_level() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://bad-commit.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let res = server()
+        .unauthed_client()
+        .do_get("/transactions?commitment=finalizd")
+        .await?;
+    assert_eq!(res.status(), 400, "a typo'd commitment is rejected, not silently empty");
+
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?commitment=bogus", program_id))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn program_accounts_negative_data_size_is_bad_request() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://neg-size.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/accounts?dataSize=-1", program_id))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn program_accounts_memcmp_invalid_base58_and_huge_offset() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://memcmp-edges.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    // valid offset, but the bytes aren't base58
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/accounts?memcmp=0:0OIl", program_id))
+        .await?;
+    assert_eq!(res.status(), 400);
+
+    // an offset past the account-size cap is rejected cleanly instead of overflowing `offset + 1`
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/accounts?memcmp=99999999999999999999:AA", program_id))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn program_events_invalid_tx_signature_is_bad_request() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://events-badsig.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/events?tx_signature=not-a-signature", program_id))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn correlated_requires_a_lower_slot_bound() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://corr-bound.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    // a lone to_slot leaves the multi-hop scan unbounded below, so it must be rejected
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?correlated=true&to_slot=1000", program_id))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn transaction_programs_always_include_the_ingester() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://prog-superset.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    // a tx the program ingested, but which references no tracked account and emitted no parsed event
+    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/transactions/{}", signature(40)))
+        .await?
+        .json_body_as::<Value>()?;
+    // the derived set is still a superset of the scalar program_id
+    let programs: Vec<i64> =
+        serde_json::from_value(body["programs"].clone()).expect("programs array");
+    assert_eq!(programs, vec![program_id as i64]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_multiple_accounts_invalid_address_is_bad_request() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let _db = test_db().await;
+
+    let res = server()
+        .unauthed_client()
+        .do_get("/accounts?addresses=not-a-valid-address")
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn account_read_is_deterministic_when_shared_by_programs() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://shared-addr.example.com").await;
+    // program_one is seeded first, so it holds the lower id — the deterministic winner
+    let program_one = seed_program(&db, rpc_id, &pubkey(1)).await;
+    let program_two = seed_program(&db, rpc_id, &pubkey(2)).await;
+
+    let address = pubkey(10);
+    seed_account(&db, program_one, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(&db, program_two, rpc_id, &address, &pubkey(21), &[2], 100, 500, 0, Some(1000)).await;
+
+    // both endpoints resolve the same, lowest-program_id row rather than an arbitrary one
+    for _ in 0..3 {
+        let body = server()
+            .unauthed_client()
+            .do_get(&format!("/accounts/{}", address))
+            .await?
+            .json_body_as::<Value>()?;
+        assert_eq!(body["owner"], pubkey(20).to_string());
+    }
+    Ok(())
+}

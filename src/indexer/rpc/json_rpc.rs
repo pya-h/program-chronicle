@@ -411,7 +411,7 @@ fn rpc_filters(filter: Option<&AccountFilter>) -> Option<Vec<RpcFilterType>> {
 }
 
 /// fee payer is always the first account key
-fn fee_payer(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Option<Pubkey> {
+pub(crate) fn fee_payer(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Option<Pubkey> {
     let EncodedTransaction::Json(ui_tx) = &tx.transaction.transaction else {
         return None;
     };
@@ -423,7 +423,7 @@ fn fee_payer(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Option<Pubkey> {
 
 /// Every account the transaction touches, with its writable flag. Static keys are classified from
 /// the message header; address-lookup-table keys (versioned txs) come from the meta, writable first.
-fn account_keys(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Vec<TxAccount> {
+pub(crate) fn account_keys(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Vec<TxAccount> {
     let EncodedTransaction::Json(ui_tx) = &tx.transaction.transaction else {
         return Vec::new();
     };

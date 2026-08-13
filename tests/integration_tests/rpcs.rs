@@ -45,6 +45,22 @@ async fn add_rpc_without_ws_url_auto_generates() -> httpc_test::Result<()> {
 }
 
 #[tokio::test]
+async fn add_rpc_auto_ws_only_swaps_the_scheme() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    // the host itself contains "http"; only the scheme should change, not every occurrence
+    let res = server()
+        .authed_client()
+        .do_post("/admin/rpcs", json!({"http_url": "https://http-mainnet.rpc.io"}))
+        .await?;
+    assert_eq!(res.status(), 201);
+
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["ws_url"], "wss://http-mainnet.rpc.io");
+    Ok(())
+}
+
+#[tokio::test]
 async fn add_rpc_missing_http_url_is_bad_request() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 
@@ -199,6 +215,37 @@ async fn update_rpc_happy() -> httpc_test::Result<()> {
     assert_eq!(body["http_url"], "https://rpc-updated.example.com");
     assert_eq!(body["created_at"], created_at);
     assert!(parse_datetime(&body["updated_at"]) > parse_datetime(&created_at));
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_rpc_ws_url_only() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/rpcs",
+            json!({
+                "http_url": "https://rpc-wsonly.example.com",
+                "ws_url": "wss://rpc-wsonly.example.com"
+            }),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/rpcs/{}", id),
+            json!({"ws_url": "wss://rpc-wsonly-updated.example.com"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["ws_url"], "wss://rpc-wsonly-updated.example.com");
+    assert_eq!(body["http_url"], "https://rpc-wsonly.example.com", "http_url unchanged");
     Ok(())
 }
 

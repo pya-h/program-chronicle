@@ -21,11 +21,18 @@ use crate::{
     },
 };
 
-fn commitment_condition(commitment: &Option<String>) -> Condition {
+fn commitment_condition(commitment: &Option<String>) -> Result<Condition, SvmIndexerError> {
     match commitment {
-        Some(level) => Condition::all().add(transactions::Column::Commitment.eq(level.as_str())),
-        None => Condition::all()
-            .add(transactions::Column::Commitment.ne(TransactionCommitment::Dropped.as_str())),
+        Some(level) => {
+            let level = TransactionCommitment::from_query(level).ok_or_else(|| {
+                SvmIndexerError::BadInput(
+                    "commitment must be one of processed/confirmed/finalized/dropped!".to_owned(),
+                )
+            })?;
+            Ok(Condition::all().add(transactions::Column::Commitment.eq(level.as_str())))
+        }
+        None => Ok(Condition::all()
+            .add(transactions::Column::Commitment.ne(TransactionCommitment::Dropped.as_str()))),
     }
 }
 
@@ -48,7 +55,15 @@ async fn get_transaction_handler(
             "No indexed transaction with such signature!".to_owned(),
         ));
     };
-    let programs = programs_for_signature(&state.db, signature.as_ref()).await?;
+    let mut programs = programs_for_signature(&state.db, signature.as_ref()).await?;
+    // the scalar ingester always participates, even if it tracks no referenced account and emitted
+    // no parsed event; fold it in so `programs` is a true superset of `program_id`
+    if let Some(program_id) = tx.program_id
+        && !programs.contains(&program_id)
+    {
+        programs.push(program_id);
+        programs.sort_unstable();
+    }
     Ok(ApiResponse::ok(TransactionResponse::from_model(
         tx,
         slot.and_then(|slot| slot.block_time),
@@ -60,7 +75,7 @@ async fn get_transactions_handler(
     State(state): State<AppState>,
     Query(query): Query<TransactionsQuery>,
 ) -> FinalResponse<TransactionsResponse> {
-    let mut condition = commitment_condition(&query.commitment);
+    let mut condition = commitment_condition(&query.commitment)?;
     if let Some(since_slot) = query.since_slot {
         condition = condition.add(transactions::Column::Slot.gte(since_slot));
     }

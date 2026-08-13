@@ -106,7 +106,9 @@ impl PaginationQuery {
     where
         Q: PaginatorTrait<'db, DatabaseConnection>,
     {
-        if self.per_page.is_some() && self.page.is_some() {
+        // either param signals intent to paginate; `paginate` fills the missing side with its default
+        // (page 1 / 20-per-page, clamped). only a request with neither returns the whole set.
+        if self.per_page.is_some() || self.page.is_some() {
             return self.paginate(query, db, specific_error_message).await;
         }
         let items = query
