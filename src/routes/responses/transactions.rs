@@ -21,6 +21,9 @@ fn signature_string(bytes: &[u8]) -> String {
 pub struct TransactionResponse {
     pub signature: String,
     pub program_id: Option<i32>,
+    /// Every registered program participating in the tx, derived from the correlation tables;
+    /// `program_id` above is only the first ingester (lossy when programs share a transaction).
+    pub programs: Vec<i32>,
     pub slot: i64,
     pub success: bool,
     pub err: Option<Value>,
@@ -32,10 +35,11 @@ pub struct TransactionResponse {
 }
 
 impl TransactionResponse {
-    pub fn from_model(tx: TransactionModel, block_time: Option<i64>) -> Self {
+    pub fn from_model(tx: TransactionModel, block_time: Option<i64>, programs: Vec<i32>) -> Self {
         Self {
             signature: signature_string(&tx.signature),
             program_id: tx.program_id,
+            programs,
             slot: tx.slot,
             success: tx.success,
             err: tx.error,

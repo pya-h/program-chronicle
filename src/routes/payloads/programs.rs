@@ -29,6 +29,7 @@ pub struct ProgramTransactionsQuery {
     pub to_slot: Option<i64>,
     pub success: Option<bool>,
     pub commitment: Option<String>,
+    pub correlated: Option<bool>,
     #[serde(flatten)]
     pub pagination: PaginationQuery,
 }

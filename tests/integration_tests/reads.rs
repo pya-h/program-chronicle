@@ -430,6 +430,82 @@ async fn transactions_surface_commitment_and_hide_dropped_by_default() -> httpc_
     Ok(())
 }
 
+// ---------- I5: multi-program correlation ----------
+
+#[tokio::test]
+async fn single_transaction_derives_all_participating_programs() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://corr-single.example.com").await;
+    let program_one = seed_program(&db, rpc_id, &pubkey(1)).await;
+    let program_two = seed_program(&db, rpc_id, &pubkey(2)).await;
+
+    // each program owns one account; a shared tx references both, attributed to program_one first
+    let account_one = pubkey(10);
+    let account_two = pubkey(20);
+    seed_account(&db, program_one, rpc_id, &account_one, &pubkey(1), &[1], 1, 500, 1, Some(1000)).await;
+    seed_account(&db, program_two, rpc_id, &account_two, &pubkey(2), &[2], 1, 500, 1, Some(1000)).await;
+    seed_transaction(&db, Some(program_one), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction_account(&db, &signature(40), &account_one, 500, true).await;
+    seed_transaction_account(&db, &signature(40), &account_two, 500, false).await;
+
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/transactions/{}", signature(40)))
+        .await?
+        .json_body_as::<Value>()?;
+    // scalar attribution stays the first ingester; the derived set is lossless
+    assert_eq!(body["program_id"], program_one);
+    let mut programs: Vec<i64> =
+        serde_json::from_value(body["programs"].clone()).expect("programs array");
+    programs.sort_unstable();
+    assert_eq!(programs, vec![program_one as i64, program_two as i64]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn correlated_program_transactions_are_opt_in_and_bounded() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://corr-list.example.com").await;
+    let program_one = seed_program(&db, rpc_id, &pubkey(1)).await;
+    let program_two = seed_program(&db, rpc_id, &pubkey(2)).await;
+
+    let account_two = pubkey(20);
+    seed_account(&db, program_two, rpc_id, &account_two, &pubkey(2), &[2], 1, 500, 1, Some(1000)).await;
+
+    // sig40: program_two participates via an owned account; attributed to program_one
+    seed_transaction(&db, Some(program_one), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction_account(&db, &signature(40), &account_two, 500, true).await;
+    // sig41: program_two participates via an emitted event; also attributed to program_one
+    seed_transaction(&db, Some(program_one), rpc_id, &signature(41), 600, true, Some(1001)).await;
+    seed_event(&db, program_two, rpc_id, &signature(41), 0, 600, &[9], Some(1001)).await;
+
+    // default (lossy) list for program_two sees neither — it owns the scalar on neither row
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions", program_two))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["total"], 0);
+
+    // correlated list surfaces both, via the account and the event paths
+    let body = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?correlated=true&from_slot=0", program_two))
+        .await?
+        .json_body_as::<Value>()?;
+    assert_eq!(body["total"], 2);
+
+    // correlated without a slot bound is rejected
+    let res = server()
+        .unauthed_client()
+        .do_get(&format!("/programs/{}/transactions?correlated=true", program_two))
+        .await?;
+    assert_eq!(res.status(), 400);
+    Ok(())
+}
+
 #[tokio::test]
 async fn get_transaction_invalid_signature_is_bad_request() -> httpc_test::Result<()> {
     let _guard = reset_db().await;

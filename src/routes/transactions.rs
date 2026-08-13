@@ -15,6 +15,7 @@ use crate::{
     },
     db::entities::{slots, transactions},
     routes::{
+        correlation::programs_for_signature,
         payloads::transactions::TransactionsQuery,
         responses::transactions::{TransactionResponse, TransactionsResponse},
     },
@@ -47,9 +48,11 @@ async fn get_transaction_handler(
             "No indexed transaction with such signature!".to_owned(),
         ));
     };
+    let programs = programs_for_signature(&state.db, signature.as_ref()).await?;
     Ok(ApiResponse::ok(TransactionResponse::from_model(
         tx,
         slot.and_then(|slot| slot.block_time),
+        programs,
     )))
 }
 

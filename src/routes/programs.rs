@@ -19,6 +19,7 @@ use crate::{
     },
     db::entities::{account_states, program_accounts, program_events, slots, transactions},
     routes::{
+        correlation::correlated_signatures,
         payloads::programs::{
             ProgramAccountsQuery, ProgramChangesQuery, ProgramEventsQuery, ProgramTransactionsQuery,
         },
@@ -147,8 +148,28 @@ async fn get_program_transactions_handler(
     Path(program_id): Path<u16>,
     Query(query): Query<ProgramTransactionsQuery>,
 ) -> FinalResponse<TransactionsResponse> {
-    let mut condition =
-        Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32));
+    let correlated = query.correlated.unwrap_or(false);
+    // the derived participation query is a multi-hop join; keep it bounded to a slot range
+    if correlated
+        && query.since_slot.is_none()
+        && query.from_slot.is_none()
+        && query.to_slot.is_none()
+    {
+        return Err(SvmIndexerError::BadInput(
+            "correlated=true needs a slot bound (since_slot/from_slot/to_slot)!".to_owned(),
+        ));
+    }
+
+    let mut condition = if correlated {
+        Condition::all().add(transactions::Column::Signature.in_subquery(correlated_signatures(
+            program_id as i32,
+            query.since_slot,
+            query.from_slot,
+            query.to_slot,
+        )))
+    } else {
+        Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32))
+    };
     // an explicit ?commitment= matches that level; otherwise reorg-ed `dropped` rows are hidden
     match &query.commitment {
         Some(level) => {

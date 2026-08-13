@@ -153,9 +153,11 @@ fn program_event_encodes_signature_and_data() {
 #[test]
 fn transaction_response_encodes_signature_and_optional_fee_payer() {
     let payer = pubkey(6);
-    let resp = TransactionResponse::from_model(tx_model(Some(payer.to_bytes().to_vec())), Some(1));
+    let resp =
+        TransactionResponse::from_model(tx_model(Some(payer.to_bytes().to_vec())), Some(1), vec![2, 7]);
     assert_eq!(resp.signature, signature(4).to_string());
     assert_eq!(resp.program_id, Some(2));
+    assert_eq!(resp.programs, vec![2, 7]);
     assert!(resp.success);
     assert_eq!(resp.fee, Some(5000));
     assert_eq!(resp.fee_payer, Some(payer.to_string()));
