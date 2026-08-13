@@ -2023,6 +2023,30 @@ html.no-anim *::after {
     gap: 0.75rem;
 }
 
+.tx-programs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.tx-program-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* the first-ingester program the tx is attributed to */
+.tx-program-chip.attributed {
+    border-color: var(--accent-500);
+    color: var(--accent-500);
+}
+
 .detail-data-head {
     display: flex;
     align-items: center;

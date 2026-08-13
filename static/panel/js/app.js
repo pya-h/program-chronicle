@@ -1737,19 +1737,44 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (success) p.success = success;
                 if (from) p.from_slot = from;
                 if (to) p.to_slot = to;
+                if (document.getElementById('tx-correlated')?.classList.contains('on')) p.correlated = 'true';
                 return p;
             },
             renderRows: (rows) => `<div class="dash-list">${rows.map(renderTxRow).join('')}</div>`,
             countText: (total) => `${formatCount(total)} transaction${total === 1 ? '' : 's'}`
         });
 
-        const apply = () => txList.reload();
+        const apply = () => {
+            const correlated = document.getElementById('tx-correlated')?.classList.contains('on');
+            const from = document.getElementById('tx-from')?.value.trim();
+            const to = document.getElementById('tx-to')?.value.trim();
+            // the correlated view is a multi-hop scan; the API rejects it unbounded
+            if (correlated && !from && !to) {
+                showToast('Correlated view needs a From or To slot bound.', 'error');
+                return;
+            }
+            txList.reload();
+        };
         document.getElementById('tx-apply')?.addEventListener('click', apply);
         ['tx-program', 'tx-success'].forEach(id => document.getElementById(id)?.addEventListener('change', apply));
+        document.getElementById('tx-correlated')?.addEventListener('click', (e) => {
+            const btn = e.currentTarget;
+            const on = !btn.classList.contains('on');
+            btn.classList.toggle('on', on);
+            btn.setAttribute('aria-checked', String(on));
+            apply();
+        });
         ['tx-from', 'tx-to'].forEach(id => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
         txList.load();
+    }
+
+    // Resolves a program id to its "id: name" label using the shared program cache.
+    function programLabel(id) {
+        const item = (window.__programCache || []).find(entry => (entry.program || entry).id === id);
+        const program = item && (item.program || item);
+        return program?.name ? `${id}: ${program.name}` : `Program ${id}`;
     }
 
     function renderTxRow(tx) {
@@ -1768,6 +1793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
         ['tx-detail-signature', 'tx-detail-payer', 'tx-detail-status', 'tx-detail-program',
          'tx-detail-slot', 'tx-detail-fee', 'tx-detail-time'].forEach(id => set(id, '…'));
+        set('tx-detail-programs', '…');
         set('tx-detail-raw', 'Loading…');
         const errBlock = document.getElementById('tx-detail-error-block');
         if (errBlock) errBlock.hidden = true;
@@ -1784,6 +1810,13 @@ document.addEventListener('DOMContentLoaded', () => {
         set('tx-detail-payer', tx.fee_payer || '—');
         set('tx-detail-status', tx.success ? 'Success' : 'Failed');
         set('tx-detail-program', tx.program_id != null ? tx.program_id : '—');
+        const programsEl = document.getElementById('tx-detail-programs');
+        if (programsEl) {
+            const programs = tx.programs || [];
+            programsEl.innerHTML = programs.length
+                ? programs.map(id => `<span class="tx-program-chip${id === tx.program_id ? ' attributed' : ''}">${escapeHtml(programLabel(id))}</span>`).join('')
+                : '<span class="rpc-detail-value">—</span>';
+        }
         set('tx-detail-slot', formatCount(tx.slot));
         set('tx-detail-fee', tx.fee != null ? `${formatCount(tx.fee)} lamports` : '—');
         set('tx-detail-time', tx.block_time != null ? new Date(tx.block_time * 1000).toISOString() : '—');

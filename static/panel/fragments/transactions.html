@@ -44,6 +44,10 @@
                 <label for="tx-to" class="input-label">To Slot</label>
                 <input type="number" id="tx-to" class="input-field" placeholder="max" min="0">
             </div>
+            <div class="input-group">
+                <label for="tx-correlated" class="input-label">Correlated</label>
+                <button type="button" class="switch" id="tx-correlated" role="switch" aria-checked="false" aria-label="Toggle cross-program correlation" title="Include every tx the program participates in (needs a slot bound)"></button>
+            </div>
             <button type="button" class="btn btn-primary" id="tx-apply">Search</button>
         </div>
 
@@ -98,6 +102,10 @@
                         <span class="rpc-detail-label">Block Time</span>
                         <span class="rpc-detail-value" id="tx-detail-time">—</span>
                     </div>
+                </div>
+                <div class="rpc-detail-block">
+                    <span class="rpc-detail-label">Programs</span>
+                    <div class="tx-programs" id="tx-detail-programs">—</div>
                 </div>
                 <div class="rpc-detail-block" id="tx-detail-error-block" hidden>
                     <span class="rpc-detail-label">Error</span>
