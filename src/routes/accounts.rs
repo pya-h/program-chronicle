@@ -6,7 +6,6 @@ use axum::{
     routing::get,
 };
 use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder};
-use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::{
@@ -17,7 +16,7 @@ use crate::{
     },
     db::entities::{account_states, program_accounts, slots, transaction_accounts, transactions},
     routes::{
-        payloads::common::PaginationQuery,
+        payloads::accounts::{AccountTransactionsQuery, HistoryQuery, MultiAccountQuery},
         responses::accounts::{AccountHistoryResponse, AccountInfoResponse},
         responses::transactions::TransactionsResponse,
     },
@@ -32,29 +31,6 @@ fn parse_address(address: &str) -> Result<Vec<u8>, SvmIndexerError> {
                 "Provided address is not a standard solana address!".to_owned(),
             )
         })
-}
-
-#[derive(Deserialize)]
-struct MultiAccountQuery {
-    addresses: String,
-}
-
-#[derive(Deserialize)]
-struct HistoryQuery {
-    since_slot: Option<i64>,
-    from_slot: Option<i64>,
-    to_slot: Option<i64>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
-}
-
-#[derive(Deserialize)]
-struct AccountTransactionsQuery {
-    since_slot: Option<i64>,
-    from_slot: Option<i64>,
-    to_slot: Option<i64>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
 }
 
 async fn get_account_handler(

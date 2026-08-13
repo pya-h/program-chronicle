@@ -4,7 +4,6 @@ use axum::{
     routing::get,
 };
 use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder};
-use serde::Deserialize;
 use solana_sdk::signature::Signature;
 
 use crate::{
@@ -16,20 +15,10 @@ use crate::{
     },
     db::entities::{slots, transactions},
     routes::{
-        payloads::common::PaginationQuery,
+        payloads::transactions::TransactionsQuery,
         responses::transactions::{TransactionResponse, TransactionsResponse},
     },
 };
-
-#[derive(Deserialize)]
-struct TransactionsQuery {
-    since_slot: Option<i64>,
-    from_slot: Option<i64>,
-    to_slot: Option<i64>,
-    commitment: Option<String>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
-}
 
 fn commitment_condition(commitment: &Option<String>) -> Condition {
     match commitment {

@@ -8,7 +8,6 @@ use axum::{
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, Value, sea_query::Expr,
 };
-use serde::Deserialize;
 use solana_sdk::signature::Signature;
 
 use crate::{
@@ -20,7 +19,9 @@ use crate::{
     },
     db::entities::{account_states, program_accounts, program_events, slots, transactions},
     routes::{
-        payloads::common::PaginationQuery,
+        payloads::programs::{
+            ProgramAccountsQuery, ProgramChangesQuery, ProgramEventsQuery, ProgramTransactionsQuery,
+        },
         responses::{
             accounts::{AccountChangeResponse, ProgramAccountsResponse},
             changes::ProgramChangesResponse,
@@ -29,15 +30,6 @@ use crate::{
         },
     },
 };
-
-#[derive(Deserialize)]
-struct ProgramAccountsQuery {
-    memcmp: Option<String>,
-    #[serde(rename = "dataSize")]
-    data_size: Option<i64>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
-}
 
 fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
     let (offset, encoded) = raw.split_once(':').ok_or_else(|| {
@@ -96,17 +88,6 @@ async fn get_program_accounts_handler(
     )))
 }
 
-#[derive(Deserialize)]
-struct ProgramEventsQuery {
-    since_slot: Option<i64>,
-    from_slot: Option<i64>,
-    to_slot: Option<i64>,
-    tx_signature: Option<String>,
-    discriminator: Option<String>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
-}
-
 async fn get_program_events_handler(
     State(state): State<AppState>,
     Path(program_id): Path<u16>,
@@ -161,17 +142,6 @@ async fn get_program_events_handler(
     )))
 }
 
-#[derive(Deserialize)]
-struct ProgramTransactionsQuery {
-    since_slot: Option<i64>,
-    from_slot: Option<i64>,
-    to_slot: Option<i64>,
-    success: Option<bool>,
-    commitment: Option<String>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
-}
-
 async fn get_program_transactions_handler(
     State(state): State<AppState>,
     Path(program_id): Path<u16>,
@@ -215,15 +185,6 @@ async fn get_program_transactions_handler(
     Ok(ApiResponse::ok(TransactionsResponse::new(
         rows, total, pages,
     )))
-}
-
-#[derive(Deserialize)]
-struct ProgramChangesQuery {
-    from_slot: Option<i64>,
-    to_slot: Option<i64>,
-    include_events: Option<bool>,
-    #[serde(flatten)]
-    pagination: PaginationQuery,
 }
 
 async fn get_program_changes_handler(
