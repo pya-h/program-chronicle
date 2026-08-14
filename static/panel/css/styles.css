@@ -2159,6 +2159,7 @@ html.no-anim *::after {
 
 .stream-kind.account { color: var(--success-500); }
 .stream-kind.event { color: var(--accent-500); }
+.stream-kind.transaction { color: var(--text-primary); }
 .stream-kind.resync { color: var(--warning-500); }
 .stream-kind.backfill { color: var(--text-muted); }
 

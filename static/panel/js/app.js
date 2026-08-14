@@ -2030,6 +2030,7 @@ document.addEventListener('DOMContentLoaded', () => {
         es.onerror = () => setStreamStatus('failed', 'Reconnecting…');
         es.addEventListener('account', (e) => pushStreamRow('account', safeJson(e.data)));
         es.addEventListener('event', (e) => pushStreamRow('event', safeJson(e.data)));
+        es.addEventListener('transaction', (e) => pushStreamRow('transaction', safeJson(e.data)));
         es.addEventListener('resync', (e) => handleResync(safeJson(e.data)));
         updateStreamButton();
     }
@@ -2077,6 +2078,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (kind === 'account') {
             title = escapeHtml(payload.address || '—');
             sub = `wv ${escapeHtml(formatCount(payload.write_version))}`;
+        } else if (kind === 'transaction') {
+            title = escapeHtml(shortSig(payload.signature));
+            const status = payload.success ? 'success' : 'failed';
+            sub = payload.fee != null ? `${status} · fee ${escapeHtml(formatCount(payload.fee))}` : status;
         } else {
             const disc = discriminatorHex(payload.data);
             title = disc ? escapeHtml(disc) : '(no data)';
@@ -2105,6 +2110,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (monStreamType === 'events') {
             const res = await apiCall('GET', `/programs/${id}/events${buildQuery({ since_slot: payload.since_slot, per_page: 50 })}`);
             if (res.ok) (res.data?.data || []).slice().reverse().forEach(ev => pushStreamRow('event', ev, true));
+        } else if (monStreamType === 'transactions') {
+            const res = await apiCall('GET', `/programs/${id}/transactions${buildQuery({ since_slot: payload.since_slot, per_page: 50 })}`);
+            if (res.ok) (res.data?.data || []).slice().reverse().forEach(t => pushStreamRow('transaction', t, true));
         } else {
             const res = await apiCall('GET', `/programs/${id}/changes${buildQuery({ from_slot: payload.since_slot, per_page: 50 })}`);
             if (res.ok) (res.data?.account_states || []).slice().reverse().forEach(a => pushStreamRow('account', a, true));

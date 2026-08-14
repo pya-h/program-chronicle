@@ -32,3 +32,29 @@ fn program_event_constructor_sets_all_fields() {
         _ => panic!("expected a ProgramEvent event"),
     }
 }
+
+#[test]
+fn transaction_indexed_constructor_sets_all_fields() {
+    let payer = pubkey(2).to_bytes().to_vec();
+    let event = SseEvent::transaction_indexed(
+        3,
+        vec![0xbb; 64],
+        700,
+        true,
+        None,
+        Some(5000),
+        Some(payer.clone()),
+    );
+    match event {
+        SseEvent::TransactionIndexed { program_id, signature, slot, success, err, fee, fee_payer } => {
+            assert_eq!(program_id, 3);
+            assert_eq!(signature, vec![0xbb; 64]);
+            assert_eq!(slot, 700);
+            assert!(success);
+            assert_eq!(err, None);
+            assert_eq!(fee, Some(5000));
+            assert_eq!(fee_payer, Some(payer));
+        }
+        _ => panic!("expected a TransactionIndexed event"),
+    }
+}

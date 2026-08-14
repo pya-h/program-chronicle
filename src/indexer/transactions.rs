@@ -134,6 +134,15 @@ pub async fn index_transaction(
         .map_err(|err| SvmIndexerError::db_error("Failed committing transaction!", err))?;
 
     let signature = tx.signature.as_ref().to_vec();
+    let _ = sse_tx.send(SseEvent::transaction_indexed(
+        program_id,
+        signature.clone(),
+        slot,
+        tx.success,
+        tx.err.clone(),
+        tx.fee.map(|fee| fee as i64),
+        tx.fee_payer.map(|payer| payer.to_bytes().to_vec()),
+    ));
     for event in &events {
         let _ = sse_tx.send(SseEvent::program_event(
             program_id,

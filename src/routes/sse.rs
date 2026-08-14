@@ -62,6 +62,37 @@ fn program_event(
     )
 }
 
+fn transaction_event(
+    program_id: i32,
+    signature: &[u8],
+    slot: i64,
+    success: bool,
+    err: &Option<Value>,
+    fee: Option<i64>,
+    fee_payer: &Option<Vec<u8>>,
+) -> Event {
+    let signature = Signature::try_from(signature)
+        .map(|sig| sig.to_string())
+        .unwrap_or_else(|_| STANDARD.encode(signature));
+    let fee_payer = fee_payer.as_ref().map(|bytes| {
+        Pubkey::try_from(bytes.as_slice())
+            .map(|pk| pk.to_string())
+            .unwrap_or_else(|_| STANDARD.encode(bytes))
+    });
+    build_event(
+        "transaction",
+        json!({
+            "program_id": program_id,
+            "signature": signature,
+            "slot": slot,
+            "success": success,
+            "err": err,
+            "fee": fee,
+            "fee_payer": fee_payer,
+        }),
+    )
+}
+
 /// A lagged consumer past the channel buffer gets a `resync` frame carrying the last slot it did
 /// see, so it re-pulls the gap via the read API's `since_slot` instead of silently losing changes.
 fn resync_event(last_slot: i64, missed: u64) -> Event {
@@ -163,9 +194,33 @@ async fn sse_program_events_handler(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+async fn sse_program_transactions_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<u16>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let program_id = program_id as i32;
+    let stream = subscriber_stream(state.sse_tx.subscribe(), move |event| match event {
+        SseEvent::TransactionIndexed {
+            program_id: pid,
+            signature,
+            slot,
+            success,
+            err,
+            fee,
+            fee_payer,
+        } if *pid == program_id => Some((
+            *slot,
+            transaction_event(*pid, signature, *slot, *success, err, *fee, fee_payer),
+        )),
+        _ => None,
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/accounts/{address}", get(sse_account_handler))
         .route("/programs/{program_id}/accounts", get(sse_program_accounts_handler))
         .route("/programs/{program_id}/events", get(sse_program_events_handler))
+        .route("/programs/{program_id}/transactions", get(sse_program_transactions_handler))
 }
