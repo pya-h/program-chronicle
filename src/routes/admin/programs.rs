@@ -117,6 +117,7 @@ async fn add_program_handler(
         start_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
         name: payload.name.map_or(NotSet, |name| Set(Some(name))),
         account_filters: account_filters_value(payload.account_filters)?,
+        track_account_states: payload.track_account_states.map_or(NotSet, Set),
         ..Default::default()
     };
 
@@ -315,6 +316,7 @@ async fn update_program_handler(
         }),
         rpc_id: changed_rpc.clone().map_or(NotSet, |nr| Set(nr.id)),
         account_filters: account_filters_value(payload.account_filters)?,
+        track_account_states: payload.track_account_states.map_or(NotSet, Set),
         ..Default::default()
     }
     .update(&state.db)

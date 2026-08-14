@@ -32,6 +32,7 @@ pub struct AddProgramPayload {
     pub start_slot: Option<u64>,
     /// Optional ingestion narrowing; absent/empty tracks every account the program owns.
     pub account_filters: Option<AccountFilter>,
+    pub track_account_states: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -47,6 +48,7 @@ pub struct UpdateProgramPayload {
     pub name: Option<String>,
     /// Absent keeps the current filter; an empty descriptor clears it (back to track-all).
     pub account_filters: Option<AccountFilter>,
+    pub track_account_states: Option<bool>,
 }
 
 impl UpdateProgramPayload {
@@ -56,5 +58,6 @@ impl UpdateProgramPayload {
             && self.address.is_none()
             && self.name.is_none()
             && self.account_filters.is_none()
+            && self.track_account_states.is_none()
     }
 }

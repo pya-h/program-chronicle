@@ -370,6 +370,108 @@ async fn add_program_defaults_to_active() -> httpc_test::Result<()> {
 }
 
 #[tokio::test]
+async fn add_program_defaults_to_tracking_account_states() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-track-default.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
+        .await?;
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(
+        body["track_account_states"], true,
+        "a new program records state history unless opted out"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_program_can_disable_account_state_tracking() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-track-off.example.com").await;
+    let res = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0), "track_account_states": false}),
+        )
+        .await?;
+    assert_eq!(res.status(), 201);
+    let id = res.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    // durable — a fresh read still reports the opt-out
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    assert_eq!(
+        res.json_body_as::<serde_json::Value>()?["track_account_states"],
+        false
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_toggles_account_state_tracking() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-track-toggle.example.com").await;
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"track_account_states": false}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+    assert_eq!(
+        res.json_body_as::<serde_json::Value>()?["track_account_states"],
+        false
+    );
+
+    // durable, and toggles back on
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", id))
+        .await?;
+    assert_eq!(
+        res.json_body_as::<serde_json::Value>()?["track_account_states"],
+        false
+    );
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"track_account_states": true}),
+        )
+        .await?;
+    assert_eq!(
+        res.json_body_as::<serde_json::Value>()?["track_account_states"],
+        true
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn activate_and_deactivate_program_toggles_flag() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 

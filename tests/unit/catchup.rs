@@ -13,6 +13,7 @@ fn program(last_processed_slot: Option<i64>, start_slot: Option<i64>) -> program
         last_processed_slot,
         start_slot,
         active: true,
+        track_account_states: true,
         account_filters: None,
         created_at: ts(),
         updated_at: ts(),

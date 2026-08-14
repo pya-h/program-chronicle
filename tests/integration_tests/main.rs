@@ -8,4 +8,5 @@ mod reads;
 mod root;
 mod rpcs;
 mod sse;
+mod state_wiring;
 mod stats;

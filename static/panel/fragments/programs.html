@@ -41,6 +41,14 @@
                 </div>
             </div>
 
+            <div class="input-group">
+                <label class="checkbox-field" for="program-add-track-account-states">
+                    <input type="checkbox" id="program-add-track-account-states" name="track_account_states" checked>
+                    <span class="checkbox-label">Record account state history</span>
+                </label>
+                <span class="field-hint">Stores every account update as history. This is not an archival node: it only records states from the moment indexing runs, states produced while the indexer was down cannot be recovered. Turn off to keep only the latest state per account and skip history.</span>
+            </div>
+
             <div class="program-rpc-mode">
                 <span class="input-label">RPC Source</span>
                 <div class="mode-switch" role="group" aria-label="RPC source mode">
@@ -143,6 +151,14 @@
                         <label for="program-edit-account-filters" class="input-label">Account Filters <span class="label-optional">(advanced)</span></label>
                         <textarea id="program-edit-account-filters" name="account_filters" class="input-field textarea-field" rows="4" autocomplete="off" spellcheck="false" placeholder='{ "data_size": 165, "memcmp": [{ "offset": 0, "bytes": "<base58>" }], "addresses": [] }'></textarea>
                         <span class="field-hint">Optional JSON. Empty clears the filter (track every account). Leave unchanged to keep the current one.</span>
+                    </div>
+
+                    <div class="input-group">
+                        <label class="checkbox-field" for="program-edit-track-account-states">
+                            <input type="checkbox" id="program-edit-track-account-states" name="track_account_states">
+                            <span class="checkbox-label">Record account state history</span>
+                        </label>
+                        <span class="field-hint">Only records states from now on (not an archival node); states from while the indexer was down cannot be recovered. Turning it off keeps past history but stops recording new history.</span>
                     </div>
 
                     <div class="program-rpc-mode">

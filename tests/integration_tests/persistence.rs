@@ -7,7 +7,7 @@ use svm_indexer::indexer::backfill::{
 use svm_indexer::indexer::persist::ensure_slot;
 
 use crate::common::{
-    pubkey, reset_db, seed_account, seed_program, seed_rpc, seed_transaction,
+    pubkey, reset_db, seed_account, seed_account_ex, seed_program, seed_rpc, seed_transaction,
     seed_transaction_account, signature, test_db,
 };
 
@@ -478,6 +478,107 @@ async fn higher_write_version_advances_cache_within_same_slot() {
     );
     assert_eq!(account.state, vec![2]);
     assert_eq!(history_rows(&db, account.id).await.len(), 2);
+}
+
+#[tokio::test]
+async fn untracked_program_caches_latest_but_records_no_history() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://untracked.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let address = pubkey(10);
+    let owner = pubkey(20);
+    // history opted out: the latest cache must still advance, but no account_states row is appended
+    seed_account_ex(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+        false,
+    )
+    .await;
+    seed_account_ex(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        600,
+        0,
+        Some(1001),
+        false,
+    )
+    .await;
+
+    let account = cached_account(&db, program_id, &address).await;
+    assert_eq!(
+        account.latest_slot, 600,
+        "cache still tracks the newest state"
+    );
+    assert_eq!(account.state, vec![2]);
+    assert!(
+        history_rows(&db, account.id).await.is_empty(),
+        "an untracked program records no history rows"
+    );
+}
+
+#[tokio::test]
+async fn tracking_can_resume_after_being_disabled() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://track-resume.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
+
+    let address = pubkey(10);
+    let owner = pubkey(20);
+    // while disabled: only the cache moves
+    seed_account_ex(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+        false,
+    )
+    .await;
+    // re-enabled: history recording resumes from this write on, past gaps stay gaps
+    seed_account_ex(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        600,
+        0,
+        Some(1001),
+        true,
+    )
+    .await;
+
+    let account = cached_account(&db, program_id, &address).await;
+    let history = history_rows(&db, account.id).await;
+    assert_eq!(
+        history.len(),
+        1,
+        "only the write made while tracking is recorded"
+    );
+    assert_eq!(history[0].data, vec![2]);
 }
 
 #[tokio::test]

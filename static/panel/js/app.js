@@ -1182,6 +1182,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (name) payload.name = name;
             if (startSlot !== null) payload.start_slot = startSlot;
             if (filters.value !== undefined) payload.account_filters = filters.value;
+            payload.track_account_states = document.getElementById('program-add-track-account-states').checked;
 
             setBtnLoading(btn, true);
             const res = await apiCall('POST', '/admin/programs', payload);
@@ -1241,7 +1242,8 @@ document.addEventListener('DOMContentLoaded', () => {
             name: program.name || '',
             rpc_id: String(program.rpc_id || ''),
             // compact form for change detection; the textarea shows a pretty-printed copy
-            account_filters: program.account_filters ? JSON.stringify(program.account_filters) : ''
+            account_filters: program.account_filters ? JSON.stringify(program.account_filters) : '',
+            track_account_states: program.track_account_states !== false
         };
 
         const switchToPrograms = () => {
@@ -1279,6 +1281,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? JSON.stringify(program.account_filters, null, 2)
                 : '';
         }
+        const trackStatesField = document.getElementById('program-edit-track-account-states');
+        if (trackStatesField) trackStatesField.checked = programEditOriginal.track_account_states;
         const rpcSelect = document.getElementById('program-edit-rpc-id');
         if (rpcSelect) rpcSelect.value = '';
 
@@ -1333,6 +1337,11 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (programEditOriginal.account_filters) {
                 // cleared textarea → empty descriptor resets to track-all
                 payload.account_filters = {};
+            }
+
+            const trackStates = document.getElementById('program-edit-track-account-states');
+            if (trackStates && trackStates.checked !== programEditOriginal.track_account_states) {
+                payload.track_account_states = trackStates.checked;
             }
 
             if (Object.keys(payload).length === 0) {
