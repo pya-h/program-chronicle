@@ -531,7 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Reusable list-section scaffold shared by every paginated panel section
-    // (pdas, history, transactions, events). It owns the page cursor, merges the
+    // (pdas, transactions, events). It owns the page cursor, merges the
     // caller's filters/slot bounds with the page params, fetches the standard
     // { data, total, pages } envelope, and drives skeleton / empty / error / pager
     // states against the section's own elements.
@@ -1471,7 +1471,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setStat('stat-slots', formatCount(est.slots));
         setStat('stat-transactions', formatCount(est.transactions));
         setStat('stat-events', formatCount(est.events));
-        setStat('stat-accounts', formatCount(est.cached_accounts));
+        setStat('stat-accounts', formatCount(est.accounts));
 
         const programs = stats.per_program || [];
         if (count) count.textContent = `${programs.length} program${programs.length === 1 ? '' : 's'}`;
@@ -1541,7 +1541,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    // Shared program picker used by the read-API sections (pdas, history,
+    // Shared program picker used by the read-API sections (pdas,
     // transactions, events). Reuses the admin program list and caches it.
     async function populateProgramSelect(selectId, { includeAll = false } = {}) {
         const select = document.getElementById(selectId);
@@ -1667,56 +1667,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-
-    // History section -----------------------------------------------------------
-    let historyList = null;
-
-    function initHistorySection() {
-        historyList = createListSection({
-            rootId: 'history-root', emptyId: 'history-empty', countId: 'history-count', pagerId: 'history-pager',
-            endpoint: () => {
-                const addr = document.getElementById('history-address')?.value.trim();
-                return addr ? `/accounts/${encodeURIComponent(addr)}/history` : null;
-            },
-            params: () => {
-                const from = document.getElementById('history-from')?.value.trim();
-                const to = document.getElementById('history-to')?.value.trim();
-                const p = {};
-                if (from) p.from_slot = from;
-                if (to) p.to_slot = to;
-                return p;
-            },
-            renderRows: (rows) => `<div class="history-list">${rows.map(renderHistoryRow).join('')}</div>`,
-            countText: (total) => `${formatCount(total)} state${total === 1 ? '' : 's'}`
-        });
-
-        const apply = () => historyList.reload();
-        document.getElementById('history-load')?.addEventListener('click', apply);
-        ['history-address', 'history-from', 'history-to'].forEach(id => {
-            document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
-        });
-        historyList.load();
-    }
-
-    function renderHistoryRow(s) {
-        const time = s.block_time != null ? new Date(s.block_time * 1000).toISOString() : '—';
-        const sig = s.tx_signature ? shortSig(s.tx_signature) : '—';
-        const preview = s.data ? `${s.data.slice(0, 48)}${s.data.length > 48 ? '…' : ''}` : '(empty)';
-        return `
-            <div class="history-row">
-                <span class="status-badge indexed history-slot">Slot ${escapeHtml(formatCount(s.slot))}</span>
-                <div class="history-body">
-                    <div class="history-meta">
-                        <span>wv ${escapeHtml(formatCount(s.write_version))}</span>
-                        <span>${escapeHtml(formatCount(s.lamports))} lamports</span>
-                        <span class="mono" title="${escapeHtml(s.tx_signature || '')}">${escapeHtml(sig)}</span>
-                        <span>${escapeHtml(time)}</span>
-                    </div>
-                    <div class="history-data mono" title="base64 data">${escapeHtml(preview)}</div>
-                </div>
-            </div>
-        `;
-    }
 
     // Transactions section ------------------------------------------------------
     let txList = null;
@@ -2109,8 +2059,9 @@ document.addEventListener('DOMContentLoaded', () => {
         `);
     }
 
-    // A lagged stream sends a `resync` frame with the last slot it delivered; we
-    // re-pull the missed window from the read API so nothing is silently dropped.
+    // A lagged stream sends a `resync` frame with the last slot it delivered; for
+    // events/transactions we re-pull the missed window from the read API so nothing is
+    // silently dropped — the account stream has no history to replay and just resumes live.
     async function handleResync(payload) {
         appendStreamHtml(`<div class="stream-row resync"><span class="stream-kind resync">resync</span><div class="dash-row-main"><span class="dash-row-title">Missed ${escapeHtml(formatCount(payload.missed))} change${payload.missed === 1 ? '' : 's'}</span><span class="dash-row-sub">re-pulling since slot ${escapeHtml(formatCount(payload.since_slot))}</span></div></div>`);
         if (payload.since_slot == null || !monStreamProgram) return;
@@ -2122,9 +2073,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (monStreamType === 'transactions') {
             const res = await apiCall('GET', `/programs/${id}/transactions${buildQuery({ since_slot: payload.since_slot, per_page: 50 })}`);
             if (res.ok) (res.data?.data || []).slice().reverse().forEach(t => pushStreamRow('transaction', t, true));
-        } else {
-            const res = await apiCall('GET', `/programs/${id}/changes${buildQuery({ from_slot: payload.since_slot, per_page: 50 })}`);
-            if (res.ok) (res.data?.account_states || []).slice().reverse().forEach(a => pushStreamRow('account', a, true));
         }
     }
 
@@ -2144,9 +2092,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="pdas"]') || swapped?.querySelector?.('[data-section="pdas"]')) {
             initPdasSection();
-        }
-        if (swapped?.matches?.('[data-section="history"]') || swapped?.querySelector?.('[data-section="history"]')) {
-            initHistorySection();
         }
         if (swapped?.matches?.('[data-section="transactions"]') || swapped?.querySelector?.('[data-section="transactions"]')) {
             initTxSection();

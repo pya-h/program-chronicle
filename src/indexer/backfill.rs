@@ -43,43 +43,6 @@ pub(crate) fn classify_commitment_sweep(
     (finalized, dropped)
 }
 
-pub async fn backfill_tx_signatures_once(db: &DatabaseConnection) -> Result<u64, SvmIndexerError> {
-    // the per-batch LIMIT only selects groups that still have a NULL state, so each pass makes progress
-    const SQL: &str = "\
-        UPDATE account_states s \
-        SET tx_signature = m.sig, updated_at = CURRENT_TIMESTAMP \
-        FROM ( \
-            SELECT pa.id AS program_account_id, ta.slot AS slot, \
-                   (ARRAY_AGG(DISTINCT ta.tx_signature))[1] AS sig \
-            FROM transaction_accounts ta \
-            JOIN program_accounts pa ON pa.address = ta.account_address \
-            WHERE ta.writable \
-              AND EXISTS ( \
-                  SELECT 1 FROM account_states s2 \
-                  WHERE s2.program_account_id = pa.id AND s2.slot = ta.slot \
-                    AND s2.tx_signature IS NULL \
-              ) \
-            GROUP BY pa.id, ta.slot \
-            HAVING COUNT(DISTINCT ta.tx_signature) = 1 \
-            LIMIT 500 \
-        ) m \
-        WHERE s.program_account_id = m.program_account_id AND s.slot = m.slot \
-          AND s.tx_signature IS NULL";
-
-    let mut filled = 0u64;
-    for _ in 0..TX_SIGNATURE_BACKFILL_MAX_BATCHES {
-        let result = db.execute_unprepared(SQL).await.map_err(|err| {
-            SvmIndexerError::db_error("Failed backfilling account_states.tx_signature!", err)
-        })?;
-        let affected = result.rows_affected();
-        filled += affected;
-        if affected == 0 {
-            break;
-        }
-    }
-    Ok(filled)
-}
-
 pub async fn backfill_latest_tx_signatures_once(
     db: &DatabaseConnection,
 ) -> Result<u64, SvmIndexerError> {
@@ -137,16 +100,9 @@ impl Indexer {
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
-            match backfill_tx_signatures_once(&self.db).await {
-                Ok(filled) if filled > 0 => {
-                    tracing::info!(filled, "tx_signature backfill attributed account states")
-                }
-                Ok(_) => {}
-                Err(err) => tracing::error!(error = %err, "tx_signature backfill pass failed!"),
-            }
             match backfill_latest_tx_signatures_once(&self.db).await {
                 Ok(filled) if filled > 0 => {
-                    tracing::info!(filled, "tx_signature backfill attributed latest cache")
+                    tracing::info!(filled, "tx_signature backfill attributed latest state")
                 }
                 Ok(_) => {}
                 Err(err) => {

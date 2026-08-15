@@ -43,8 +43,7 @@ pub struct TableEstimates {
     pub slots: i64,
     pub transactions: i64,
     pub events: i64,
-    pub account_states: i64,
-    pub cached_accounts: i64,
+    pub accounts: i64,
 }
 
 #[derive(Serialize)]

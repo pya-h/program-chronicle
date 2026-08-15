@@ -44,7 +44,7 @@ async fn get_account_returns_latest_state() -> httpc_test::Result<()> {
         &[1, 1, 1],
         43,
         600,
-        0,
+        3,
         Some(1001),
     )
     .await;
@@ -55,12 +55,14 @@ async fn get_account_returns_latest_state() -> httpc_test::Result<()> {
         .await?;
     assert_eq!(res.status(), 200);
 
+    // every surfaced field must come from the latest snapshot, not the superseded one
     let body = res.json_body_as::<Value>()?;
     assert_eq!(body["address"], address.to_string());
     assert_eq!(body["owner"], owner.to_string());
     assert_eq!(body["data"], b64(&[1, 1, 1]));
     assert_eq!(body["lamports"], 43);
     assert_eq!(body["slot"], 600);
+    assert_eq!(body["write_version"], 3);
     assert_eq!(body["block_time"], 1001);
     Ok(())
 }
@@ -148,90 +150,6 @@ async fn get_multiple_accounts_empty_query_is_bad_request() -> httpc_test::Resul
         .do_get("/accounts?addresses=%20")
         .await?;
     assert_eq!(res.status(), 400);
-    Ok(())
-}
-
-#[tokio::test]
-async fn get_account_history_with_range_and_pagination() -> httpc_test::Result<()> {
-    let _guard = reset_db().await;
-    let db = test_db().await;
-    let rpc_id = seed_rpc(&db, "https://history.example.com").await;
-    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
-
-    let address = pubkey(10);
-    let owner = pubkey(20);
-    for (i, slot) in [500_u64, 600, 700, 800].into_iter().enumerate() {
-        seed_account(
-            &db,
-            program_id,
-            rpc_id,
-            &address,
-            &owner,
-            &[i as u8],
-            10,
-            slot,
-            0,
-            Some(1000 + slot as i64),
-        )
-        .await;
-    }
-
-    // full history, newest first
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!("/accounts/{}/history", address))
-        .await?;
-    assert_eq!(res.status(), 200);
-    let body = res.json_body_as::<Value>()?;
-    assert_eq!(body["total"], 4);
-    assert_eq!(body["data"][0]["slot"], 800);
-
-    // bounded range [600, 700]
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!(
-            "/accounts/{}/history?from_slot=600&to_slot=700",
-            address
-        ))
-        .await?;
-    let body = res.json_body_as::<Value>()?;
-    assert_eq!(body["total"], 2);
-    let slots: Vec<i64> = body["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| r["slot"].as_i64().unwrap())
-        .collect();
-    assert_eq!(slots, vec![700, 600]);
-
-    // since_slot lower bound
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!("/accounts/{}/history?since_slot=700", address))
-        .await?;
-    let body = res.json_body_as::<Value>()?;
-    assert_eq!(body["total"], 2);
-
-    // pagination
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!("/accounts/{}/history?page=1&per_page=2", address))
-        .await?;
-    let body = res.json_body_as::<Value>()?;
-    assert_eq!(body["total"], 4);
-    assert_eq!(body["pages"], 2);
-    assert_eq!(body["data"].as_array().unwrap().len(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn get_account_history_unknown_is_not_found() -> httpc_test::Result<()> {
-    let _guard = reset_db().await;
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!("/accounts/{}/history", pubkey(98)))
-        .await?;
-    assert_eq!(res.status(), 404);
     Ok(())
 }
 
@@ -890,78 +808,6 @@ async fn account_transactions_invalid_address_is_bad_request() -> httpc_test::Re
         .do_get("/accounts/not-a-real-address/transactions")
         .await?;
     assert_eq!(res.status(), 400);
-    Ok(())
-}
-
-// ---------- /programs/{id}/changes ----------
-
-#[tokio::test]
-async fn program_changes_optionally_includes_events() -> httpc_test::Result<()> {
-    let _guard = reset_db().await;
-    let db = test_db().await;
-    let rpc_id = seed_rpc(&db, "https://changes.example.com").await;
-    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
-
-    seed_account(
-        &db,
-        program_id,
-        rpc_id,
-        &pubkey(10),
-        &pubkey(20),
-        &[1],
-        10,
-        500,
-        0,
-        Some(1000),
-    )
-    .await;
-    seed_account(
-        &db,
-        program_id,
-        rpc_id,
-        &pubkey(11),
-        &pubkey(21),
-        &[2],
-        20,
-        600,
-        0,
-        Some(1001),
-    )
-    .await;
-    seed_event(
-        &db,
-        program_id,
-        rpc_id,
-        &signature(30),
-        0,
-        550,
-        &[7; 9],
-        Some(1000),
-    )
-    .await;
-
-    // without events: the events fields are omitted
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!("/programs/{}/changes", program_id))
-        .await?;
-    assert_eq!(res.status(), 200);
-    let body = res.json_body_as::<Value>()?;
-    assert_eq!(body["account_states_total"], 2);
-    assert!(body.get("events").is_none() || body["events"].is_null());
-
-    // with events: present and ascending
-    let res = server()
-        .unauthed_client()
-        .do_get(&format!(
-            "/programs/{}/changes?include_events=true",
-            program_id
-        ))
-        .await?;
-    let body = res.json_body_as::<Value>()?;
-    assert_eq!(body["account_states_total"], 2);
-    assert_eq!(body["events_total"], 1);
-    assert_eq!(body["account_states"][0]["slot"], 500);
     Ok(())
 }
 

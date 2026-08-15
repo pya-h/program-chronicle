@@ -206,24 +206,12 @@ x-security: {{adminPasskey}}
 
 ### ---------- Accounts (public) ----------
 
-### Get one account's latest cached state
+### Get one account's latest state
 GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P
 
 
 ### Batch fetch (positional result, null where not indexed)
 GET {{baseUrl}}/accounts?addresses=4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P,So11111111111111111111111111111111111111112
-
-
-### Full state history (newest first)
-GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history
-
-
-### History bounded by a slot range
-GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history?from_slot=1000&to_slot=2000
-
-
-### History since a slot, paginated
-GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/history?since_slot=1500&page=1&per_page=20
 
 
 ### Transactions that referenced the address (getSignaturesForAddress replacement)
@@ -232,7 +220,7 @@ GET {{baseUrl}}/accounts/4GYvtbs7da26tLaZt9PNQWLesq2riwEN6fi9tGF91A5P/transactio
 
 ### ---------- Program reads (public; replace 1 with a program id) ----------
 
-### All cached accounts of a program
+### All accounts of a program
 GET {{baseUrl}}/programs/1/accounts
 
 
@@ -262,10 +250,6 @@ GET {{baseUrl}}/programs/1/events?tx_signature=5wHu1qwD4kLwZzQ3rZ8m9pXr7YcVn8rY3
 
 ### Program transactions, failed only, in a slot range
 GET {{baseUrl}}/programs/1/transactions?success=false&from_slot=1000&to_slot=2000
-
-
-### Program changes with events included
-GET {{baseUrl}}/programs/1/changes?include_events=true&from_slot=1000&to_slot=2000
 
 
 ### ---------- Transactions (public) ----------
