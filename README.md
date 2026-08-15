@@ -8,7 +8,7 @@ This README tracks the project's current state, layout, and the consumer-facing 
 
 For every registered program the indexer catches up from the program's `start_slot` to the current head, then stays live:
 
-- **Accounts** — a per-account cache of the latest state plus full per-slot history.
+- **Accounts** — a per-account record of the latest state.
 - **Transactions** — transactions touching a tracked program.
 - **Events** — program log events (`Program data:` lines), decoded position-agnostically.
 
@@ -20,14 +20,13 @@ All read endpoints are public (no `x-security` header). Byte payloads (`data`) a
 
 ### Accounts
 
-- `GET /accounts/{address}` — latest cached state of one account.
+- `GET /accounts/{address}` — latest state of one account.
 - `GET /accounts?addresses=a,b,c` — batch fetch; the result is **positional**, with `null` where an address is not indexed.
-- `GET /accounts/{address}/history` — per-slot state history, newest first.
 - `GET /accounts/{address}/transactions` — indexed transactions that referenced the address, newest first (the `getSignaturesForAddress` replacement).
 
 ### Programs
 
-- `GET /programs/{id}/accounts` — all cached accounts of a program.
+- `GET /programs/{id}/accounts` — all accounts of a program.
   - `memcmp=<offset>:<base58>` — match raw bytes at a byte offset (offset is 0-indexed).
   - `dataSize=<n>` — match accounts whose state is exactly `n` bytes.
 - `GET /programs/{id}/events` — program events, newest first.
@@ -35,8 +34,6 @@ All read endpoints are public (no `x-security` header). Byte payloads (`data`) a
   - `discriminator=<hex>` — match the event's leading 8 bytes (hex, optional `0x` prefix).
 - `GET /programs/{id}/transactions` — a program's transactions, newest first.
   - `success=true|false` — filter by outcome.
-- `GET /programs/{id}/changes` — account state changes for a program in slot order.
-  - `include_events=true` — also include the program's events in the same window.
 
 ### Transactions
 
@@ -86,8 +83,7 @@ A health check is served at `GET /` and an HTMX admin panel is served from `stat
 | `rpcs` | registered RPC endpoints (`http_url`, `ws_url`) |
 | `programs` | programs to index, tied to an RPC (`address`, `name`, `start_slot`, `last_processed_slot`, `active`, `account_filters`) |
 | `slots` | per-RPC slot dimension (`block_time`, filled once known) |
-| `program_accounts` | per-program account registry plus the cached latest state for fast current-state reads |
-| `account_states` | per-slot state history for each account |
+| `program_accounts` | per-program account registry holding each account's latest state |
 | `transactions` | transactions touching a tracked program |
 | `transaction_accounts` | per-transaction account references (with a `writable` flag) for address → transaction lookup |
 | `program_events` | decoded program log events |
@@ -109,13 +105,13 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_RESTART_COOLDOWN_CAP_SECS` | `43200` | ceiling (12h) for the doubling cooldown, so a persistently broken program keeps retrying but only rarely; clamped up to the base if set lower |
 | `INDEXER_RECONCILE_INTERVAL_SECS` | `300` | interval of the reconcile pass that respawns active programs whose task died out-of-band (e.g. a panic) |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
-| `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
+| `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `program_accounts.latest_tx_signature` backfill pass |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
 | `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
 | `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |
 | `DB_IDLE_TIMEOUT_SECS` | `300` | release idle connections when load drops |
 
-Under `confirmed`, reorgs are rare and shallow: the latest cache self-heals on the next change, while a historical row for a reorged slot may linger. Writes are idempotent `DO NOTHING` — there is no overwrite machinery in the MVP.
+Under `confirmed`, reorgs are rare and shallow: the latest state self-heals on the next change, while a row for a reorged slot may linger. Writes are idempotent `DO NOTHING` — there is no overwrite machinery in the MVP.
 
 ## Layout
 

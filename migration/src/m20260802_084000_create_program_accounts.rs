@@ -18,7 +18,6 @@ enum ProgramAccounts {
     CreatedAt,
     UpdatedAt,
 
-    // Next ones are mostly for caching, to return the account state fast instead of querying thousands of account states.
     Lamports,
     Owner,
     State,

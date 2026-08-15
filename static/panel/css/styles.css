@@ -2170,53 +2170,6 @@ html.no-anim *::after {
     white-space: nowrap;
 }
 
-.history-address-group {
-    flex: 2 1 20rem;
-}
-
-.history-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.history-row {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-}
-
-.history-slot {
-    align-self: flex-start;
-    flex: 0 0 auto;
-    white-space: nowrap;
-}
-
-.history-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    min-width: 0;
-    flex: 1 1 auto;
-}
-
-.history-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 1rem;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-}
-
-.history-data {
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-    word-break: break-all;
-}
-
 .rpc-list {
     display: flex;
     flex-direction: column;

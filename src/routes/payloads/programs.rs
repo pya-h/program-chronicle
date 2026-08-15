@@ -33,12 +33,3 @@ pub struct ProgramTransactionsQuery {
     #[serde(flatten)]
     pub pagination: PaginationQuery,
 }
-
-#[derive(Deserialize)]
-pub struct ProgramChangesQuery {
-    pub from_slot: Option<i64>,
-    pub to_slot: Option<i64>,
-    pub include_events: Option<bool>,
-    #[serde(flatten)]
-    pub pagination: PaginationQuery,
-}

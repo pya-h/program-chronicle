@@ -14,10 +14,10 @@ use crate::{
         response::{ApiResponse, FinalResponse},
         state::AppState,
     },
-    db::entities::{account_states, program_accounts, slots, transaction_accounts, transactions},
+    db::entities::{program_accounts, slots, transaction_accounts, transactions},
     routes::{
-        payloads::accounts::{AccountTransactionsQuery, HistoryQuery, MultiAccountQuery},
-        responses::accounts::{AccountHistoryResponse, AccountInfoResponse},
+        payloads::accounts::{AccountTransactionsQuery, MultiAccountQuery},
+        responses::accounts::AccountInfoResponse,
         responses::transactions::TransactionsResponse,
     },
 };
@@ -102,57 +102,6 @@ async fn get_multiple_accounts_handler(
     Ok(ApiResponse::ok(ordered))
 }
 
-async fn get_account_history_handler(
-    State(state): State<AppState>,
-    Path(address): Path<String>,
-    Query(query): Query<HistoryQuery>,
-) -> FinalResponse<AccountHistoryResponse> {
-    let address = parse_address(&address)?;
-    let account = program_accounts::Entity::find()
-        .filter(program_accounts::Column::Address.eq(address))
-        // deterministic pick when several programs track this address, matching the single-account read
-        .order_by_asc(program_accounts::Column::ProgramId)
-        .one(&state.db)
-        .await
-        .map_err(|err| SvmIndexerError::db_error("Failed fetching account info!", err))?;
-
-    let Some(account) = account else {
-        return Err(SvmIndexerError::ItemNotFound(
-            "No indexed account with such address!".to_owned(),
-        ));
-    };
-
-    let mut condition =
-        Condition::all().add(account_states::Column::ProgramAccountId.eq(account.id));
-    if let Some(since_slot) = query.since_slot {
-        condition = condition.add(account_states::Column::Slot.gte(since_slot));
-    }
-    if let Some(from_slot) = query.from_slot {
-        condition = condition.add(account_states::Column::Slot.gte(from_slot));
-    }
-    if let Some(to_slot) = query.to_slot {
-        condition = condition.add(account_states::Column::Slot.lte(to_slot));
-    }
-
-    let history_query = account_states::Entity::find()
-        .filter(condition)
-        .find_also_related(slots::Entity)
-        .order_by_desc(account_states::Column::Slot)
-        .order_by_desc(account_states::Column::WriteVersion);
-
-    let (rows, total, pages) = query
-        .pagination
-        .paginate_or_all(
-            history_query,
-            &state.db,
-            Some("Failed fetching account history!"),
-        )
-        .await?;
-    Ok(ApiResponse::ok(AccountHistoryResponse::new(
-        rows, total, pages,
-    )))
-}
-
 /// `getSignaturesForAddress` replacement: every indexed transaction that referenced the address,
 /// newest slot first, resolved through the `transaction_accounts` lookup.
 async fn get_account_transactions_handler(
@@ -217,7 +166,6 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(get_multiple_accounts_handler))
         .route("/{address}", get(get_account_handler))
-        .route("/{address}/history", get(get_account_history_handler))
         .route(
             "/{address}/transactions",
             get(get_account_transactions_handler),

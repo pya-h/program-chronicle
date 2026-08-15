@@ -36,8 +36,8 @@ use crate::indexer::transactions::{catch_up_transactions, stream_transactions};
 pub struct Indexer {
     db: DatabaseConnection,
     /// Ingest level for catch-up and streams. Writes are idempotent do-nothing with no reorg
-    /// overwrite: under `confirmed` the latest cache self-heals on the next change, but a reorged
-    /// slot's history row may linger until a finalized-reconcile pass.
+    /// overwrite: under `confirmed` the latest state self-heals on the next change, but a reorged
+    /// slot's rows may linger until a finalized-reconcile pass.
     commitment: CommitmentConfig,
     sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
@@ -109,7 +109,7 @@ impl Indexer {
                 .acquire()
                 .await
                 .expect("catch-up semaphore is never closed");
-            catch_up_state(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // cache up to the head
+            catch_up_state(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // catch up to the head
             catch_up_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program, commitment)
                 .await?; // backfill the downtime gap
         } // release the permit before streaming — steady-state is unthrottled

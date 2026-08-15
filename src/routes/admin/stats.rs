@@ -31,7 +31,7 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             "SELECT relname, GREATEST(reltuples, 0)::bigint AS estimate FROM pg_class \
-             WHERE relname IN ('slots', 'transactions', 'program_events', 'account_states', 'program_accounts')",
+             WHERE relname IN ('slots', 'transactions', 'program_events', 'program_accounts')",
         ))
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed reading table estimates!", err))?;
@@ -64,8 +64,7 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
             slots: estimate_of("slots"),
             transactions: estimate_of("transactions"),
             events: estimate_of("program_events"),
-            account_states: estimate_of("account_states"),
-            cached_accounts: estimate_of("program_accounts"),
+            accounts: estimate_of("program_accounts"),
         },
         per_program,
     }))

@@ -8,15 +8,6 @@ pub struct MultiAccountQuery {
 }
 
 #[derive(Deserialize)]
-pub struct HistoryQuery {
-    pub since_slot: Option<i64>,
-    pub from_slot: Option<i64>,
-    pub to_slot: Option<i64>,
-    #[serde(flatten)]
-    pub pagination: PaginationQuery,
-}
-
-#[derive(Deserialize)]
 pub struct AccountTransactionsQuery {
     pub since_slot: Option<i64>,
     pub from_slot: Option<i64>,

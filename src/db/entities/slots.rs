@@ -17,8 +17,6 @@ pub struct Model {
     pub created_at: DateTime,
     pub updated_at: DateTime,
     #[sea_orm(has_many)]
-    pub account_states: HasMany<super::account_states::Entity>,
-    #[sea_orm(has_many)]
     pub program_accounts: HasMany<super::program_accounts::Entity>,
     #[sea_orm(has_many)]
     pub program_events: HasMany<super::program_events::Entity>,

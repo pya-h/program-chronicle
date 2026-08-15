@@ -65,13 +65,7 @@ async fn stats_reports_counts_and_per_program_progress() -> httpc_test::Result<(
     // large-table totals come from pg_class.reltuples (planner estimate, not COUNT),
     // which stays 0 until autovacuum/ANALYZE runs — assert the shape, never exact values
     let est = &body["estimates"];
-    for key in [
-        "slots",
-        "transactions",
-        "events",
-        "account_states",
-        "cached_accounts",
-    ] {
+    for key in ["slots", "transactions", "events", "accounts"] {
         assert!(est[key].is_i64(), "estimate `{key}` should be an integer");
         assert!(
             est[key].as_i64().unwrap() >= 0,

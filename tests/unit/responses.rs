@@ -1,12 +1,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use crate::db::entities::{
-    account_states, program_accounts, program_events, programs, slots, transactions,
-};
-use crate::routes::responses::accounts::{
-    AccountChangeResponse, AccountHistoryResponse, AccountInfoResponse, AccountStateResponse,
-    ProgramAccountsResponse,
-};
+use crate::db::entities::{program_accounts, program_events, programs, slots, transactions};
+use crate::routes::responses::accounts::{AccountInfoResponse, ProgramAccountsResponse};
 use crate::routes::responses::events::{ProgramEventResponse, ProgramEventsResponse};
 use crate::routes::responses::stats::ProgramProgressResponse;
 use crate::routes::responses::transactions::{
@@ -30,22 +25,6 @@ fn account_model(address: Vec<u8>, owner: Vec<u8>) -> program_accounts::Model {
         latest_slot_id: 1,
         latest_tx_signature: None,
         latest_write_version: 2,
-    }
-}
-
-fn state_model(tx_signature: Option<Vec<u8>>) -> account_states::Model {
-    account_states::Model {
-        id: 1,
-        program_account_id: 1,
-        data: vec![7, 8],
-        lamports: 10,
-        owner: pubkey(2).to_bytes().to_vec(),
-        slot: 500,
-        slot_id: 1,
-        write_version: 0,
-        tx_signature,
-        created_at: ts(),
-        updated_at: ts(),
     }
 }
 
@@ -119,30 +98,6 @@ fn account_info_falls_back_to_base64_for_non_pubkey_bytes() {
     assert_eq!(resp.address, STANDARD.encode([1, 2, 3]));
     assert_eq!(resp.owner, STANDARD.encode([4, 5, 6]));
     assert_eq!(resp.block_time, None);
-}
-
-#[test]
-fn account_state_encodes_signature_when_present() {
-    let sig = signature(3);
-    let resp = AccountStateResponse::from_model(state_model(Some(sig.as_ref().to_vec())), Some(1));
-    assert_eq!(resp.tx_signature, Some(sig.to_string()));
-    assert_eq!(resp.data, STANDARD.encode([7, 8]));
-    assert_eq!(resp.owner, pubkey(2).to_string());
-}
-
-#[test]
-fn account_state_signature_is_none_when_absent() {
-    let resp = AccountStateResponse::from_model(state_model(None), None);
-    assert_eq!(resp.tx_signature, None);
-    assert_eq!(resp.block_time, None);
-}
-
-#[test]
-fn account_change_carries_its_address() {
-    let address = pubkey(5);
-    let resp = AccountChangeResponse::from_model(state_model(None), &address.to_bytes(), Some(9));
-    assert_eq!(resp.address, address.to_string());
-    assert_eq!(resp.block_time, Some(9));
 }
 
 #[test]
@@ -235,15 +190,6 @@ fn events_response_maps_rows_and_counts() {
     let resp = ProgramEventsResponse::new(rows, 1, 1);
     assert_eq!(resp.total, 1);
     assert_eq!(resp.data[0].block_time, Some(222));
-}
-
-#[test]
-fn history_response_maps_rows_and_counts() {
-    let rows = vec![(state_model(None), None)];
-    let resp = AccountHistoryResponse::new(rows, 5, 2);
-    assert_eq!(resp.total, 5);
-    assert_eq!(resp.pages, 2);
-    assert_eq!(resp.data.len(), 1);
 }
 
 #[test]
