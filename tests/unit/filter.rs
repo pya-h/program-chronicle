@@ -37,7 +37,10 @@ fn parse_reads_a_populated_descriptor() {
 
 #[test]
 fn data_size_predicate_matches_exact_length_only() {
-    let filter = AccountFilter { data_size: Some(3), ..Default::default() };
+    let filter = AccountFilter {
+        data_size: Some(3),
+        ..Default::default()
+    };
     assert!(filter.matches(&snapshot(pubkey(1), vec![0, 1, 2])));
     assert!(!filter.matches(&snapshot(pubkey(1), vec![0, 1])));
     assert!(!filter.matches(&snapshot(pubkey(1), vec![0, 1, 2, 3])));
@@ -48,7 +51,10 @@ fn memcmp_predicate_matches_bytes_at_offset() {
     // base58 of [9, 9] is used as the needle at offset 1
     let needle = bs58::encode([9u8, 9u8]).into_string();
     let filter = AccountFilter {
-        memcmp: vec![MemcmpFilter { offset: 1, bytes: needle }],
+        memcmp: vec![MemcmpFilter {
+            offset: 1,
+            bytes: needle,
+        }],
         ..Default::default()
     };
     assert!(filter.matches(&snapshot(pubkey(1), vec![0, 9, 9, 0])));
@@ -87,7 +93,10 @@ fn address_allowlist_only_when_addresses_are_the_sole_clause() {
 #[test]
 fn memcmp_rejects_an_offset_that_overflows() {
     let filter = AccountFilter {
-        memcmp: vec![MemcmpFilter { offset: usize::MAX, bytes: bs58::encode([1u8]).into_string() }],
+        memcmp: vec![MemcmpFilter {
+            offset: usize::MAX,
+            bytes: bs58::encode([1u8]).into_string(),
+        }],
         ..Default::default()
     };
     assert!(!filter.matches(&snapshot(pubkey(1), vec![1, 2, 3])));
@@ -96,7 +105,10 @@ fn memcmp_rejects_an_offset_that_overflows() {
 #[test]
 fn memcmp_with_invalid_base58_never_matches() {
     let filter = AccountFilter {
-        memcmp: vec![MemcmpFilter { offset: 0, bytes: "0OIl".into() }], // non-base58 chars
+        memcmp: vec![MemcmpFilter {
+            offset: 0,
+            bytes: "0OIl".into(),
+        }], // non-base58 chars
         ..Default::default()
     };
     assert!(!filter.matches(&snapshot(pubkey(1), vec![0, 1, 2])));
@@ -107,9 +119,11 @@ fn matches_requires_every_clause() {
     let needle = bs58::encode([9u8, 9u8]).into_string();
     let filter = AccountFilter {
         data_size: Some(4),
-        memcmp: vec![MemcmpFilter { offset: 1, bytes: needle }],
+        memcmp: vec![MemcmpFilter {
+            offset: 1,
+            bytes: needle,
+        }],
         addresses: vec![pubkey(5).to_string()],
-        ..Default::default()
     };
     assert!(filter.matches(&snapshot(pubkey(5), vec![0, 9, 9, 0])));
     assert!(!filter.matches(&snapshot(pubkey(6), vec![0, 9, 9, 0]))); // wrong address
@@ -127,7 +141,10 @@ fn parse_ignores_a_malformed_descriptor() {
 fn rpc_filters_translate_data_size_and_memcmp() {
     let filter = AccountFilter {
         data_size: Some(165),
-        memcmp: vec![MemcmpFilter { offset: 0, bytes: pubkey(7).to_string() }],
+        memcmp: vec![MemcmpFilter {
+            offset: 0,
+            bytes: pubkey(7).to_string(),
+        }],
         ..Default::default()
     };
     let filters = filter.rpc_filters();
@@ -139,7 +156,10 @@ fn rpc_filters_translate_data_size_and_memcmp() {
 #[test]
 fn validate_rejects_bad_base58_and_addresses() {
     let bad_memcmp = AccountFilter {
-        memcmp: vec![MemcmpFilter { offset: 0, bytes: "0OIl".into() }], // non-base58 chars
+        memcmp: vec![MemcmpFilter {
+            offset: 0,
+            bytes: "0OIl".into(),
+        }], // non-base58 chars
         ..Default::default()
     };
     assert!(bad_memcmp.validate().is_err());
@@ -150,6 +170,9 @@ fn validate_rejects_bad_base58_and_addresses() {
     };
     assert!(bad_address.validate().is_err());
 
-    let good = AccountFilter { data_size: Some(165), ..Default::default() };
+    let good = AccountFilter {
+        data_size: Some(165),
+        ..Default::default()
+    };
     assert!(good.validate().is_ok());
 }

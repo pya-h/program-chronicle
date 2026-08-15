@@ -112,10 +112,7 @@ impl SvmRpc for JsonRpc {
             .collect())
     }
 
-    async fn get_multiple_accounts(
-        &self,
-        addresses: &[Pubkey],
-    ) -> RpcResult<Vec<AccountSnapshot>> {
+    async fn get_multiple_accounts(&self, addresses: &[Pubkey]) -> RpcResult<Vec<AccountSnapshot>> {
         let config = RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64Zstd),
             ..Default::default()
@@ -129,19 +126,24 @@ impl SvmRpc for JsonRpc {
                 .await
                 .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
             let slot = response.context.slot;
-            snapshots.extend(chunk.iter().zip(response.value).filter_map(|(address, acct)| {
-                let acct = acct?; // an unindexed / closed account is simply absent
-                Some(AccountSnapshot {
-                    address: *address,
-                    owner: acct.owner,
-                    lamports: acct.lamports,
-                    data: acct.data,
-                    rent_epoch: acct.rent_epoch,
-                    executable: acct.executable,
-                    slot,
-                    write_version: None,
-                })
-            }));
+            snapshots.extend(
+                chunk
+                    .iter()
+                    .zip(response.value)
+                    .filter_map(|(address, acct)| {
+                        let acct = acct?; // an unindexed / closed account is simply absent
+                        Some(AccountSnapshot {
+                            address: *address,
+                            owner: acct.owner,
+                            lamports: acct.lamports,
+                            data: acct.data,
+                            rent_epoch: acct.rent_epoch,
+                            executable: acct.executable,
+                            slot,
+                            write_version: None,
+                        })
+                    }),
+            );
         }
         Ok(snapshots)
     }
@@ -256,10 +258,13 @@ impl SvmRpc for JsonRpc {
         let program = *program;
         let (tx, rx) = mpsc::channel(SUB_CHANNEL_CAPACITY);
         tokio::spawn(async move {
-            let (mut stream, _unsub) = match client.program_subscribe(&program, Some(config)).await {
+            let (mut stream, _unsub) = match client.program_subscribe(&program, Some(config)).await
+            {
                 Ok(pair) => pair,
                 Err(err) => {
-                    let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                    let _ = tx
+                        .send(Err(SvmIndexerError::SubscriptionFailed(err.to_string())))
+                        .await;
                     return;
                 }
             };
@@ -319,16 +324,23 @@ impl SvmRpc for JsonRpc {
             let mut streams = Vec::with_capacity(addresses.len());
             for address in addresses {
                 // accountSubscribe notifications carry no pubkey, so tag each stream with its known key
-                let (stream, _unsub) = match client.account_subscribe(&address, Some(config.clone())).await {
+                let (stream, _unsub) = match client
+                    .account_subscribe(&address, Some(config.clone()))
+                    .await
+                {
                     Ok(pair) => pair,
                     Err(err) => {
-                        let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                        let _ = tx
+                            .send(Err(SvmIndexerError::SubscriptionFailed(err.to_string())))
+                            .await;
                         return;
                     }
                 };
                 streams.push(stream.map(move |response| {
                     let account = response.value.decode::<Account>().ok_or_else(|| {
-                        SvmIndexerError::SubscriptionFailed(format!("undecodable account {address}"))
+                        SvmIndexerError::SubscriptionFailed(format!(
+                            "undecodable account {address}"
+                        ))
                     })?;
                     Ok(AccountSnapshot {
                         address,
@@ -370,7 +382,9 @@ impl SvmRpc for JsonRpc {
             let (mut stream, _unsub) = match client.logs_subscribe(filter, config).await {
                 Ok(pair) => pair,
                 Err(err) => {
-                    let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                    let _ = tx
+                        .send(Err(SvmIndexerError::SubscriptionFailed(err.to_string())))
+                        .await;
                     return;
                 }
             };
@@ -391,7 +405,9 @@ impl SvmRpc for JsonRpc {
                     .map(|signature| LogsNotification {
                         signature,
                         slot,
-                        err: value.err.map(|e| serde_json::to_value(e).unwrap_or_default()),
+                        err: value
+                            .err
+                            .map(|e| serde_json::to_value(e).unwrap_or_default()),
                         logs: value.logs,
                     });
                 if tx.send(item).await.is_err() {
@@ -462,14 +478,18 @@ pub(crate) fn account_keys(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Ve
         .as_ref()
         .and_then(|meta| Option::<UiLoadedAddresses>::from(meta.loaded_addresses.clone()));
     if let Some(loaded) = loaded {
-        let writable = loaded
-            .writable
-            .iter()
-            .filter_map(|key| Some(TxAccount { address: key.parse().ok()?, writable: true }));
-        let readonly = loaded
-            .readonly
-            .iter()
-            .filter_map(|key| Some(TxAccount { address: key.parse().ok()?, writable: false }));
+        let writable = loaded.writable.iter().filter_map(|key| {
+            Some(TxAccount {
+                address: key.parse().ok()?,
+                writable: true,
+            })
+        });
+        let readonly = loaded.readonly.iter().filter_map(|key| {
+            Some(TxAccount {
+                address: key.parse().ok()?,
+                writable: false,
+            })
+        });
         accounts.extend(writable.chain(readonly));
     }
     accounts

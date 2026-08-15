@@ -1,7 +1,4 @@
-use std::sync::OnceLock;
-use std::time::Duration;
 use httpc_test::Client;
-use tokio::sync::{Mutex, MutexGuard};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectOptions, ConnectionTrait, Database,
@@ -9,8 +6,11 @@ use sea_orm::{
 };
 use serde_json::Value;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
+use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
+use tokio::sync::{Mutex, MutexGuard};
 use url::Url;
 
 use svm_indexer::core::sse::SseEvent;
@@ -76,10 +76,10 @@ fn test_database_url() -> String {
 }
 
 async fn ensure_test_database(test_url: &str) {
-    if let Ok(db) = Database::connect(test_url).await {
-        if db.execute_unprepared("SELECT 1").await.is_ok() {
-            return;
-        }
+    if let Ok(db) = Database::connect(test_url).await
+        && db.execute_unprepared("SELECT 1").await.is_ok()
+    {
+        return;
     }
 
     let url =
@@ -154,7 +154,8 @@ fn setup_server() -> ServerInfo {
 
             (port, sse_tx)
         });
-        tx.send((port, sse_tx)).expect("failed to send server handle");
+        tx.send((port, sse_tx))
+            .expect("failed to send server handle");
 
         // Keep the server runtime alive for the whole test process.
         rt.block_on(std::future::pending::<()>());
@@ -340,6 +341,7 @@ pub async fn seed_transaction_account(
     .expect("failed to seed transaction account");
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn seed_event(
     db: &DatabaseConnection,
     program_id: i32,

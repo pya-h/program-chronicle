@@ -16,7 +16,10 @@ async fn health_check_returns_ok() -> httpc_test::Result<()> {
 async fn unknown_route_returns_404() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 
-    let res = server().unauthed_client().do_get("/definitely-not-real").await?;
+    let res = server()
+        .unauthed_client()
+        .do_get("/definitely-not-real")
+        .await?;
     assert_eq!(res.status(), 404);
     Ok(())
 }

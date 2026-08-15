@@ -93,10 +93,7 @@ pub trait SvmRpc: Send + Sync {
 
     /// Snapshots an explicit set of accounts — the address-allowlist short-circuit that avoids
     /// scanning every account a (shared) program owns. Missing accounts are simply absent.
-    async fn get_multiple_accounts(
-        &self,
-        addresses: &[Pubkey],
-    ) -> RpcResult<Vec<AccountSnapshot>>;
+    async fn get_multiple_accounts(&self, addresses: &[Pubkey]) -> RpcResult<Vec<AccountSnapshot>>;
 
     /// Pages newest→oldest; `before` is exclusive.
     async fn get_signatures_for_address(

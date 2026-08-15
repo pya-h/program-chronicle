@@ -49,9 +49,9 @@ fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
                 "memcmp offset must be an integer in [0, 10485760]!".to_owned(),
             )
         })?;
-    let bytes = bs58::decode(encoded).into_vec().map_err(|_| {
-        SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned())
-    })?;
+    let bytes = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|_| SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned()))?;
     // substr is 1-indexed, memcmp offset is 0-indexed; substr on bytea needs integer args
     Ok(Expr::cust_with_values(
         "substr(program_accounts.state, $1, $2) = $3",
@@ -92,7 +92,11 @@ async fn get_program_accounts_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(accounts_query, &state.db, Some("Failed fetching program accounts!"))
+        .paginate_or_all(
+            accounts_query,
+            &state.db,
+            Some("Failed fetching program accounts!"),
+        )
         .await?;
     Ok(ApiResponse::ok(ProgramAccountsResponse::new(
         rows, total, pages,
@@ -146,7 +150,11 @@ async fn get_program_events_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(events_query, &state.db, Some("Failed fetching program events!"))
+        .paginate_or_all(
+            events_query,
+            &state.db,
+            Some("Failed fetching program events!"),
+        )
         .await?;
     Ok(ApiResponse::ok(ProgramEventsResponse::new(
         rows, total, pages,
@@ -168,12 +176,14 @@ async fn get_program_transactions_handler(
     }
 
     let mut condition = if correlated {
-        Condition::all().add(transactions::Column::Signature.in_subquery(correlated_signatures(
-            program_id as i32,
-            query.since_slot,
-            query.from_slot,
-            query.to_slot,
-        )))
+        Condition::all().add(
+            transactions::Column::Signature.in_subquery(correlated_signatures(
+                program_id as i32,
+                query.since_slot,
+                query.from_slot,
+                query.to_slot,
+            )),
+        )
     } else {
         Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32))
     };
@@ -213,7 +223,11 @@ async fn get_program_transactions_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(transactions_query, &state.db, Some("Failed fetching program transactions!"))
+        .paginate_or_all(
+            transactions_query,
+            &state.db,
+            Some("Failed fetching program transactions!"),
+        )
         .await?;
     Ok(ApiResponse::ok(TransactionsResponse::new(
         rows, total, pages,
@@ -242,7 +256,11 @@ async fn get_program_changes_handler(
 
     let (state_rows, states_total, states_pages) = query
         .pagination
-        .paginate_or_all(states_query, &state.db, Some("Failed fetching program changes!"))
+        .paginate_or_all(
+            states_query,
+            &state.db,
+            Some("Failed fetching program changes!"),
+        )
         .await?;
 
     let slot_ids: Vec<i64> = state_rows.iter().map(|(state, _)| state.slot_id).collect();
@@ -285,7 +303,11 @@ async fn get_program_changes_handler(
 
         let (event_rows, events_total, events_pages) = query
             .pagination
-            .paginate_or_all(events_query, &state.db, Some("Failed fetching program change events!"))
+            .paginate_or_all(
+                events_query,
+                &state.db,
+                Some("Failed fetching program change events!"),
+            )
             .await?;
         let events = event_rows
             .into_iter()

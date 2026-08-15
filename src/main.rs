@@ -78,7 +78,11 @@ async fn main() {
     tokio::spawn(indexer.clone().run_reconciler(reconcile_interval));
     let commitment_worker_interval =
         Duration::from_secs(env_u64("INDEXER_COMMITMENT_WORKER_SECS", 60).max(1));
-    tokio::spawn(indexer.clone().run_commitment_worker(commitment_worker_interval));
+    tokio::spawn(
+        indexer
+            .clone()
+            .run_commitment_worker(commitment_worker_interval),
+    );
     tokio::spawn(async move {
         if let Err(err) = indexer.start(supervisor_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");

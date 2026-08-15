@@ -47,13 +47,25 @@ async fn ensure_slot_fills_block_time_once_and_is_idempotent() {
     let id2 = ensure_slot(&db, rpc_id, 500, Some(1000)).await.unwrap();
     assert_eq!(id1, id2, "same (rpc, slot) must return the same row id");
 
-    let row = slots::Entity::find_by_id(id1).one(&db).await.unwrap().unwrap();
-    assert_eq!(row.block_time, Some(1000), "block_time should fill once known");
+    let row = slots::Entity::find_by_id(id1)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.block_time,
+        Some(1000),
+        "block_time should fill once known"
+    );
 
     // a later, different block_time must not overwrite the first known value
     let id3 = ensure_slot(&db, rpc_id, 500, Some(2000)).await.unwrap();
     assert_eq!(id3, id1);
-    let row = slots::Entity::find_by_id(id1).one(&db).await.unwrap().unwrap();
+    let row = slots::Entity::find_by_id(id1)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.block_time, Some(1000), "block_time is write-once");
 }
 
@@ -67,12 +79,40 @@ async fn double_apply_identical_snapshot_appends_no_extra_history() {
     let address = pubkey(10);
     let owner = pubkey(20);
     // apply the very same snapshot twice, as a reboot's catch-up would
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1, 2, 3], 100, 500, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1, 2, 3], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1, 2, 3],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1, 2, 3],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
 
     let account = cached_account(&db, program_id, &address).await;
     let history = history_rows(&db, account.id).await;
-    assert_eq!(history.len(), 1, "an unchanged re-apply must not append history");
+    assert_eq!(
+        history.len(),
+        1,
+        "an unchanged re-apply must not append history"
+    );
 }
 
 #[tokio::test]
@@ -84,11 +124,38 @@ async fn newer_slot_advances_cache_and_appends_history() {
 
     let address = pubkey(10);
     let owner = pubkey(20);
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 500, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 600, 0, Some(1001)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        600,
+        0,
+        Some(1001),
+    )
+    .await;
 
     let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_slot, 600, "cache must advance to the newer slot");
+    assert_eq!(
+        account.latest_slot, 600,
+        "cache must advance to the newer slot"
+    );
     assert_eq!(account.state, vec![2]);
     assert_eq!(history_rows(&db, account.id).await.len(), 2);
 }
@@ -102,12 +169,39 @@ async fn older_slot_does_not_regress_cache_but_records_history() {
 
     let address = pubkey(10);
     let owner = pubkey(20);
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 600, 0, Some(1001)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        600,
+        0,
+        Some(1001),
+    )
+    .await;
     // an out-of-order older slot arrives after the newer one
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
 
     let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_slot, 600, "an older slot must not regress the cache");
+    assert_eq!(
+        account.latest_slot, 600,
+        "an older slot must not regress the cache"
+    );
     assert_eq!(account.state, vec![2]);
     // but the older state is still recorded for history reads
     assert_eq!(history_rows(&db, account.id).await.len(), 2);
@@ -122,12 +216,42 @@ async fn tx_signature_backfill_attributes_unambiguous_write() {
 
     let address = pubkey(10);
     // json-rpc ingest leaves account_states.tx_signature NULL
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &pubkey(20),
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
     // a single writable transaction touched the account at that slot
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(40),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(40), &address, 500, true).await;
     // a second transaction only read the account at the same slot — a readonly mention must not count
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(41),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(41), &address, 500, false).await;
 
     let filled = backfill_tx_signatures_once(&db).await.unwrap();
@@ -136,7 +260,10 @@ async fn tx_signature_backfill_attributes_unambiguous_write() {
     let account = cached_account(&db, program_id, &address).await;
     let states = history_rows(&db, account.id).await;
     assert_eq!(states.len(), 1);
-    assert_eq!(states[0].tx_signature, Some(signature(40).as_ref().to_vec()));
+    assert_eq!(
+        states[0].tx_signature,
+        Some(signature(40).as_ref().to_vec())
+    );
 }
 
 #[tokio::test]
@@ -147,10 +274,40 @@ async fn tx_signature_backfill_leaves_ambiguous_slot_null() {
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
 
     let address = pubkey(10);
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &pubkey(20),
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
     // two distinct writable transactions wrote the same account at the same slot → ambiguous
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(40),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(41),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(40), &address, 500, true).await;
     seed_transaction_account(&db, &signature(41), &address, 500, true).await;
 
@@ -159,7 +316,10 @@ async fn tx_signature_backfill_leaves_ambiguous_slot_null() {
 
     let account = cached_account(&db, program_id, &address).await;
     let states = history_rows(&db, account.id).await;
-    assert_eq!(states[0].tx_signature, None, "an ambiguous slot stays unattributed");
+    assert_eq!(
+        states[0].tx_signature, None,
+        "an ambiguous slot stays unattributed"
+    );
 }
 
 #[tokio::test]
@@ -171,19 +331,52 @@ async fn latest_tx_signature_backfill_attributes_unambiguous_write() {
 
     let address = pubkey(10);
     // json-rpc ingest leaves latest_tx_signature NULL at the cache's latest_slot
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &pubkey(20),
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
     // a single writable transaction touched the account at latest_slot
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(40),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(40), &address, 500, true).await;
     // a readonly mention at the same slot must not count
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(41),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(41), &address, 500, false).await;
 
     let filled = backfill_latest_tx_signatures_once(&db).await.unwrap();
     assert_eq!(filled, 1);
 
     let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_tx_signature, Some(signature(40).as_ref().to_vec()));
+    assert_eq!(
+        account.latest_tx_signature,
+        Some(signature(40).as_ref().to_vec())
+    );
 }
 
 #[tokio::test]
@@ -194,10 +387,40 @@ async fn latest_tx_signature_backfill_leaves_ambiguous_slot_null() {
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
 
     let address = pubkey(10);
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &pubkey(20),
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
     // two distinct writable transactions wrote the account at latest_slot → ambiguous
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(40),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(41),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(40), &address, 500, true).await;
     seed_transaction_account(&db, &signature(41), &address, 500, true).await;
 
@@ -205,7 +428,10 @@ async fn latest_tx_signature_backfill_leaves_ambiguous_slot_null() {
     assert_eq!(filled, 0);
 
     let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_tx_signature, None, "an ambiguous latest_slot stays unattributed");
+    assert_eq!(
+        account.latest_tx_signature, None,
+        "an ambiguous latest_slot stays unattributed"
+    );
 }
 
 #[tokio::test]
@@ -217,12 +443,39 @@ async fn higher_write_version_advances_cache_within_same_slot() {
 
     let address = pubkey(10);
     let owner = pubkey(20);
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 700, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 700, 1, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        700,
+        0,
+        Some(1000),
+    )
+    .await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        700,
+        1,
+        Some(1000),
+    )
+    .await;
 
     let account = cached_account(&db, program_id, &address).await;
     assert_eq!(account.latest_slot, 700);
-    assert_eq!(account.latest_write_version, 1, "higher write_version wins within a slot");
+    assert_eq!(
+        account.latest_write_version, 1,
+        "higher write_version wins within a slot"
+    );
     assert_eq!(account.state, vec![2]);
     assert_eq!(history_rows(&db, account.id).await.len(), 2);
 }
@@ -238,15 +491,47 @@ async fn same_slot_json_rpc_rewrite_wins_last() {
     let owner = pubkey(20);
     // json-rpc has no write_version, so both writes collapse to 0 at the same slot: two txs in one
     // block each touch the account. the later value is the block's final state and must win.
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 700, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 700, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        700,
+        0,
+        Some(1000),
+    )
+    .await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        700,
+        0,
+        Some(1000),
+    )
+    .await;
 
     let account = cached_account(&db, program_id, &address).await;
     assert_eq!(account.latest_slot, 700);
-    assert_eq!(account.state, vec![2], "the later same-slot write must win the cache");
+    assert_eq!(
+        account.state,
+        vec![2],
+        "the later same-slot write must win the cache"
+    );
     // the (slot, write_version) key collapses to a single row; it reflects the final value, so the
     // cache and history agree instead of the cache silently keeping the stale first value
     let history = history_rows(&db, account.id).await;
     assert_eq!(history.len(), 1, "one row per (slot, write_version)");
-    assert_eq!(history[0].data, vec![2], "the surviving history row is the final value");
+    assert_eq!(
+        history[0].data,
+        vec![2],
+        "the surviving history row is the final value"
+    );
 }

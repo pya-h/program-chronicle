@@ -142,7 +142,11 @@ async fn get_account_history_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(history_query, &state.db, Some("Failed fetching account history!"))
+        .paginate_or_all(
+            history_query,
+            &state.db,
+            Some("Failed fetching account history!"),
+        )
         .await?;
     Ok(ApiResponse::ok(AccountHistoryResponse::new(
         rows, total, pages,
@@ -176,10 +180,17 @@ async fn get_account_transactions_handler(
 
     let (mentions, total, pages) = query
         .pagination
-        .paginate_or_all(mentions_query, &state.db, Some("Failed fetching account transactions!"))
+        .paginate_or_all(
+            mentions_query,
+            &state.db,
+            Some("Failed fetching account transactions!"),
+        )
         .await?;
 
-    let signatures: Vec<Vec<u8>> = mentions.iter().map(|row| row.tx_signature.clone()).collect();
+    let signatures: Vec<Vec<u8>> = mentions
+        .iter()
+        .map(|row| row.tx_signature.clone())
+        .collect();
     let found = transactions::Entity::find()
         .filter(transactions::Column::Signature.is_in(signatures))
         .find_also_related(slots::Entity)
@@ -207,5 +218,8 @@ pub fn routes() -> Router<AppState> {
         .route("/", get(get_multiple_accounts_handler))
         .route("/{address}", get(get_account_handler))
         .route("/{address}/history", get(get_account_history_handler))
-        .route("/{address}/transactions", get(get_account_transactions_handler))
+        .route(
+            "/{address}/transactions",
+            get(get_account_transactions_handler),
+        )
 }

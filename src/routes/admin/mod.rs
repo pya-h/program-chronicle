@@ -1,4 +1,3 @@
-use axum::{Router, routing::get};
 use crate::{
     core::{
         response::{ApiResponse, FinalResponse},
@@ -6,6 +5,7 @@ use crate::{
     },
     middlewares::admin_guard::admin_guard,
 };
+use axum::{Router, routing::get};
 
 pub mod common;
 mod errors;

@@ -1,6 +1,8 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use crate::db::entities::{account_states, program_accounts, program_events, programs, slots, transactions};
+use crate::db::entities::{
+    account_states, program_accounts, program_events, programs, slots, transactions,
+};
 use crate::routes::responses::accounts::{
     AccountChangeResponse, AccountHistoryResponse, AccountInfoResponse, AccountStateResponse,
     ProgramAccountsResponse,
@@ -104,7 +106,10 @@ fn account_info_encodes_addresses_as_base58_and_data_as_base64() {
     assert_eq!(resp.slot, 500);
     assert_eq!(resp.write_version, 2);
     assert_eq!(resp.block_time, Some(1234));
-    assert!(!resp.executable, "executable is a constant false for indexed accounts");
+    assert!(
+        !resp.executable,
+        "executable is a constant false for indexed accounts"
+    );
 }
 
 #[test]
@@ -153,8 +158,11 @@ fn program_event_encodes_signature_and_data() {
 #[test]
 fn transaction_response_encodes_signature_and_optional_fee_payer() {
     let payer = pubkey(6);
-    let resp =
-        TransactionResponse::from_model(tx_model(Some(payer.to_bytes().to_vec())), Some(1), vec![2, 7]);
+    let resp = TransactionResponse::from_model(
+        tx_model(Some(payer.to_bytes().to_vec())),
+        Some(1),
+        vec![2, 7],
+    );
     assert_eq!(resp.signature, signature(4).to_string());
     assert_eq!(resp.program_id, Some(2));
     assert_eq!(resp.programs, vec![2, 7]);
@@ -204,7 +212,10 @@ fn program_accounts_response_threads_block_time_and_counts() {
             account_model(pubkey(1).to_bytes().to_vec(), pubkey(2).to_bytes().to_vec()),
             Some(slot_model(Some(111))),
         ),
-        (account_model(pubkey(3).to_bytes().to_vec(), pubkey(4).to_bytes().to_vec()), None),
+        (
+            account_model(pubkey(3).to_bytes().to_vec(), pubkey(4).to_bytes().to_vec()),
+            None,
+        ),
     ];
 
     let resp = ProgramAccountsResponse::new(rows, 2, 1);
@@ -212,7 +223,10 @@ fn program_accounts_response_threads_block_time_and_counts() {
     assert_eq!(resp.pages, 1);
     assert_eq!(resp.data.len(), 2);
     assert_eq!(resp.data[0].block_time, Some(111));
-    assert_eq!(resp.data[1].block_time, None, "a row with no joined slot has no block_time");
+    assert_eq!(
+        resp.data[1].block_time, None,
+        "a row with no joined slot has no block_time"
+    );
 }
 
 #[test]

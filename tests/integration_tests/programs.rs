@@ -142,12 +142,18 @@ async fn add_program_duplicate_address_on_same_rpc_fails() -> httpc_test::Result
 
     server()
         .authed_client()
-        .do_post("/admin/programs", json!({"rpc_id": rpc_id, "address": address(0)}))
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
         .await?;
 
     let res = server()
         .authed_client()
-        .do_post("/admin/programs", json!({"rpc_id": rpc_id, "address": address(0)}))
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
         .await?;
     assert_eq!(res.status(), 500);
     Ok(())
@@ -356,7 +362,10 @@ async fn add_program_defaults_to_active() -> httpc_test::Result<()> {
         )
         .await?;
     let body = res.json_body_as::<serde_json::Value>()?;
-    assert_eq!(body["active"], true, "a new program is indexed unless paused");
+    assert_eq!(
+        body["active"], true,
+        "a new program is indexed unless paused"
+    );
     Ok(())
 }
 
@@ -431,7 +440,9 @@ async fn add_program_with_account_filters_persists() -> httpc_test::Result<()> {
         )
         .await?;
     assert_eq!(res.status(), 201);
-    let id = res.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = res.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     // durable — a fresh read returns the stored descriptor
     let res = server()
@@ -480,12 +491,17 @@ async fn update_program_clears_account_filters() -> httpc_test::Result<()> {
             }),
         )
         .await?;
-    let id = created.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     // an empty descriptor resets the program back to track-all
     let res = server()
         .authed_client()
-        .do_patch(&format!("/admin/programs/{}", id), json!({"account_filters": {}}))
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"account_filters": {}}),
+        )
         .await?;
     assert_eq!(res.status(), 200);
     assert!(res.json_body_as::<serde_json::Value>()?["account_filters"].is_null());
@@ -527,7 +543,9 @@ async fn add_program_with_addresses_allowlist_persists() -> httpc_test::Result<(
         )
         .await?;
     assert_eq!(res.status(), 201);
-    let id = res.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = res.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     let body = server()
         .authed_client()

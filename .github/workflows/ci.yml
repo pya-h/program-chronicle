@@ -1,0 +1,58 @@
+name: CI
+
+on: pull_request
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    name: Check, Format & Test
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5433/svm_indexer
+      ADMIN_PASSKEY: test
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: svm_indexer
+        ports:
+          # host 5433 -> container 5432, so it coexists with a local psql on 5432
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Run cargo check
+        run: cargo check --all-targets --all-features
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Fail if `.unwrap()` is used in code
+        run: |
+          if grep -R --include="*.rs" -n '^[^/]*\.unwrap()' src migration/src ; then
+            echo "Found disallowed .unwrap() usage!"
+            exit 1
+          else
+            echo "No .unwrap() usage found."
+          fi
+
+      - name: Run tests
+        run: cargo test --all-targets -- --test-threads=1

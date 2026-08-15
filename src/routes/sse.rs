@@ -96,7 +96,10 @@ fn transaction_event(
 /// A lagged consumer past the channel buffer gets a `resync` frame carrying the last slot it did
 /// see, so it re-pulls the gap via the read API's `since_slot` instead of silently losing changes.
 fn resync_event(last_slot: i64, missed: u64) -> Event {
-    build_event("resync", json!({ "since_slot": last_slot, "missed": missed }))
+    build_event(
+        "resync",
+        json!({ "since_slot": last_slot, "missed": missed }),
+    )
 }
 
 fn subscriber_stream<F>(
@@ -220,7 +223,16 @@ async fn sse_program_transactions_handler(
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/accounts/{address}", get(sse_account_handler))
-        .route("/programs/{program_id}/accounts", get(sse_program_accounts_handler))
-        .route("/programs/{program_id}/events", get(sse_program_events_handler))
-        .route("/programs/{program_id}/transactions", get(sse_program_transactions_handler))
+        .route(
+            "/programs/{program_id}/accounts",
+            get(sse_program_accounts_handler),
+        )
+        .route(
+            "/programs/{program_id}/events",
+            get(sse_program_events_handler),
+        )
+        .route(
+            "/programs/{program_id}/transactions",
+            get(sse_program_transactions_handler),
+        )
 }

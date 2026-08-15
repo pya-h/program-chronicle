@@ -14,14 +14,13 @@ pub struct IndexerErrorsQuery {
 #[derive(Deserialize)]
 pub struct AddRpcPayload {
     pub http_url: String,
-    pub ws_url: Option<String>
+    pub ws_url: Option<String>,
 }
-
 
 #[derive(Deserialize)]
 pub struct UpdateRpcPayload {
     pub http_url: Option<String>,
-    pub ws_url: Option<String>
+    pub ws_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -37,7 +36,7 @@ pub struct AddProgramPayload {
 
 #[derive(Deserialize)]
 pub struct GetSingleProgramPayload {
-    pub ignore_unknown_rpc: Option<bool> // In case rpc data failed loading, due to any reason
+    pub ignore_unknown_rpc: Option<bool>, // In case rpc data failed loading, due to any reason
 }
 
 #[derive(Deserialize)]

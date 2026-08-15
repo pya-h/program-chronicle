@@ -1,3 +1,4 @@
+use crate::indexer::rpc::AccountFilter;
 use crate::{
     core::{
         error::SvmIndexerError,
@@ -26,7 +27,6 @@ use axum::{
     response::NoContent,
     routing::{get, post},
 };
-use crate::indexer::rpc::AccountFilter;
 use sea_orm::{
     ActiveModelTrait, ActiveValue,
     ActiveValue::{NotSet, Set, Unchanged},
@@ -90,7 +90,7 @@ async fn get_or_add_rpc(
 
         Ok(Some(match maybe_found_rpc {
             Some(found_rpc) => found_rpc,
-            _ => add_rpc(&state, rpc.http_url.clone(), rpc.ws_url.clone()).await?,
+            _ => add_rpc(state, rpc.http_url.clone(), rpc.ws_url.clone()).await?,
         }))
     } else {
         Ok(None)
@@ -133,7 +133,10 @@ async fn add_program_handler(
         let _ = tx.send(ProgramCommand::Start(program.id)).await;
     }
 
-    Ok(ApiResponse::created(ProgramWithRpcResponse { program, rpc }))
+    Ok(ApiResponse::created(ProgramWithRpcResponse {
+        program,
+        rpc,
+    }))
 }
 
 /// Flips a program's `active` flag and tells the supervisor to start or stop its indexer task.
@@ -154,7 +157,9 @@ async fn set_program_activation(
             )
         })?;
     let Some((program, rpc)) = found else {
-        return Err(SvmIndexerError::ItemNotFound(String::from("No such program!")));
+        return Err(SvmIndexerError::ItemNotFound(String::from(
+            "No such program!",
+        )));
     };
 
     if program.active != active {
@@ -327,7 +332,7 @@ async fn update_program_handler(
     }
     let rpc_loaded = program.find_related(rpcs::Entity).one(&state.db).await;
     // Since the update action has already happened successfully, throwing error status doesnt seem rational
-    let final_rpc_id = (&program).rpc_id.clone(); // prevent move errors on error handling section below!
+    let final_rpc_id = program.rpc_id; // prevent move errors on error handling section below!
     Ok(ApiResponse::ok(ProgramWithRpcResponse {
         program,
         rpc: if let Ok(rpc_maybe) = &rpc_loaded

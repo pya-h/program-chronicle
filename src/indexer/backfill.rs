@@ -42,9 +42,7 @@ pub(crate) fn classify_commitment_sweep(
     (finalized, dropped)
 }
 
-pub async fn backfill_tx_signatures_once(
-    db: &DatabaseConnection,
-) -> Result<u64, SvmIndexerError> {
+pub async fn backfill_tx_signatures_once(db: &DatabaseConnection) -> Result<u64, SvmIndexerError> {
     // the per-batch LIMIT only selects groups that still have a NULL state, so each pass makes progress
     const SQL: &str = "\
         UPDATE account_states s \
@@ -105,7 +103,10 @@ pub async fn backfill_latest_tx_signatures_once(
     let mut filled = 0u64;
     for _ in 0..TX_SIGNATURE_BACKFILL_MAX_BATCHES {
         let result = db.execute_unprepared(SQL).await.map_err(|err| {
-            SvmIndexerError::db_error("Failed backfilling program_accounts.latest_tx_signature!", err)
+            SvmIndexerError::db_error(
+                "Failed backfilling program_accounts.latest_tx_signature!",
+                err,
+            )
         })?;
         let affected = result.rows_affected();
         filled += affected;
@@ -224,8 +225,10 @@ impl Indexer {
             let statuses = client.get_signature_statuses(&sigs).await?;
             let (finalized, dropped) = classify_commitment_sweep(sig_bytes, statuses);
 
-            self.set_commitment(finalized, TransactionCommitment::Finalized).await?;
-            self.set_commitment(dropped, TransactionCommitment::Dropped).await?;
+            self.set_commitment(finalized, TransactionCommitment::Finalized)
+                .await?;
+            self.set_commitment(dropped, TransactionCommitment::Dropped)
+                .await?;
         }
         Ok(())
     }
@@ -240,14 +243,21 @@ impl Indexer {
         }
         let count = signatures.len();
         transactions::Entity::update_many()
-            .col_expr(transactions::Column::Commitment, Expr::value(commitment.as_str()))
+            .col_expr(
+                transactions::Column::Commitment,
+                Expr::value(commitment.as_str()),
+            )
             .filter(transactions::Column::Signature.is_in(signatures))
             .exec(&self.db)
             .await
             .map_err(|err| {
                 SvmIndexerError::db_error("Failed updating transaction commitment!", err)
             })?;
-        tracing::info!(count, commitment = commitment.as_str(), "advanced transaction commitment");
+        tracing::info!(
+            count,
+            commitment = commitment.as_str(),
+            "advanced transaction commitment"
+        );
         Ok(())
     }
 

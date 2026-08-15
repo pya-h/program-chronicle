@@ -52,7 +52,10 @@ impl Indexer {
                 self.spawn_program(program, rpc).await
             }
             Ok(Some((program, Some(_)))) => {
-                tracing::debug!(program_id = program.id, "Ignoring start for inactive program.")
+                tracing::debug!(
+                    program_id = program.id,
+                    "Ignoring start for inactive program."
+                )
             }
             Ok(Some((_, None))) => tracing::error!(program_id, "New program has no rpc row!"),
             Ok(None) => tracing::error!(program_id, "New program vanished before indexing!"),
@@ -65,7 +68,10 @@ impl Indexer {
     async fn spawn_program(self: Arc<Self>, program: programs::Model, rpc: rpcs::Model) {
         let program_id = program.id;
         let mut handles = self.handles.lock().await;
-        if handles.get(&program_id).is_some_and(|handle| !handle.is_finished()) {
+        if handles
+            .get(&program_id)
+            .is_some_and(|handle| !handle.is_finished())
+        {
             return;
         }
         let client = self.client_for(&rpc).await;
@@ -84,7 +90,10 @@ impl Indexer {
                 .await
                 {
                     Ok(()) => {
-                        tracing::warn!(program_id, "Program indexer run ended; restarting after cooldown.")
+                        tracing::warn!(
+                            program_id,
+                            "Program indexer run ended; restarting after cooldown."
+                        )
                     }
                     Err(err) => {
                         tracing::error!(program_id, error = %err, "Program indexer failed rapidly; restarting after cooldown.");
@@ -104,7 +113,9 @@ impl Indexer {
                 cooldown = if healthy {
                     base_cooldown
                 } else {
-                    cooldown.checked_mul(2).map_or(cooldown_cap, |next| next.min(cooldown_cap))
+                    cooldown
+                        .checked_mul(2)
+                        .map_or(cooldown_cap, |next| next.min(cooldown_cap))
                 };
             }
         });
@@ -136,19 +147,26 @@ impl Indexer {
             .await;
         let programs = match found {
             Ok(programs) => programs,
-            Err(err) => return tracing::error!(error = %err, "Reconcile pass failed loading programs!"),
+            Err(err) => {
+                return tracing::error!(error = %err, "Reconcile pass failed loading programs!");
+            }
         };
         for (program, rpc) in programs {
             let Some(rpc) = rpc else { continue };
             let program_id = program.id;
             let stopped = {
                 let handles = self.handles.lock().await;
-                handles.get(&program_id).is_none_or(|handle| handle.is_finished())
+                handles
+                    .get(&program_id)
+                    .is_none_or(|handle| handle.is_finished())
             };
             if !stopped {
                 continue; // its running or cooling down
             }
-            tracing::warn!(program_id, "Found an active program which wasn't being indexed as expected! Respawing...");
+            tracing::warn!(
+                program_id,
+                "Found an active program which wasn't being indexed as expected! Respawing..."
+            );
             record(
                 &self.db,
                 IndexerErrorKind::Indexing,

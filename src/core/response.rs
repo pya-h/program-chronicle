@@ -1,6 +1,10 @@
-use axum::{Json, http::StatusCode, response::{self, NoContent}};
-use serde::Serialize;
 use super::error::SvmIndexerError;
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{self, NoContent},
+};
+use serde::Serialize;
 
 pub struct ApiResponse<T: Serialize>(pub StatusCode, pub Json<T>);
 
@@ -29,7 +33,7 @@ impl<T: Serialize> response::IntoResponse for ApiResponse<T> {
     }
 }
 
-impl<T:Serialize> From<T> for ApiResponse<T> {
+impl<T: Serialize> From<T> for ApiResponse<T> {
     fn from(body: T) -> Self {
         Self::ok(body)
     }

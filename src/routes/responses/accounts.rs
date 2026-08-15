@@ -56,7 +56,11 @@ pub struct ProgramAccountsResponse {
 }
 
 impl ProgramAccountsResponse {
-    pub fn new(rows: Vec<(ProgramAccountModel, Option<SlotModel>)>, total: u64, pages: u64) -> Self {
+    pub fn new(
+        rows: Vec<(ProgramAccountModel, Option<SlotModel>)>,
+        total: u64,
+        pages: u64,
+    ) -> Self {
         Self {
             total,
             pages,

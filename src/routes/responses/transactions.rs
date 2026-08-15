@@ -96,7 +96,10 @@ impl TransactionsResponse {
             data: rows
                 .into_iter()
                 .map(|(tx, slot)| {
-                    TransactionSummaryResponse::from_model(tx, slot.and_then(|slot| slot.block_time))
+                    TransactionSummaryResponse::from_model(
+                        tx,
+                        slot.and_then(|slot| slot.block_time),
+                    )
                 })
                 .collect(),
         }

@@ -50,8 +50,14 @@ async fn sse_streams_a_published_account_event() {
     let frame = read_until(&mut resp, "\"slot\":123").await;
     publisher.abort();
 
-    assert!(frame.contains("account"), "expected an account event frame, got: {frame}");
-    assert!(frame.contains(&pubkey(9).to_string()), "frame should carry the address");
+    assert!(
+        frame.contains("account"),
+        "expected an account event frame, got: {frame}"
+    );
+    assert!(
+        frame.contains(&pubkey(9).to_string()),
+        "frame should carry the address"
+    );
 }
 
 #[tokio::test]
@@ -71,7 +77,13 @@ async fn sse_streams_a_published_program_event() {
         let sig = signature(5).as_ref().to_vec();
         tokio::spawn(async move {
             for _ in 0..10 {
-                let _ = tx.send(SseEvent::program_event(8, sig.clone(), 0, 456, vec![9, 9, 9]));
+                let _ = tx.send(SseEvent::program_event(
+                    8,
+                    sig.clone(),
+                    0,
+                    456,
+                    vec![9, 9, 9],
+                ));
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
@@ -80,8 +92,14 @@ async fn sse_streams_a_published_program_event() {
     let frame = read_until(&mut resp, "\"slot\":456").await;
     publisher.abort();
 
-    assert!(frame.contains("event"), "expected a program event frame, got: {frame}");
-    assert!(frame.contains(&signature(5).to_string()), "frame should carry the signature");
+    assert!(
+        frame.contains("event"),
+        "expected a program event frame, got: {frame}"
+    );
+    assert!(
+        frame.contains(&signature(5).to_string()),
+        "frame should carry the signature"
+    );
 }
 
 #[tokio::test]
@@ -119,7 +137,16 @@ async fn sse_streams_a_published_transaction_event() {
     let frame = read_until(&mut resp, "\"slot\":789").await;
     publisher.abort();
 
-    assert!(frame.contains("transaction"), "expected a transaction event frame, got: {frame}");
-    assert!(frame.contains(&signature(6).to_string()), "frame should carry the signature");
-    assert!(frame.contains(&pubkey(4).to_string()), "frame should carry the fee_payer");
+    assert!(
+        frame.contains("transaction"),
+        "expected a transaction event frame, got: {frame}"
+    );
+    assert!(
+        frame.contains(&signature(6).to_string()),
+        "frame should carry the signature"
+    );
+    assert!(
+        frame.contains(&pubkey(4).to_string()),
+        "frame should carry the fee_payer"
+    );
 }

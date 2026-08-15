@@ -61,7 +61,7 @@ impl response::IntoResponse for SvmIndexerError {
             SvmIndexerError::DatabaseError(public_message, seaorm_err, element_id) => {
                 let response_msg = if let Some(id) = element_id {
                     tracing::error!(error = %seaorm_err, message = %public_message, id = id);
-                    format!("{} [id = {}]", self.to_string(), id)
+                    format!("{} [id = {}]", self, id)
                 } else {
                     tracing::error!(error = %seaorm_err, message = %public_message);
                     self.to_string()

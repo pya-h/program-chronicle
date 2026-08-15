@@ -14,7 +14,8 @@ use std::time::Duration;
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::{Set, Unchanged},
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_query::Expr,
+    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    sea_query::Expr,
 };
 use solana_sdk::commitment_config::CommitmentConfig;
 use tokio::{
@@ -31,7 +32,6 @@ use crate::indexer::rpc::SvmRpc;
 use crate::indexer::rpc::json_rpc::JsonRpc;
 use crate::indexer::state::{catch_up_state, stream_state};
 use crate::indexer::transactions::{catch_up_transactions, stream_transactions};
-
 
 pub struct Indexer {
     db: DatabaseConnection,

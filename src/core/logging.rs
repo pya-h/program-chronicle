@@ -12,13 +12,10 @@ pub fn setup() -> Result<(), io::Error> {
         Registry::default().with(fmt::layer().json()).with(level),
     )
     .map_err(|err| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "Failure while registering the customized logger: {}",
-                err
-            ),
-        )
+        io::Error::other(format!(
+            "Failure while registering the customized logger: {}",
+            err
+        ))
     })?;
     std::panic::set_hook(Box::new(tracing_panic::panic_hook));
     Ok(())

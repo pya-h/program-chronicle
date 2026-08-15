@@ -32,7 +32,6 @@ pub fn app(
         .merge(routes::root::routes())
         .with_state(state)
         .fallback_service(
-            ServeDir::new("static/panel")
-                .not_found_service(get(routes::root::not_found_handler)),
+            ServeDir::new("static/panel").not_found_service(get(routes::root::not_found_handler)),
         )
 }

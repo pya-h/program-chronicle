@@ -49,8 +49,16 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
                 break 'pages;
             }
             let tx = rpc.get_transaction(&sig.signature).await?;
-            index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx, commitment)
-                .await?;
+            index_transaction(
+                db,
+                sse_tx,
+                program.id,
+                program.rpc_id,
+                &address,
+                &tx,
+                commitment,
+            )
+            .await?;
         }
         if page_len < CATCH_UP_PAGE_SIZE {
             break;
@@ -67,15 +75,25 @@ pub async fn stream_transactions<R: SvmRpc + ?Sized>(
     commitment: TransactionCommitment,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
-        SvmIndexerError::InvalidPublicKey("Stored program address is not a valid pubkey!".to_owned())
+        SvmIndexerError::InvalidPublicKey(
+            "Stored program address is not a valid pubkey!".to_owned(),
+        )
     })?;
     let mut stream = rpc.subscribe_logs(&address).await?;
 
     while let Some(notification) = stream.next().await {
         let notification = notification?;
         let tx = rpc.get_transaction(&notification.signature).await?;
-        index_transaction(db, sse_tx, program.id, program.rpc_id, &address, &tx, commitment)
-            .await?;
+        index_transaction(
+            db,
+            sse_tx,
+            program.id,
+            program.rpc_id,
+            &address,
+            &tx,
+            commitment,
+        )
+        .await?;
     }
     // a live subscription never ends on its own; a closed stream means the connection dropped
     Err(SvmIndexerError::SubscriptionFailed(
@@ -166,14 +184,17 @@ async fn index_transaction_accounts<C: ConnectionTrait>(
         return Ok(());
     }
     let signature = tx.signature.as_ref().to_vec();
-    let rows = tx.accounts.iter().map(|account| transaction_accounts::ActiveModel {
-        tx_signature: Set(signature.clone()),
-        account_address: Set(account.address.to_bytes().to_vec()),
-        slot: Set(slot),
-        writable: Set(account.writable),
-        created_at: Set(now),
-        ..Default::default()
-    });
+    let rows = tx
+        .accounts
+        .iter()
+        .map(|account| transaction_accounts::ActiveModel {
+            tx_signature: Set(signature.clone()),
+            account_address: Set(account.address.to_bytes().to_vec()),
+            slot: Set(slot),
+            writable: Set(account.writable),
+            created_at: Set(now),
+            ..Default::default()
+        });
     transaction_accounts::Entity::insert_many(rows)
         .on_conflict(
             OnConflict::columns([

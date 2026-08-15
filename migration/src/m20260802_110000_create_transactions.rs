@@ -58,7 +58,11 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Transactions::ProgramId).integer().null())
                     .col(ColumnDef::new(Transactions::Slot).big_integer().not_null())
                     .check(Expr::col(Transactions::Slot).gte(0))
-                    .col(ColumnDef::new(Transactions::SlotId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(Transactions::SlotId)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(Transactions::Success).boolean().not_null())
                     .col(ColumnDef::new(Transactions::Err).json_binary().null())
                     .col(
@@ -133,7 +137,7 @@ impl MigrationTrait for Migration {
                     .name("idx-transactions-commitment-slot")
                     .table(Transactions::Table)
                     .col(Transactions::Commitment)
-                    .col(Transactions::Slot)  // the commitment promote/sweep worker scans recent non-final rows
+                    .col(Transactions::Slot) // the commitment promote/sweep worker scans recent non-final rows
                     .to_owned(),
             )
             .await?;
@@ -142,7 +146,12 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(Transactions::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(Transactions::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await
     }
 }

@@ -42,7 +42,10 @@ pub async fn add_rpc(
         // swap only the scheme; a blind replace("http","ws") also mangles hosts/paths holding "http"
         format!("wss://{rest}")
     } else {
-        format!("ws://{}", http_url.strip_prefix("http://").unwrap_or(&http_url))
+        format!(
+            "ws://{}",
+            http_url.strip_prefix("http://").unwrap_or(&http_url)
+        )
     };
     let new_rpc = rpcs::ActiveModel {
         http_url: Set(http_url),
@@ -50,12 +53,12 @@ pub async fn add_rpc(
         ..Default::default()
     };
 
-    Ok(new_rpc.insert(&state.db).await.map_err(|err| {
+    new_rpc.insert(&state.db).await.map_err(|err| {
         SvmIndexerError::db_error(
             "Failed adding the new RPC! Maybe http_url or ws_url is already existing?",
             err,
         )
-    })?)
+    })
 }
 
 async fn add_rpc_handler(
@@ -167,20 +170,30 @@ async fn update_rpc_handler(
     if !rpcs::Entity::find_by_id(rpc_id)
         .exists(&state.db)
         .await
-        .map_err(|err| SvmIndexerError::db_error_with_id("Failed accessing the target RPC!", err, rpc_id as u64))?
+        .map_err(|err| {
+            SvmIndexerError::db_error_with_id(
+                "Failed accessing the target RPC!",
+                err,
+                rpc_id as u64,
+            )
+        })?
     {
         return Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned()));
     }
     let updated_rpc = rpcs::ActiveModel {
         id: Set(rpc_id as i32),
-        http_url: new_http_url.map_or(NotSet, |hu| Set(hu)),
-        ws_url: new_ws_url.map_or(NotSet, |wu| Set(wu)),
+        http_url: new_http_url.map_or(NotSet, Set),
+        ws_url: new_ws_url.map_or(NotSet, Set),
         ..Default::default()
     };
 
     Ok(ApiResponse::ok(
         updated_rpc.update(&state.db).await.map_err(|err| {
-            SvmIndexerError::db_error_with_id("Something went wrong while updating rpc info!", err, rpc_id as u64)
+            SvmIndexerError::db_error_with_id(
+                "Something went wrong while updating rpc info!",
+                err,
+                rpc_id as u64,
+            )
         })?,
     ))
 }

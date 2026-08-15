@@ -185,3 +185,22 @@ Set `TEST_DATABASE_URL` to override the test database; otherwise `DATABASE_URL` 
 ## REST client
 
 `request.http` contains example calls for every endpoint and works with the VS Code REST Client extension.
+
+## Docker & CI locally
+
+**Build and run the image** (serves the panel and API on port 3000). Migrations are *not* run by the container, so point it at an already-migrated database:
+
+```bash
+docker build -t svm-indexer .
+docker run --rm -p 3000:3000 --env-file .env --network host svm-indexer
+```
+
+`--network host` lets the container reach a Postgres running on the host via a `localhost` `DATABASE_URL` (Linux). On macOS/Windows, drop `--network host` and use `host.docker.internal` as the DB host in `DATABASE_URL` instead.
+
+**Run the GitHub CI locally** with [`act`](https://github.com/nektos/act) (needs Docker). It executes `.github/workflows/ci.yml` the way GitHub does, Postgres service container included:
+
+```bash
+act pull_request --pull=false
+```
+
+The workflow triggers `on: pull_request`, so pass that event. `--pull=false` reuses local images instead of force-pulling the service image on every run (pull it once with `docker pull postgres:16`). The Postgres service is published on host port **5433** (not 5432), so it coexists with a local `psql`, and `DATABASE_URL` points at `localhost:5433` — this holds on both GitHub's runner and `act`. The integration tests run single-threaded exactly as in CI. The first run also downloads the `act` runner image.

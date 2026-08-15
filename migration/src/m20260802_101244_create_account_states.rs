@@ -60,14 +60,27 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(ColumnDef::new(AccountStates::Data).binary().not_null())
-                    .col(ColumnDef::new(AccountStates::Lamports).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(AccountStates::Lamports)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .check(Expr::col(AccountStates::Lamports).gte(0))
                     .col(ColumnDef::new(AccountStates::Owner).binary().not_null())
                     .check(Expr::cust(r#"OCTET_LENGTH("owner") = 32"#))
                     .col(ColumnDef::new(AccountStates::Slot).big_integer().not_null())
                     .check(Expr::col(AccountStates::Slot).gte(0))
-                    .col(ColumnDef::new(AccountStates::SlotId).big_integer().not_null())
-                    .col(ColumnDef::new(AccountStates::WriteVersion).big_integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(AccountStates::SlotId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(AccountStates::WriteVersion)
+                            .big_integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .check(Expr::col(AccountStates::WriteVersion).gte(0))
                     .col(ColumnDef::new(AccountStates::TxSignature).binary().null()) // Check if this tx-signature can be null here, also in ProgramAccounts
                     .check(Expr::cust(

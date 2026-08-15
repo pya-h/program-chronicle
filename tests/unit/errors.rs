@@ -11,16 +11,43 @@ fn status_of(err: SvmIndexerError) -> StatusCode {
 
 #[test]
 fn maps_variants_to_expected_status_codes() {
-    assert_eq!(status_of(SvmIndexerError::InvalidPublicKey("x".into())), StatusCode::BAD_REQUEST);
-    assert_eq!(status_of(SvmIndexerError::BadInput("x".into())), StatusCode::BAD_REQUEST);
-    assert_eq!(status_of(SvmIndexerError::InvalidURL("x".into())), StatusCode::BAD_REQUEST);
-    assert_eq!(status_of(SvmIndexerError::ItemNotFound("x".into())), StatusCode::NOT_FOUND);
-    assert_eq!(status_of(SvmIndexerError::Unauthorized), StatusCode::UNAUTHORIZED);
-    assert_eq!(status_of(SvmIndexerError::ProgramFailure("x".into())), StatusCode::BAD_GATEWAY);
-    assert_eq!(status_of(SvmIndexerError::InternalError("x".into())), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        status_of(SvmIndexerError::InvalidPublicKey("x".into())),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::BadInput("x".into())),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::InvalidURL("x".into())),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::ItemNotFound("x".into())),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::Unauthorized),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::ProgramFailure("x".into())),
+        StatusCode::BAD_GATEWAY
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::InternalError("x".into())),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
     // variants without an explicit arm fall through to 500
-    assert_eq!(status_of(SvmIndexerError::SerializationError("x".into())), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(status_of(SvmIndexerError::RpcRequestFailed("x".into())), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        status_of(SvmIndexerError::SerializationError("x".into())),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        status_of(SvmIndexerError::RpcRequestFailed("x".into())),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
 }
 
 #[test]
@@ -52,11 +79,21 @@ async fn response_body_is_a_json_message_envelope() {
 
 #[tokio::test]
 async fn db_error_with_id_appends_id_but_hides_the_raw_error() {
-    let resp = SvmIndexerError::db_error_with_id("hidden internal detail", DbErr::Custom("inner".into()), 42)
-        .into_response();
+    let resp = SvmIndexerError::db_error_with_id(
+        "hidden internal detail",
+        DbErr::Custom("inner".into()),
+        42,
+    )
+    .into_response();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let message = body["message"].as_str().unwrap();
-    assert!(message.contains("[id = 42]"), "the element id is surfaced to the client");
-    assert!(!message.contains("inner"), "the raw sea-orm error stays server-side");
+    assert!(
+        message.contains("[id = 42]"),
+        "the element id is surfaced to the client"
+    );
+    assert!(
+        !message.contains("inner"),
+        "the raw sea-orm error stays server-side"
+    );
 }

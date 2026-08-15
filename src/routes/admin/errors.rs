@@ -4,9 +4,7 @@ use axum::{
     response::NoContent,
     routing::{get, patch},
 };
-use sea_orm::{
-    ColumnTrait, EntityTrait, QueryFilter, QueryOrder, sea_query::Expr,
-};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, sea_query::Expr};
 
 use crate::{
     core::{
@@ -15,9 +13,7 @@ use crate::{
         state::AppState,
     },
     db::entities::indexer_errors,
-    routes::{
-        payloads::admin::IndexerErrorsQuery, responses::admin::GetIndexerErrorsResponse,
-    },
+    routes::{payloads::admin::IndexerErrorsQuery, responses::admin::GetIndexerErrorsResponse},
 };
 
 async fn get_errors_handler(
@@ -36,9 +32,15 @@ async fn get_errors_handler(
 
     let (errors, total, pages) = query
         .pagination
-        .paginate_or_all(errors_query, &state.db, Some("Failed fetching indexer errors!"))
+        .paginate_or_all(
+            errors_query,
+            &state.db,
+            Some("Failed fetching indexer errors!"),
+        )
         .await?;
-    Ok(ApiResponse::ok(GetIndexerErrorsResponse::new(errors, total, pages)))
+    Ok(ApiResponse::ok(GetIndexerErrorsResponse::new(
+        errors, total, pages,
+    )))
 }
 
 async fn mark_error_seen_handler(
@@ -58,7 +60,9 @@ async fn mark_error_seen_handler(
             )
         })?;
     if result.rows_affected == 0 {
-        return Err(SvmIndexerError::ItemNotFound("No such indexer error!".to_owned()));
+        return Err(SvmIndexerError::ItemNotFound(
+            "No such indexer error!".to_owned(),
+        ));
     }
     Ok(NoContent)
 }

@@ -19,7 +19,9 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
     program: &programs::Model,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
-        SvmIndexerError::InvalidPublicKey("Stored program address is not a valid pubkey!".to_owned())
+        SvmIndexerError::InvalidPublicKey(
+            "Stored program address is not a valid pubkey!".to_owned(),
+        )
     })?;
     let filter = parse_account_filters(program.account_filters.as_ref());
     let snapshots = match filter.as_ref().and_then(|f| f.address_allowlist()) {
@@ -42,9 +44,19 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
         if filter.as_ref().is_some_and(|f| !f.matches(snapshot)) {
             continue;
         }
-        let block_time = (snapshot.slot == head_slot).then_some(head_block_time).flatten();
-        upsert_account_snapshot(db, sse_tx, program.id, program.rpc_id, snapshot, None, block_time)
-            .await?;
+        let block_time = (snapshot.slot == head_slot)
+            .then_some(head_block_time)
+            .flatten();
+        upsert_account_snapshot(
+            db,
+            sse_tx,
+            program.id,
+            program.rpc_id,
+            snapshot,
+            None,
+            block_time,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -56,7 +68,9 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
     program: &programs::Model,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
-        SvmIndexerError::InvalidPublicKey("Stored program address is not a valid pubkey!".to_owned())
+        SvmIndexerError::InvalidPublicKey(
+            "Stored program address is not a valid pubkey!".to_owned(),
+        )
     })?;
     let filter = parse_account_filters(program.account_filters.as_ref());
     let mut stream = match filter.as_ref().and_then(|f| f.address_allowlist()) {
@@ -70,8 +84,16 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
         if filter.as_ref().is_some_and(|f| !f.matches(&snapshot)) {
             continue;
         }
-        upsert_account_snapshot(db, sse_tx, program.id, program.rpc_id, &snapshot, None, None)
-            .await?;
+        upsert_account_snapshot(
+            db,
+            sse_tx,
+            program.id,
+            program.rpc_id,
+            &snapshot,
+            None,
+            None,
+        )
+        .await?;
     }
     // a live subscription never ends on its own; a closed stream means the connection dropped
     Err(SvmIndexerError::SubscriptionFailed(

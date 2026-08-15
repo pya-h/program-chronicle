@@ -1,4 +1,4 @@
-use sea_orm_migration::{prelude::*};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -48,15 +48,15 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(RPCs::CreatedAt)
-                        .timestamp()
-                        .not_null()
-                        .default(Expr::current_timestamp())
+                            .timestamp()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
                     )
                     .col(
                         ColumnDef::new(RPCs::UpdatedAt)
-                        .timestamp()
-                        .not_null()
-                        .default(Expr::current_timestamp())
+                            .timestamp()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
                     )
                     .to_owned(),
             )

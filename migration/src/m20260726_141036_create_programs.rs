@@ -67,7 +67,11 @@ impl MigrationTrait for Migration {
                     )
                     // NULL = track every account the program owns; a descriptor narrows ingestion to
                     // a subset (only needed for chain-wide shared programs like SPL Token/Metaplex)
-                    .col(ColumnDef::new(Programs::AccountFilters).json_binary().null())
+                    .col(
+                        ColumnDef::new(Programs::AccountFilters)
+                            .json_binary()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(Programs::CreatedAt)
                             .timestamp()

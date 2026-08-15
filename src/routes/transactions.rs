@@ -94,7 +94,11 @@ async fn get_transactions_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(transactions_query, &state.db, Some("Failed fetching transactions!"))
+        .paginate_or_all(
+            transactions_query,
+            &state.db,
+            Some("Failed fetching transactions!"),
+        )
         .await?;
     Ok(ApiResponse::ok(TransactionsResponse::new(
         rows, total, pages,

@@ -7,7 +7,13 @@ fn account_changed_constructor_sets_all_fields() {
     let address = pubkey(1);
     let event = SseEvent::account_changed(7, address, 500, 3, vec![1, 2, 3]);
     match event {
-        SseEvent::AccountChanged { program_id, address: got, slot, write_version, data } => {
+        SseEvent::AccountChanged {
+            program_id,
+            address: got,
+            slot,
+            write_version,
+            data,
+        } => {
             assert_eq!(program_id, 7);
             assert_eq!(got, address);
             assert_eq!(slot, 500);
@@ -22,7 +28,13 @@ fn account_changed_constructor_sets_all_fields() {
 fn program_event_constructor_sets_all_fields() {
     let event = SseEvent::program_event(9, vec![0xaa; 64], 4, 600, vec![5, 6]);
     match event {
-        SseEvent::ProgramEvent { program_id, tx_signature, log_index, slot, data } => {
+        SseEvent::ProgramEvent {
+            program_id,
+            tx_signature,
+            log_index,
+            slot,
+            data,
+        } => {
             assert_eq!(program_id, 9);
             assert_eq!(tx_signature, vec![0xaa; 64]);
             assert_eq!(log_index, 4);
@@ -46,7 +58,15 @@ fn transaction_indexed_constructor_sets_all_fields() {
         Some(payer.clone()),
     );
     match event {
-        SseEvent::TransactionIndexed { program_id, signature, slot, success, err, fee, fee_payer } => {
+        SseEvent::TransactionIndexed {
+            program_id,
+            signature,
+            slot,
+            success,
+            err,
+            fee,
+            fee_payer,
+        } => {
             assert_eq!(program_id, 3);
             assert_eq!(signature, vec![0xbb; 64]);
             assert_eq!(slot, 700);
