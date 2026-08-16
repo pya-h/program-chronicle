@@ -157,9 +157,8 @@ async fn sse_account_handler(
 
 async fn sse_program_accounts_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let program_id = program_id as i32;
     let stream = subscriber_stream(state.sse_tx.subscribe(), move |event| match event {
         SseEvent::AccountChanged {
             program_id: pid,
@@ -178,9 +177,8 @@ async fn sse_program_accounts_handler(
 
 async fn sse_program_events_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let program_id = program_id as i32;
     let stream = subscriber_stream(state.sse_tx.subscribe(), move |event| match event {
         SseEvent::ProgramEvent {
             program_id: pid,
@@ -199,9 +197,8 @@ async fn sse_program_events_handler(
 
 async fn sse_program_transactions_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let program_id = program_id as i32;
     let stream = subscriber_stream(state.sse_tx.subscribe(), move |event| match event {
         SseEvent::TransactionIndexed {
             program_id: pid,

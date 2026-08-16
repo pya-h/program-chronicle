@@ -52,6 +52,12 @@ fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
     let bytes = bs58::decode(encoded)
         .into_vec()
         .map_err(|_| SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned()))?;
+    if bytes.is_empty() {
+        // an empty payload makes `substr(...) = ''` match every row — reject it as a no-op filter
+        return Err(SvmIndexerError::BadInput(
+            "memcmp needs at least one byte to match!".to_owned(),
+        ));
+    }
     // substr is 1-indexed, memcmp offset is 0-indexed; substr on bytea needs integer args
     Ok(Expr::cust_with_values(
         "substr(program_accounts.state, $1, $2) = $3",
@@ -65,11 +71,10 @@ fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
 
 async fn get_program_accounts_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(query): Query<ProgramAccountsQuery>,
 ) -> FinalResponse<ProgramAccountsResponse> {
-    let mut condition =
-        Condition::all().add(program_accounts::Column::ProgramId.eq(program_id as i32));
+    let mut condition = Condition::all().add(program_accounts::Column::ProgramId.eq(program_id));
     if let Some(memcmp) = &query.memcmp {
         condition = condition.add(memcmp_filter(memcmp)?);
     }
@@ -105,11 +110,10 @@ async fn get_program_accounts_handler(
 
 async fn get_program_events_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(query): Query<ProgramEventsQuery>,
 ) -> FinalResponse<ProgramEventsResponse> {
-    let mut condition =
-        Condition::all().add(program_events::Column::ProgramId.eq(program_id as i32));
+    let mut condition = Condition::all().add(program_events::Column::ProgramId.eq(program_id));
     if let Some(since_slot) = query.since_slot {
         condition = condition.add(program_events::Column::Slot.gte(since_slot));
     }
@@ -163,7 +167,7 @@ async fn get_program_events_handler(
 
 async fn get_program_transactions_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(query): Query<ProgramTransactionsQuery>,
 ) -> FinalResponse<TransactionsResponse> {
     let correlated = query.correlated.unwrap_or(false);
@@ -175,18 +179,14 @@ async fn get_program_transactions_handler(
         ));
     }
 
-    let mut condition = if correlated {
-        Condition::all().add(
-            transactions::Column::Signature.in_subquery(correlated_signatures(
-                program_id as i32,
-                query.since_slot,
-                query.from_slot,
-                query.to_slot,
-            )),
-        )
-    } else {
-        Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32))
-    };
+    let mut condition =
+        if correlated {
+            Condition::all().add(transactions::Column::Signature.in_subquery(
+                correlated_signatures(program_id, query.since_slot, query.from_slot, query.to_slot),
+            ))
+        } else {
+            Condition::all().add(transactions::Column::ProgramId.eq(program_id))
+        };
     // an explicit ?commitment= matches that level; otherwise reorg-ed `dropped` rows are hidden
     match &query.commitment {
         Some(level) => {

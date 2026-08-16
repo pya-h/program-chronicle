@@ -116,7 +116,7 @@ async fn get_rpcs_handler(
 
 async fn get_single_rpc_handler(
     State(state): State<AppState>,
-    Path(rpc_id): Path<u16>,
+    Path(rpc_id): Path<i32>,
 ) -> FinalResponse<RpcWithProgramsResponse> {
     let possible_rpc = rpcs::Entity::find_by_id(rpc_id)
         .one(&state.db)
@@ -149,7 +149,7 @@ async fn get_single_rpc_handler(
 
 async fn update_rpc_handler(
     State(state): State<AppState>,
-    Path(rpc_id): Path<u16>,
+    Path(rpc_id): Path<i32>,
     Json(payload): Json<UpdateRpcPayload>,
 ) -> FinalResponse<RpcModel> {
     let new_http_url = if let Some(hu) = payload.http_url {
@@ -181,7 +181,7 @@ async fn update_rpc_handler(
         return Err(SvmIndexerError::ItemNotFound("No such RPC!".to_owned()));
     }
     let updated_rpc = rpcs::ActiveModel {
-        id: Set(rpc_id as i32),
+        id: Set(rpc_id),
         http_url: new_http_url.map_or(NotSet, Set),
         ws_url: new_ws_url.map_or(NotSet, Set),
         ..Default::default()
@@ -200,7 +200,7 @@ async fn update_rpc_handler(
 
 async fn delete_rpc_handler(
     State(state): State<AppState>,
-    Path(rpc_id): Path<u16>,
+    Path(rpc_id): Path<i32>,
 ) -> NoContentResponse {
     if rpcs::Entity::delete_by_id(rpc_id)
         .exec(&state.db)

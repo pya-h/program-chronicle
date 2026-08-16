@@ -1,6 +1,7 @@
 mod admin;
 mod common;
 mod errors;
+mod ingest_sse;
 mod persistence;
 mod programs;
 mod reads;

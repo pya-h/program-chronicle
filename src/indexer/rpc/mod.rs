@@ -110,6 +110,11 @@ pub trait SvmRpc: Send + Sync {
         signatures: &[Signature],
     ) -> RpcResult<Vec<Option<TransactionCommitment>>>;
 
+    async fn get_signature_statuses_with_history(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<TransactionCommitment>>>;
+
     async fn subscribe_program(
         &self,
         program: &Pubkey,

@@ -120,7 +120,7 @@ pub async fn index_transaction(
 
     let slot_id = ensure_slot(&txn, rpc_id, slot, tx.block_time).await?;
 
-    transactions::Entity::insert(transactions::ActiveModel {
+    let tx_inserted = transactions::Entity::insert(transactions::ActiveModel {
         signature: Set(tx.signature.as_ref().to_vec()),
         program_id: Set(Some(program_id)),
         slot: Set(slot),
@@ -141,34 +141,42 @@ pub async fn index_transaction(
     )
     .exec_without_returning(&txn)
     .await
-    .map_err(|err| SvmIndexerError::db_error("Failed persisting transaction!", err))?;
+    .map_err(|err| SvmIndexerError::db_error("Failed persisting transaction!", err))?
+        > 0;
 
     index_transaction_accounts(&txn, slot, tx, now).await?;
 
-    let events = index_events_from_tx(&txn, program_id, address, slot, slot_id, tx, now).await?;
+    let (events, events_inserted) =
+        index_events_from_tx(&txn, program_id, address, slot, slot_id, tx, now).await?;
 
     txn.commit()
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed committing transaction!", err))?;
 
+    // skip re-broadcasting a re-ingested tx (catch-up/live overlap); a second program's genuinely
+    // new events still fire on their own insert
     let signature = tx.signature.as_ref().to_vec();
-    let _ = sse_tx.send(SseEvent::transaction_indexed(
-        program_id,
-        signature.clone(),
-        slot,
-        tx.success,
-        tx.err.clone(),
-        tx.fee.map(|fee| fee as i64),
-        tx.fee_payer.map(|payer| payer.to_bytes().to_vec()),
-    ));
-    for event in &events {
-        let _ = sse_tx.send(SseEvent::program_event(
+    if tx_inserted {
+        let _ = sse_tx.send(SseEvent::transaction_indexed(
             program_id,
             signature.clone(),
-            event.log_index as i32,
             slot,
-            event.data.clone(),
+            tx.success,
+            tx.err.clone(),
+            tx.fee.map(|fee| fee as i64),
+            tx.fee_payer.map(|payer| payer.to_bytes().to_vec()),
         ));
+    }
+    if events_inserted {
+        for event in &events {
+            let _ = sse_tx.send(SseEvent::program_event(
+                program_id,
+                signature.clone(),
+                event.log_index as i32,
+                slot,
+                event.data.clone(),
+            ));
+        }
     }
     Ok(())
 }
@@ -218,10 +226,10 @@ async fn index_events_from_tx<C: ConnectionTrait>(
     slot_id: i64,
     tx: &RawTransaction,
     now: chrono::NaiveDateTime,
-) -> Result<Vec<ParsedEvent>, SvmIndexerError> {
+) -> Result<(Vec<ParsedEvent>, bool), SvmIndexerError> {
     let events = RawLogParser.parse(address, &tx.logs);
     if events.is_empty() {
-        return Ok(events);
+        return Ok((events, false));
     }
     let signature = tx.signature.as_ref().to_vec();
     let rows = events.iter().map(|event| program_events::ActiveModel {
@@ -234,7 +242,7 @@ async fn index_events_from_tx<C: ConnectionTrait>(
         created_at: Set(now),
         ..Default::default()
     });
-    program_events::Entity::insert_many(rows)
+    let inserted = program_events::Entity::insert_many(rows)
         .on_conflict(
             OnConflict::columns([
                 program_events::Column::TxSignature,
@@ -246,5 +254,5 @@ async fn index_events_from_tx<C: ConnectionTrait>(
         .exec_without_returning(db)
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed persisting program events!", err))?;
-    Ok(events)
+    Ok((events, inserted > 0))
 }

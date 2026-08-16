@@ -152,7 +152,7 @@ pub async fn upsert_account_snapshot(
     .await
     .map_err(|err| SvmIndexerError::db_error("Failed appending account state!", err))?;
 
-    program_accounts::Entity::update_many()
+    let advanced = program_accounts::Entity::update_many()
         .col_expr(
             program_accounts::Column::State,
             Expr::value(snapshot.data.clone()),
@@ -190,12 +190,15 @@ pub async fn upsert_account_snapshot(
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed committing snapshot!", err))?;
 
-    let _ = sse_tx.send(SseEvent::account_changed(
-        program_id,
-        snapshot.address,
-        slot,
-        write_version,
-        snapshot.data.clone(),
-    ));
+    // a rejected out-of-order write advances no row; don't broadcast its stale state
+    if advanced.rows_affected > 0 {
+        let _ = sse_tx.send(SseEvent::account_changed(
+            program_id,
+            snapshot.address,
+            slot,
+            write_version,
+            snapshot.data.clone(),
+        ));
+    }
     Ok(())
 }

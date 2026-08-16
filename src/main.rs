@@ -33,10 +33,7 @@ async fn main() {
     let database_connection = match Database::connect(db_options).await {
         Ok(conn) => conn,
         Err(err) => {
-            panic!(
-                "Database connection failed: {}",
-                err.sql_err().expect("Unknown error happened!")
-            );
+            panic!("Database connection failed: {err}");
         }
     };
 
@@ -90,6 +87,10 @@ async fn main() {
     });
 
     let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
+    assert!(
+        !admin_passkey.trim().is_empty(),
+        "ADMIN_PASSKEY must not be empty!"
+    );
     let router = svm_indexer::app(
         database_connection,
         admin_passkey,

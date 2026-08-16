@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,9 +24,9 @@ const STATUS_BATCH: u64 = 256;
 const COMMITMENT_RECENT_SLOTS: i64 = 150;
 
 /// Splits a swept batch by its freshly fetched status: rows the node reports finalized are promoted,
-/// rows absent from the recent status cache (`None`) are treated as reorged away and dropped; anything
-/// still processed/confirmed is left untouched for the next tick. Callers must only pass signatures
-/// within the recent-slots window, where an absent status means a drop rather than an aged-out row.
+/// rows absent from the recent status cache (`None`) become drop *candidates* the caller re-confirms
+/// at finalized before dropping; anything still processed/confirmed is left untouched for the next
+/// tick. Callers must only pass signatures within the recent-slots window.
 pub(crate) fn classify_commitment_sweep(
     signatures: Vec<Vec<u8>>,
     statuses: Vec<Option<TransactionCommitment>>,
@@ -121,9 +122,12 @@ impl Indexer {
     /// Fills `slots.block_time` left NULL at ingest.
     pub async fn run_block_time_backfill(self: Arc<Self>, interval: Duration) {
         let mut ticker = tokio::time::interval(interval);
+        // per-rpc low-water slot the next scan resumes from, so a front of permanently unresolvable
+        // slots can't pin the window and starve newer resolvable ones
+        let mut cursors: HashMap<i32, i64> = HashMap::new();
         loop {
             ticker.tick().await;
-            if let Err(err) = self.backfill_block_times_once().await {
+            if let Err(err) = self.backfill_block_times_once(&mut cursors).await {
                 tracing::error!(error = %err, "block_time backfill pass failed!");
             }
         }
@@ -222,13 +226,56 @@ impl Indexer {
                 continue;
             }
 
-            let statuses = client.get_signature_statuses(&sigs).await?;
-            let (finalized, dropped) = classify_commitment_sweep(sig_bytes, statuses);
+            let statuses = match client.get_signature_statuses(&sigs).await {
+                Ok(statuses) => statuses,
+                Err(err) => {
+                    tracing::warn!(rpc_id = rpc.id, error = %err, "Failed fetching signature statuses for commitment sweep!");
+                    continue;
+                }
+            };
+            let (mut finalized, candidates) = classify_commitment_sweep(sig_bytes, statuses);
 
-            self.set_commitment(finalized, TransactionCommitment::Finalized)
-                .await?;
-            self.set_commitment(dropped, TransactionCommitment::Dropped)
-                .await?;
+            let mut dropped = Vec::new();
+            if !candidates.is_empty() {
+                let mut candidate_bytes = Vec::with_capacity(candidates.len());
+                let mut candidate_sigs = Vec::with_capacity(candidates.len());
+                for bytes in candidates {
+                    if let Ok(sig) = Signature::try_from(bytes.as_slice()) {
+                        candidate_sigs.push(sig);
+                        candidate_bytes.push(bytes);
+                    }
+                }
+                // second pass: a `None` from the recent status cache can be an aged-out finalized tx,
+                // not a reorg; re-check the candidates against full ledger history before dropping
+                match client
+                    .get_signature_statuses_with_history(&candidate_sigs)
+                    .await
+                {
+                    Ok(history) => {
+                        let (rescued, gone) = classify_commitment_sweep(candidate_bytes, history);
+                        finalized.extend(rescued);
+                        dropped = gone;
+                    }
+                    Err(err) => {
+                        // inconclusive — leave the candidates for the next tick, never fabricate a drop
+                        tracing::warn!(rpc_id = rpc.id, error = %err, "Failed confirming suspected drops at finalized!");
+                    }
+                }
+            }
+
+            if let Err(err) = self
+                .set_commitment(finalized, TransactionCommitment::Finalized)
+                .await
+            {
+                tracing::warn!(rpc_id = rpc.id, error = %err, "Failed promoting finalized commitments!");
+                continue;
+            }
+            if let Err(err) = self
+                .set_commitment(dropped, TransactionCommitment::Dropped)
+                .await
+            {
+                tracing::warn!(rpc_id = rpc.id, error = %err, "Failed marking dropped commitments!");
+            }
         }
         Ok(())
     }
@@ -261,15 +308,20 @@ impl Indexer {
         Ok(())
     }
 
-    async fn backfill_block_times_once(&self) -> Result<(), SvmIndexerError> {
+    async fn backfill_block_times_once(
+        &self,
+        cursors: &mut HashMap<i32, i64>,
+    ) -> Result<(), SvmIndexerError> {
         let networks = rpcs::Entity::find().all(&self.db).await.map_err(|err| {
             SvmIndexerError::db_error("Failed loading rpcs for block_time backfill!", err)
         })?;
 
         for rpc in networks {
+            let from = cursors.get(&rpc.id).copied().unwrap_or(0);
             let pending = slots::Entity::find()
                 .filter(slots::Column::RpcId.eq(rpc.id))
                 .filter(slots::Column::BlockTime.is_null())
+                .filter(slots::Column::Slot.gte(from))
                 .order_by_asc(slots::Column::Slot)
                 .limit(BACKFILL_BATCH)
                 .all(&self.db)
@@ -278,8 +330,10 @@ impl Indexer {
                     SvmIndexerError::db_error("Failed loading slots missing block_time!", err)
                 })?;
             if pending.is_empty() {
+                cursors.remove(&rpc.id); // window exhausted from `from`; wrap to the start next tick
                 continue;
             }
+            cursors.insert(rpc.id, pending.last().map_or(from, |slot| slot.slot + 1));
 
             let client = self.client_for(&rpc).await;
             for slot in pending {

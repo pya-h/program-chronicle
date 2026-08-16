@@ -53,7 +53,7 @@ fn account_filters_value(
 
 async fn get_or_add_rpc(
     state: &AppState,
-    rpc_id: &Option<u16>,
+    rpc_id: &Option<i32>,
     rpc_url: &Option<AddRpcPayload>,
 ) -> Result<Option<rpcs::Model>, SvmIndexerError> {
     if let Some(rpc_id) = *rpc_id {
@@ -74,10 +74,10 @@ async fn get_or_add_rpc(
         };
         Ok(Some(rpc))
     } else if let Some(rpc) = rpc_url {
-        let mut conditions = Condition::all().add(rpcs::Column::HttpUrl.ilike(&rpc.http_url));
+        let mut conditions = Condition::all().add(rpcs::Column::HttpUrl.eq(&rpc.http_url));
 
         if let Some(ws_url) = &rpc.ws_url {
-            conditions = conditions.add(rpcs::Column::WsUrl.ilike(ws_url));
+            conditions = conditions.add(rpcs::Column::WsUrl.eq(ws_url));
         }
         let maybe_found_rpc = rpcs::Entity::find()
             .filter(conditions)
@@ -142,7 +142,7 @@ async fn add_program_handler(
 /// Flips a program's `active` flag and tells the supervisor to start or stop its indexer task.
 async fn set_program_activation(
     state: &AppState,
-    program_id: u16,
+    program_id: i32,
     active: bool,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     let found = programs::Entity::find_by_id(program_id)
@@ -195,21 +195,21 @@ async fn set_program_activation(
 
 async fn activate_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     set_program_activation(&state, program_id, true).await
 }
 
 async fn deactivate_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     set_program_activation(&state, program_id, false).await
 }
 
 async fn get_single_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(GetSingleProgramPayload { ignore_unknown_rpc }): Query<GetSingleProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     let possible_program = programs::Entity::find_by_id(program_id)
@@ -264,7 +264,7 @@ async fn get_programs_handler(
 
 async fn update_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Json(payload): Json<UpdateProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     if payload.is_empty() {
@@ -303,7 +303,7 @@ async fn update_program_handler(
     };
     let changed_rpc = get_or_add_rpc(&state, &payload.rpc_id, &payload.rpc_url).await?;
     let program = programs::ActiveModel {
-        id: Unchanged(program_id as i32),
+        id: Unchanged(program_id),
         address,
         name: payload.name.map_or(NotSet, |name| {
             let new_name = name.trim().to_owned();
@@ -361,7 +361,7 @@ async fn update_program_handler(
 
 async fn delete_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> NoContentResponse {
     if programs::Entity::delete_by_id(program_id)
         .exec(&state.db)

@@ -158,7 +158,7 @@ impl SvmRpc for JsonRpc {
             before,
             until: None,
             limit: Some(limit),
-            commitment: None,
+            commitment: Some(self.commitment),
         };
         let signatures = self
             .client
@@ -185,7 +185,7 @@ impl SvmRpc for JsonRpc {
     async fn get_transaction(&self, signature: &Signature) -> RpcResult<RawTransaction> {
         let config = RpcTransactionConfig {
             encoding: Some(UiTransactionEncoding::Json),
-            commitment: None,
+            commitment: Some(self.commitment),
             max_supported_transaction_version: Some(0),
         };
         let tx = self
@@ -223,6 +223,30 @@ impl SvmRpc for JsonRpc {
         let statuses = self
             .client
             .get_signature_statuses(signatures)
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?
+            .value;
+        Ok(statuses
+            .into_iter()
+            .map(|status| {
+                status.map(|status| {
+                    status
+                        .confirmation_status
+                        .as_ref()
+                        .map(TransactionCommitment::from)
+                        .unwrap_or(TransactionCommitment::Processed)
+                })
+            })
+            .collect())
+    }
+
+    async fn get_signature_statuses_with_history(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<TransactionCommitment>>> {
+        let statuses = self
+            .client
+            .get_signature_statuses_with_history(signatures)
             .await
             .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?
             .value;
