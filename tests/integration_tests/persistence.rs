@@ -105,7 +105,10 @@ async fn double_apply_identical_snapshot_is_idempotent() {
         .count(&db)
         .await
         .unwrap();
-    assert_eq!(count, 1, "an identical snapshot must not create a duplicate row");
+    assert_eq!(
+        count, 1,
+        "an identical snapshot must not create a duplicate row"
+    );
 }
 
 #[tokio::test]
@@ -146,10 +149,7 @@ async fn newer_slot_advances_latest_state() {
     .await;
 
     let account = latest_account(&db, program_id, &address).await;
-    assert_eq!(
-        account.latest_slot, 600,
-        "must advance to the newer slot"
-    );
+    assert_eq!(account.latest_slot, 600, "must advance to the newer slot");
     assert_ne!(
         account.latest_slot_id, before.latest_slot_id,
         "latest_slot_id must advance with the slot"
@@ -424,9 +424,5 @@ async fn same_slot_json_rpc_rewrite_wins_last() {
         account.latest_write_version, 0,
         "json-rpc rewrites both collapse to write_version 0"
     );
-    assert_eq!(
-        account.state,
-        vec![2],
-        "the later same-slot write must win"
-    );
+    assert_eq!(account.state, vec![2], "the later same-slot write must win");
 }

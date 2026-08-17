@@ -18,12 +18,9 @@ use crate::{
     db::entities::{program_accounts, program_events, slots, transactions},
     routes::{
         correlation::correlated_signatures,
-        payloads::programs::{
-            ProgramAccountsQuery, ProgramEventsQuery, ProgramTransactionsQuery,
-        },
+        payloads::programs::{ProgramAccountsQuery, ProgramEventsQuery, ProgramTransactionsQuery},
         responses::{
-            accounts::ProgramAccountsResponse,
-            events::ProgramEventsResponse,
+            accounts::ProgramAccountsResponse, events::ProgramEventsResponse,
             transactions::TransactionsResponse,
         },
     },
