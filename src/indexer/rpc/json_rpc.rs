@@ -22,7 +22,7 @@ use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
     AccountFilter, AccountSnapshot, LogsNotification, RawTransaction, RpcResult, SignatureInfo,
-    SubStream, SvmRpc, TxAccount,
+    SubReady, SubStream, SvmRpc, TxAccount,
 };
 
 const MAX_MULTIPLE_ACCOUNTS: usize = 100;
@@ -268,6 +268,7 @@ impl SvmRpc for JsonRpc {
         &self,
         program: &Pubkey,
         filter: Option<&AccountFilter>,
+        ready: SubReady,
     ) -> RpcResult<SubStream<AccountSnapshot>> {
         let client = self.connect().await?;
         let config = RpcProgramAccountsConfig {
@@ -292,6 +293,7 @@ impl SvmRpc for JsonRpc {
                     return;
                 }
             };
+            let _ = ready.send(());
             loop {
                 let response = tokio::select! {
                     _ = tx.closed() => break, // consumer gone; drop the subscription and close the socket
@@ -335,6 +337,7 @@ impl SvmRpc for JsonRpc {
     async fn subscribe_accounts(
         &self,
         addresses: &[Pubkey],
+        ready: SubReady,
     ) -> RpcResult<SubStream<AccountSnapshot>> {
         let client = self.connect().await?;
         let config = RpcAccountInfoConfig {
@@ -379,6 +382,7 @@ impl SvmRpc for JsonRpc {
                 }));
             }
             let mut merged = futures::stream::select_all(streams);
+            let _ = ready.send(()); // only once every key is subscribed
             loop {
                 let item = tokio::select! {
                     _ = tx.closed() => break,
@@ -395,7 +399,11 @@ impl SvmRpc for JsonRpc {
         Ok(receiver_stream(rx))
     }
 
-    async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>> {
+    async fn subscribe_logs(
+        &self,
+        program: &Pubkey,
+        ready: SubReady,
+    ) -> RpcResult<SubStream<LogsNotification>> {
         let client = self.connect().await?;
         let config = RpcTransactionLogsConfig {
             commitment: Some(self.commitment),
@@ -412,6 +420,7 @@ impl SvmRpc for JsonRpc {
                     return;
                 }
             };
+            let _ = ready.send(());
             loop {
                 let response = tokio::select! {
                     _ = tx.closed() => break,

@@ -12,9 +12,18 @@ use crate::core::sse::SseEvent;
 use crate::db::entities::{program_events, programs, transaction_accounts, transactions};
 use crate::indexer::events::{EventParser, ParsedEvent, RawLogParser};
 use crate::indexer::persist::ensure_slot;
-use crate::indexer::rpc::{RawTransaction, SvmRpc};
+use crate::indexer::rpc::{RawTransaction, SubReady, SvmRpc};
 
 const CATCH_UP_PAGE_SIZE: usize = 1000;
+
+/// Where the backward walk stops. `since` raises the floor above the program cursor, for the narrow
+/// re-sweep that closes the window between the bulk walk and the live subscription.
+pub(crate) fn catch_up_floor(program: &programs::Model, since: Option<i64>) -> i64 {
+    since
+        .or(program.last_processed_slot)
+        .unwrap_or(0)
+        .max(program.start_slot.unwrap_or(0))
+}
 
 /// Backfills the downtime gap: newest→oldest
 pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
@@ -23,16 +32,14 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
     sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
     commitment: TransactionCommitment,
+    since: Option<i64>,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
         SvmIndexerError::InvalidPublicKey(
             "Stored program address is not a valid pubkey!".to_owned(),
         )
     })?;
-    let floor = program
-        .last_processed_slot
-        .unwrap_or(0)
-        .max(program.start_slot.unwrap_or(0));
+    let floor = catch_up_floor(program, since);
 
     let mut before = None;
     'pages: loop {
@@ -73,13 +80,14 @@ pub async fn stream_transactions<R: SvmRpc + ?Sized>(
     sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
     commitment: TransactionCommitment,
+    ready: SubReady,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
         SvmIndexerError::InvalidPublicKey(
             "Stored program address is not a valid pubkey!".to_owned(),
         )
     })?;
-    let mut stream = rpc.subscribe_logs(&address).await?;
+    let mut stream = rpc.subscribe_logs(&address, ready).await?;
 
     while let Some(notification) = stream.next().await {
         let notification = notification?;

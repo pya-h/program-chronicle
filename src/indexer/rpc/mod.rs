@@ -5,6 +5,7 @@ use std::pin::Pin;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
+use tokio::sync::oneshot;
 
 use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
@@ -12,6 +13,10 @@ use crate::core::error::SvmIndexerError;
 pub type RpcResult<T> = Result<T, SvmIndexerError>;
 
 pub type SubStream<T> = Pin<Box<dyn Stream<Item = RpcResult<T>> + Send>>;
+
+/// Fires once the node accepted the subscription. The stream handle is returned before that, so a
+/// caller that must not miss updates has to await it; a dropped sender means the subscribe failed.
+pub type SubReady = oneshot::Sender<()>;
 
 #[derive(Clone, Debug)]
 pub struct AccountSnapshot {
@@ -119,6 +124,7 @@ pub trait SvmRpc: Send + Sync {
         &self,
         program: &Pubkey,
         filter: Option<&AccountFilter>,
+        ready: SubReady,
     ) -> RpcResult<SubStream<AccountSnapshot>>;
 
     /// Live updates for an explicit set of accounts — the streaming half of the address-allowlist
@@ -126,7 +132,12 @@ pub trait SvmRpc: Send + Sync {
     async fn subscribe_accounts(
         &self,
         addresses: &[Pubkey],
+        ready: SubReady,
     ) -> RpcResult<SubStream<AccountSnapshot>>;
 
-    async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>>;
+    async fn subscribe_logs(
+        &self,
+        program: &Pubkey,
+        ready: SubReady,
+    ) -> RpcResult<SubStream<LogsNotification>>;
 }

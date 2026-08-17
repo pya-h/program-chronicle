@@ -1,5 +1,6 @@
 mod support;
 
+mod catchup;
 mod commitment;
 mod errors;
 mod events;

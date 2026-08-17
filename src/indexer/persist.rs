@@ -1,5 +1,4 @@
 use sea_orm::{
-    ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
     TransactionTrait,
@@ -96,7 +95,7 @@ pub async fn upsert_account_snapshot(
     let program_account_id = match existing {
         Some(row) => row.id,
         None => {
-            program_accounts::ActiveModel {
+            program_accounts::Entity::insert(program_accounts::ActiveModel {
                 program_id: Set(program_id),
                 address: Set(address),
                 state: Set(snapshot.data.clone()),
@@ -110,8 +109,21 @@ pub async fn upsert_account_snapshot(
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
-            }
-            .insert(&txn)
+            })
+            .on_conflict(
+                // the snapshot and the live stream can first-see an account at the same moment; a
+                // no-op update keeps RETURNING yielding the row the loser needs to carry on with
+                OnConflict::columns([
+                    program_accounts::Column::Address,
+                    program_accounts::Column::ProgramId,
+                ])
+                .value(
+                    program_accounts::Column::UpdatedAt,
+                    Expr::cust(r#""program_accounts"."updated_at""#),
+                )
+                .to_owned(),
+            )
+            .exec_with_returning(&txn)
             .await
             .map_err(|err| SvmIndexerError::db_error("Failed creating cached account!", err))?
             .id

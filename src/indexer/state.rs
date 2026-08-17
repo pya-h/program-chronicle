@@ -8,7 +8,7 @@ use crate::core::sse::SseEvent;
 use crate::db::entities::programs;
 use crate::indexer::filter::parse_account_filters;
 use crate::indexer::persist::upsert_account_snapshot;
-use crate::indexer::rpc::SvmRpc;
+use crate::indexer::rpc::{SubReady, SvmRpc};
 
 /// Runs on every boot to fill the downtime gap by snapshoting the accounts a program owns (or the
 /// filtered subset, when `account_filters` narrows it).
@@ -66,6 +66,7 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
     db: &DatabaseConnection,
     sse_tx: &broadcast::Sender<SseEvent>,
     program: &programs::Model,
+    ready: SubReady,
 ) -> Result<(), SvmIndexerError> {
     let address = Pubkey::try_from(program.address.as_slice()).map_err(|_| {
         SvmIndexerError::InvalidPublicKey(
@@ -74,8 +75,11 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
     })?;
     let filter = parse_account_filters(program.account_filters.as_ref());
     let mut stream = match filter.as_ref().and_then(|f| f.address_allowlist()) {
-        Some(addresses) => rpc.subscribe_accounts(&addresses).await?,
-        None => rpc.subscribe_program(&address, filter.as_ref()).await?,
+        Some(addresses) => rpc.subscribe_accounts(&addresses, ready).await?,
+        None => {
+            rpc.subscribe_program(&address, filter.as_ref(), ready)
+                .await?
+        }
     };
 
     while let Some(snapshot) = stream.next().await {

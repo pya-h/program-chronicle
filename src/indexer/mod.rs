@@ -19,7 +19,7 @@ use sea_orm::{
 };
 use solana_sdk::commitment_config::CommitmentConfig;
 use tokio::{
-    sync::{Mutex, Semaphore, broadcast},
+    sync::{Mutex, Semaphore, broadcast, oneshot},
     task::JoinHandle,
 };
 
@@ -109,18 +109,72 @@ impl Indexer {
                 .acquire()
                 .await
                 .expect("catch-up semaphore is never closed");
-            catch_up_state(rpc.as_ref(), &self.db, &self.sse_tx, &program).await?; // cache up to the head
-            catch_up_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program, commitment)
-                .await?; // backfill the downtime gap
+            // stays ahead of the streams: inside `try_join!` a dropped stream would cancel this walk
+            // mid-way, and it would restart from the same floor on every retry, never finishing
+            catch_up_transactions(
+                rpc.as_ref(),
+                &self.db,
+                &self.sse_tx,
+                &program,
+                commitment,
+                None,
+            )
+            .await?; // backfill the downtime gap
         } // release the permit before streaming — steady-state is unthrottled
         self.advance_cursor(&program, head).await?;
 
+        let (state_ready, state_live) = oneshot::channel();
+        let (tx_ready, tx_live) = oneshot::channel();
         tokio::try_join!(
-            stream_state(rpc.as_ref(), &self.db, &self.sse_tx, &program),
-            stream_transactions(rpc.as_ref(), &self.db, &self.sse_tx, &program, commitment),
+            stream_state(rpc.as_ref(), &self.db, &self.sse_tx, &program, state_ready),
+            stream_transactions(
+                rpc.as_ref(),
+                &self.db,
+                &self.sse_tx,
+                &program,
+                commitment,
+                tx_ready
+            ),
+            self.close_subscribe_gap(
+                rpc.as_ref(),
+                &program,
+                commitment,
+                head,
+                state_live,
+                tx_live
+            ),
         )?; // try_join so when one stream ends/errors the other stops too; the caller
         // (spawn_program) then retries the whole run with backoff, then cools down and restarts.
         Ok(())
+    }
+
+    /// Covers the window between the catch-up above and the subscriptions going live, which nothing
+    /// else reaches: the walk only pages backwards from where it started, and the streams only carry
+    /// what the node accepted them for.
+    async fn close_subscribe_gap(
+        &self,
+        rpc: &dyn SvmRpc,
+        program: &programs::Model,
+        commitment: TransactionCommitment,
+        head: i64,
+        state_live: oneshot::Receiver<()>,
+        tx_live: oneshot::Receiver<()>,
+    ) -> Result<(), SvmIndexerError> {
+        // an error instead of readiness leaves the sender dropped; the stream reports it, so the
+        // only thing to do here is stop waiting and let `try_join!` unwind
+        let _ = state_live.await;
+        {
+            let _permit = self
+                .catchup_semaphore
+                .acquire()
+                .await
+                .expect("catch-up semaphore is never closed");
+            // taken after the stream is live, so the snapshot is the newest state and needs no redo
+            catch_up_state(rpc, &self.db, &self.sse_tx, program).await?;
+        }
+
+        let _ = tx_live.await;
+        catch_up_transactions(rpc, &self.db, &self.sse_tx, program, commitment, Some(head)).await
     }
 
     async fn resolve_start_slot(
