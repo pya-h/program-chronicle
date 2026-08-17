@@ -48,13 +48,20 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
     }
     let estimate_of = |table: &str| estimates.get(table).copied().unwrap_or(0);
 
+    let phases = match &state.phases {
+        Some(phases) => phases.lock().await.clone(),
+        None => HashMap::new(),
+    };
     let per_program = programs::Entity::find()
         .order_by_asc(programs::Column::Id)
         .all(&state.db)
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed fetching program progress!", err))?
         .into_iter()
-        .map(ProgramProgressResponse::from_model)
+        .map(|program| {
+            let phase = phases.get(&program.id).copied();
+            ProgramProgressResponse::from_model(program, phase)
+        })
         .collect();
 
     Ok(ApiResponse::ok(IndexerStatsResponse {

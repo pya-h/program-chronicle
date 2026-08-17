@@ -8,7 +8,7 @@ use tokio::time::{Instant, sleep};
 use crate::core::error::SvmIndexerError;
 use crate::core::indexer_error::{IndexerErrorKind, record};
 use crate::core::retry::retry;
-use crate::core::state::ProgramCommand;
+use crate::core::state::{ProgramCommand, ProgramPhase};
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::Indexer;
 
@@ -107,6 +107,9 @@ impl Indexer {
                         .await;
                     }
                 }
+                indexer
+                    .set_phase(program_id, ProgramPhase::Restarting)
+                    .await;
                 // a run that stayed healthy past the reset window earns a fresh cooldown
                 let healthy = started.elapsed() >= policy.reset_after;
                 sleep(cooldown).await;
@@ -125,6 +128,7 @@ impl Indexer {
     async fn stop_program(&self, program_id: i32) {
         if let Some(handle) = self.handles.lock().await.remove(&program_id) {
             handle.abort();
+            self.phases.lock().await.remove(&program_id);
             tracing::info!(program_id, "Deactivated program; stopped its indexer task.");
         }
     }

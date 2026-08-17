@@ -141,7 +141,7 @@ fn setup_server() -> ServerInfo {
                 .expect("failed to refresh test database schema");
 
             let (sse_tx, _) = broadcast::channel::<SseEvent>(64);
-            let app = svm_indexer::app(db, passkey_for_thread.clone(), None, sse_tx.clone());
+            let app = svm_indexer::app(db, passkey_for_thread.clone(), None, sse_tx.clone(), None);
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("failed to bind test server");

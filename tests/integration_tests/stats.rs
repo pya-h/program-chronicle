@@ -61,6 +61,7 @@ async fn stats_reports_counts_and_per_program_progress() -> httpc_test::Result<(
     assert_eq!(per_program[0]["id"], program_id);
     assert_eq!(per_program[0]["address"], pubkey(1).to_string());
     assert_eq!(per_program[0]["start_slot"], 0);
+    assert!(per_program[0]["phase"].is_null());
 
     // large-table totals come from pg_class.reltuples (planner estimate, not COUNT),
     // which stays 0 until autovacuum/ANALYZE runs — assert the shape, never exact values

@@ -380,6 +380,10 @@ async fn delete_program_handler(
             "No such program found to delete".to_owned(),
         ));
     }
+    // signalled after the row is gone, so a delete the foreign keys reject leaves its task running
+    if let Some(tx) = &state.supervisor_tx {
+        let _ = tx.send(ProgramCommand::Stop(program_id)).await;
+    }
     Ok(NoContent)
 }
 

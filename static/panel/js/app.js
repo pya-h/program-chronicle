@@ -1986,16 +1986,25 @@ document.addEventListener('DOMContentLoaded', () => {
         root.innerHTML = `<div class="progress-list">${programs.map(p => renderProgressBar(p, maxSlot)).join('')}</div>`;
     }
 
+    const PHASES = {
+        backfilling: { label: 'Backfilling', badge: 'pending' },
+        syncing: { label: 'Syncing', badge: 'pending' },
+        live: { label: 'Live', badge: 'indexed' },
+        restarting: { label: 'Restarting', badge: 'failed' },
+    };
+
     function renderProgressBar(p, maxSlot) {
         const name = p.name || `Program ${p.id}`;
         const last = p.last_processed_slot || 0;
         const pct = maxSlot > 0 ? Math.round((last / maxSlot) * 100) : 0;
         const started = p.start_slot != null ? `from ${formatCount(p.start_slot)}` : 'not started';
         const when = p.last_processed_at || 'never';
+        const phase = PHASES[p.phase] || { label: 'Stopped', badge: 'paused' };
         return `
             <div class="progress-item">
                 <div class="progress-head">
                     <span class="progress-name">${escapeHtml(name)}</span>
+                    <span class="status-badge ${phase.badge}">${escapeHtml(phase.label)}</span>
                     <span class="progress-slot mono">${last ? `Slot ${escapeHtml(formatCount(last))}` : 'Pending'}</span>
                 </div>
                 <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>

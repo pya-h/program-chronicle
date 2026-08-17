@@ -2090,6 +2090,11 @@ html.no-anim *::after {
     gap: 0.75rem;
 }
 
+.progress-head .status-badge {
+    margin-right: auto;
+    align-self: center;
+}
+
 .progress-name {
     font-weight: 600;
     color: var(--text-primary);

@@ -27,6 +27,7 @@ use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::core::retry::RetryPolicy;
 use crate::core::sse::SseEvent;
+use crate::core::state::{ProgramPhase, ProgramPhases};
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::rpc::SvmRpc;
 use crate::indexer::rpc::json_rpc::JsonRpc;
@@ -42,6 +43,7 @@ pub struct Indexer {
     sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
     handles: Mutex<HashMap<i32, JoinHandle<()>>>,
+    phases: ProgramPhases,
     /// Bounds how many programs run their bulk catch-up at once
     catchup_semaphore: Semaphore,
     retry_policy: RetryPolicy,
@@ -65,6 +67,7 @@ impl Indexer {
             sse_tx,
             clients: Mutex::new(HashMap::new()),
             handles: Mutex::new(HashMap::new()),
+            phases: ProgramPhases::default(),
             catchup_semaphore: Semaphore::new(catchup_concurrency),
             retry_policy: RetryPolicy::new(max_retries),
             restart_cooldown,
@@ -87,6 +90,14 @@ impl Indexer {
         client
     }
 
+    pub fn phases(&self) -> ProgramPhases {
+        self.phases.clone()
+    }
+
+    async fn set_phase(&self, program_id: i32, phase: ProgramPhase) {
+        self.phases.lock().await.insert(program_id, phase);
+    }
+
     fn ingest_commitment(&self) -> TransactionCommitment {
         TransactionCommitment::from_ingest(self.commitment)
     }
@@ -103,6 +114,7 @@ impl Indexer {
         let commitment = self.ingest_commitment();
         let head = rpc.get_slot().await? as i64;
         let program = self.resolve_start_slot(program, head).await?;
+        self.set_phase(program.id, ProgramPhase::Backfilling).await;
         {
             let _permit = self
                 .catchup_semaphore
@@ -122,6 +134,7 @@ impl Indexer {
             .await?; // backfill the downtime gap
         } // release the permit before streaming — steady-state is unthrottled
         self.advance_cursor(&program, head).await?;
+        self.set_phase(program.id, ProgramPhase::Syncing).await;
 
         let (state_ready, state_live) = oneshot::channel();
         let (tx_ready, tx_live) = oneshot::channel();
@@ -148,9 +161,8 @@ impl Indexer {
         Ok(())
     }
 
-    /// Covers the window between the catch-up above and the subscriptions going live, which nothing
-    /// else reaches: the walk only pages backwards from where it started, and the streams only carry
-    /// what the node accepted them for.
+    /// Catchup the walk only pages backwards from where it started, and the streams only carry
+    /// what the node accepted them for. So this closes the gap.
     async fn close_subscribe_gap(
         &self,
         rpc: &dyn SvmRpc,
@@ -169,12 +181,14 @@ impl Indexer {
                 .acquire()
                 .await
                 .expect("catch-up semaphore is never closed");
-            // taken after the stream is live, so the snapshot is the newest state and needs no redo
             catch_up_state(rpc, &self.db, &self.sse_tx, program).await?;
         }
 
         let _ = tx_live.await;
-        catch_up_transactions(rpc, &self.db, &self.sse_tx, program, commitment, Some(head)).await
+        catch_up_transactions(rpc, &self.db, &self.sse_tx, program, commitment, Some(head)).await?;
+
+        self.set_phase(program.id, ProgramPhase::Live).await;
+        Ok(())
     }
 
     async fn resolve_start_slot(
