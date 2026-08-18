@@ -32,8 +32,9 @@ use axum::{
 use sea_orm::{
     ActiveModelTrait, ActiveValue,
     ActiveValue::{NotSet, Set, Unchanged},
-    ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, ModelTrait, QueryFilter,
-    QueryOrder, QuerySelect, QueryTrait, SqlErr, TransactionTrait,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, ModelTrait,
+    QueryFilter, QueryOrder, QuerySelect, QueryTrait, SqlErr, TransactionTrait,
+    sea_query::Expr,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -286,6 +287,35 @@ async fn get_programs_handler(
     )))
 }
 
+/// On RPC change, if carried onto a shorter chain, the old rows would reject every
+/// write from the new one forever. The next run's scan rebuilds them.
+async fn drop_account_snapshots<C: ConnectionTrait>(
+    db: &C,
+    program_id: i32,
+) -> Result<(), SvmIndexerError> {
+    program_events::Entity::update_many()
+        .col_expr(
+            program_events::Column::ProgramAccountId,
+            Expr::value(Option::<i64>::None),
+        )
+        .filter(program_events::Column::ProgramId.eq(program_id))
+        .exec(db)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error(
+                "Failed detaching the program's events from its accounts!",
+                err,
+            )
+        })?;
+
+    program_accounts::Entity::delete_many()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .exec(db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed dropping the program's accounts!", err))?;
+    Ok(())
+}
+
 async fn update_program_handler(
     State(state): State<AppState>,
     Path(program_id): Path<i32>,
@@ -331,6 +361,10 @@ async fn update_program_handler(
     let repointed = changed_rpc
         .as_ref()
         .is_some_and(|rpc| rpc.id != current.rpc_id);
+    let txn =
+        state.db.begin().await.map_err(|err| {
+            SvmIndexerError::db_error("Failed opening the update transaction!", err)
+        })?;
     let program = programs::ActiveModel {
         id: Unchanged(program_id),
         address,
@@ -350,7 +384,7 @@ async fn update_program_handler(
         scan_partition_offset: scan_partition_offset_value(payload.scan_partition_offset)?,
         ..Default::default()
     }
-    .update(&state.db)
+    .update(&txn)
     .await
     .map_err(|err| {
         SvmIndexerError::db_error_with_id(
@@ -359,6 +393,12 @@ async fn update_program_handler(
             program_id as u64,
         )
     })?;
+    if repointed {
+        drop_account_snapshots(&txn, program_id).await?;
+    }
+    txn.commit()
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed committing the program update!", err))?;
 
     // without this the old task keeps ticking on the old client and rewrites the cursor just cleared
     if repointed && let Some(tx) = &state.supervisor_tx {

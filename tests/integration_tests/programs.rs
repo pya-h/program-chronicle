@@ -564,6 +564,89 @@ async fn update_program_rpc_resets_the_cursor_but_keeps_it_on_other_edits() -> h
 }
 
 #[tokio::test]
+async fn update_program_rpc_drops_account_state_but_keeps_history() -> httpc_test::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, sea_query::Expr};
+    use svm_indexer::db::entities::{program_accounts, program_events, transactions};
+
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://program-accounts-repoint-from.example.com").await;
+    let other_rpc_id = seed_rpc(&db, "https://program-accounts-repoint-to.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(60)).await;
+    let sig = signature(80);
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &pubkey(61),
+        &pubkey(60),
+        &[7],
+        1_000,
+        900,
+        0,
+        None,
+    )
+    .await;
+    seed_transaction(&db, Some(program_id), rpc_id, &sig, 900, true, None).await;
+    seed_event(&db, program_id, rpc_id, &sig, 0, 900, &[9], None).await;
+
+    // only a linked event exercises the RESTRICT that guards program_accounts
+    let account_id = program_accounts::Entity::find()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    program_events::Entity::update_many()
+        .col_expr(
+            program_events::Column::ProgramAccountId,
+            Expr::value(Some(account_id)),
+        )
+        .filter(program_events::Column::ProgramId.eq(program_id))
+        .exec(&db)
+        .await
+        .unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", program_id),
+            json!({"rpc_id": other_rpc_id}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    assert_eq!(
+        program_accounts::Entity::find()
+            .filter(program_accounts::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0,
+        "a snapshot at the old chain's slot would reject every write from the new one"
+    );
+    assert_eq!(
+        program_events::Entity::find()
+            .filter(program_events::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        1,
+        "events are history and stay"
+    );
+    assert_eq!(
+        transactions::Entity::find()
+            .filter(transactions::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 

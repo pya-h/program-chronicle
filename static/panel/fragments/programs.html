@@ -242,8 +242,9 @@
             </div>
             <div class="modal-body">
                 <p class="modal-text">You are moving this program to a different RPC.</p>
-                <p class="modal-warning">Slot numbers are not comparable across networks, so the start slot and the indexing cursor will be cleared and the program will restart from the new RPC's current head. Everything already indexed stays, but any history between the old cursor and the new head is never backfilled.</p>
-                <p class="modal-text-muted">Pointing at another endpoint for the <em>same</em> network is safe — the program simply re-pins and catches up.</p>
+                <p class="modal-warning">Slot numbers are not comparable across networks, so the start slot and the indexing cursor will be cleared and the program will restart from the new RPC's current head. Any history between the old cursor and the new head is never backfilled.</p>
+                <p class="modal-warning">Its recorded account state will be dropped and rebuilt from the new RPC, because a snapshot taken at a higher slot would reject every update the new network sends. Transactions and events are kept.</p>
+                <p class="modal-text-muted">Pointing at another endpoint for the <em>same</em> network is safe — the program simply re-pins, re-scans and catches up.</p>
                 <div class="form-feedback" id="program-repoint-feedback" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
