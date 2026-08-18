@@ -1386,11 +1386,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await apiCall('PATCH', `/admin/programs/${programEditTargetId}`, payload);
         setBtnLoading(btn, false);
 
-        if (!res.ok) return showFieldFeedback(feedback, res.message);
+        if (!res.ok) {
+            showFieldFeedback(feedback, res.message);
+            return false;
+        }
         closeModal('program-repoint-modal');
         closeModal('program-edit-modal');
         showToast(message, 'success');
         loadProgramList();
+        return true;
     }
 
     function bindRepointProgramConfirm() {
@@ -1398,14 +1402,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!btn) return;
         btn.addEventListener('click', async () => {
             if (!pendingProgramEdit) return;
-            const payload = pendingProgramEdit;
-            pendingProgramEdit = null;
-            await saveProgramEdit(
-                payload,
+            // held until it lands, so a failed save leaves the confirm button usable
+            const saved = await saveProgramEdit(
+                pendingProgramEdit,
                 document.getElementById('program-repoint-feedback'),
                 btn,
                 'Program moved to the new RPC; indexing restarts from its head.'
             );
+            if (saved) pendingProgramEdit = null;
         });
     }
 

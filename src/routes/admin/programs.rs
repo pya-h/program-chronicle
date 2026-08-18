@@ -398,8 +398,15 @@ async fn update_program_handler(
     }))
 }
 
-fn delete_program_error(err: DbErr, program_id: i32) -> SvmIndexerError {
+fn delete_program_error(err: DbErr, program_id: i32, forced: bool) -> SvmIndexerError {
     match err.sql_err() {
+        // a purge only hits this by losing to its own still-running indexer, so "use force" would
+        // be advice the operator already took
+        Some(SqlErr::ForeignKeyConstraintViolation(_)) if forced => SvmIndexerError::Conflict(
+            "This program indexed new rows while it was being deleted! Deactivate it first, then \
+             delete it."
+                .to_owned(),
+        ),
         Some(SqlErr::ForeignKeyConstraintViolation(_)) => SvmIndexerError::Conflict(
             "This program has indexed data! Deactivate it instead, or delete it with force to drop \
              its accounts, transactions and events along with it."
@@ -454,7 +461,7 @@ async fn purge_program(db: &DatabaseConnection, program_id: i32) -> Result<u64, 
     let deleted = programs::Entity::delete_by_id(program_id)
         .exec(&txn)
         .await
-        .map_err(|err| delete_program_error(err, program_id))?;
+        .map_err(|err| delete_program_error(err, program_id, true))?;
 
     txn.commit()
         .await
@@ -473,7 +480,7 @@ async fn delete_program_handler(
         programs::Entity::delete_by_id(program_id)
             .exec(&state.db)
             .await
-            .map_err(|err| delete_program_error(err, program_id))?
+            .map_err(|err| delete_program_error(err, program_id, false))?
             .rows_affected
     };
     if deleted == 0 {

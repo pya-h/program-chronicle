@@ -38,9 +38,9 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
         },
     };
 
-    let head_slot = match snapshots.first() {
-        Some(first) => first.slot,
-        None => return Ok(()),
+    // a partitioned sweep is one scan per bucket, so its snapshots do not share a slot
+    let Some(head_slot) = snapshots.iter().map(|snapshot| snapshot.slot).max() else {
+        return Ok(());
     };
     let head_block_time = rpc.get_block_time(head_slot).await?;
 
