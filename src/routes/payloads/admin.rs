@@ -12,6 +12,12 @@ pub struct IndexerErrorsQuery {
 }
 
 #[derive(Deserialize)]
+pub struct DeleteProgramQuery {
+    #[serde(default, deserialize_with = "de_opt_bool")]
+    pub force: Option<bool>,
+}
+
+#[derive(Deserialize)]
 pub struct AddRpcPayload {
     pub http_url: String,
     pub ws_url: Option<String>,

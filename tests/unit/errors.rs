@@ -28,6 +28,10 @@ fn maps_variants_to_expected_status_codes() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
+        status_of(SvmIndexerError::Conflict("x".into())),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
         status_of(SvmIndexerError::Unauthorized),
         StatusCode::UNAUTHORIZED
     );

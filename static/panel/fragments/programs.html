@@ -213,7 +213,13 @@
             <div class="modal-body">
                 <p class="modal-text">Are you sure you want to delete this program?</p>
                 <p class="modal-text-muted" id="program-delete-detail"></p>
-                <p class="modal-warning">This will stop indexing and remove all related records. This cannot be undone.</p>
+                <p class="modal-warning">This will stop indexing. A program that already indexed anything can only be removed together with its data.</p>
+                <label class="modal-check" for="program-delete-force">
+                    <input type="checkbox" id="program-delete-force" name="force">
+                    <span>Also delete its indexed data
+                        <span class="check-hint">Drops every account, transaction and event this program recorded. This cannot be undone. Leave unchecked to deactivate the program instead.</span>
+                    </span>
+                </label>
                 <div class="form-feedback" id="program-delete-feedback" aria-live="polite"></div>
             </div>
             <div class="modal-actions">

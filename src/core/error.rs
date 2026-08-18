@@ -19,6 +19,9 @@ pub enum SvmIndexerError {
     #[error("Invalid Parameters! {0}")]
     BadInput(String),
 
+    #[error("{0}")]
+    Conflict(String),
+
     #[error("Client Error! {0}")]
     ProgramFailure(String),
 
@@ -76,6 +79,7 @@ impl response::IntoResponse for SvmIndexerError {
                 (StatusCode::INTERNAL_SERVER_ERROR, response_msg)
             }
             SvmIndexerError::BadInput(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            SvmIndexerError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(serde_json::json!({"message": message}))).into_response()

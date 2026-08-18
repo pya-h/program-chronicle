@@ -6,14 +6,16 @@ use crate::{
         state::{AppState, ProgramCommand},
     },
     db::entities::{
-        programs,
+        program_accounts, program_events, programs,
         rpcs::{self, Model as RpcModel},
+        transaction_accounts, transactions,
     },
     routes::{
         admin::rpcs::add_rpc,
         payloads::{
             admin::{
-                AddProgramPayload, AddRpcPayload, GetSingleProgramPayload, UpdateProgramPayload,
+                AddProgramPayload, AddRpcPayload, DeleteProgramQuery, GetSingleProgramPayload,
+                UpdateProgramPayload,
             },
             common::PaginationQuery,
         },
@@ -30,7 +32,8 @@ use axum::{
 use sea_orm::{
     ActiveModelTrait, ActiveValue,
     ActiveValue::{NotSet, Set, Unchanged},
-    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QueryOrder,
+    ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, ModelTrait, QueryFilter,
+    QueryOrder, QuerySelect, QueryTrait, SqlErr, TransactionTrait,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -395,23 +398,85 @@ async fn update_program_handler(
     }))
 }
 
+fn delete_program_error(err: DbErr, program_id: i32) -> SvmIndexerError {
+    match err.sql_err() {
+        Some(SqlErr::ForeignKeyConstraintViolation(_)) => SvmIndexerError::Conflict(
+            "This program has indexed data! Deactivate it instead, or delete it with force to drop \
+             its accounts, transactions and events along with it."
+                .to_owned(),
+        ),
+        _ => SvmIndexerError::db_error_with_id(
+            "Something went wrong while deleting this program.",
+            err,
+            program_id as u64,
+        ),
+    }
+}
+
+async fn purge_program(db: &DatabaseConnection, program_id: i32) -> Result<u64, SvmIndexerError> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed opening the purge transaction!", err))?;
+
+    program_events::Entity::delete_many()
+        .filter(program_events::Column::ProgramId.eq(program_id))
+        .exec(&txn)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed deleting the program's events!", err))?;
+
+    program_accounts::Entity::delete_many()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .exec(&txn)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed deleting the program's accounts!", err))?;
+
+    let signatures = transactions::Entity::find()
+        .select_only()
+        .column(transactions::Column::Signature)
+        .filter(transactions::Column::ProgramId.eq(program_id));
+    transaction_accounts::Entity::delete_many()
+        .filter(transaction_accounts::Column::TxSignature.in_subquery(signatures.into_query()))
+        .exec(&txn)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error("Failed deleting the program's transaction accounts!", err)
+        })?;
+
+    transactions::Entity::delete_many()
+        .filter(transactions::Column::ProgramId.eq(program_id))
+        .exec(&txn)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error("Failed deleting the program's transactions!", err)
+        })?;
+
+    let deleted = programs::Entity::delete_by_id(program_id)
+        .exec(&txn)
+        .await
+        .map_err(|err| delete_program_error(err, program_id))?;
+
+    txn.commit()
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed committing the purge!", err))?;
+    Ok(deleted.rows_affected)
+}
+
 async fn delete_program_handler(
     State(state): State<AppState>,
     Path(program_id): Path<i32>,
+    Query(DeleteProgramQuery { force }): Query<DeleteProgramQuery>,
 ) -> NoContentResponse {
-    if programs::Entity::delete_by_id(program_id)
-        .exec(&state.db)
-        .await
-        .map_err(|err| {
-            SvmIndexerError::db_error_with_id(
-                "Something went wrong while deleting this program.",
-                err,
-                program_id as u64,
-            )
-        })?
-        .rows_affected
-        == 0
-    {
+    let deleted = if force.unwrap_or(false) {
+        purge_program(&state.db, program_id).await?
+    } else {
+        programs::Entity::delete_by_id(program_id)
+            .exec(&state.db)
+            .await
+            .map_err(|err| delete_program_error(err, program_id))?
+            .rows_affected
+    };
+    if deleted == 0 {
         return Err(SvmIndexerError::ItemNotFound(
             "No such program found to delete".to_owned(),
         ));

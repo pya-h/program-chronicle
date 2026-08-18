@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use crate::common::{assert_datetimes_equal, parse_datetime, reset_db, server};
+use crate::common::{
+    assert_datetimes_equal, parse_datetime, pubkey, reset_db, seed_account, seed_event,
+    seed_program, seed_rpc, seed_transaction, seed_transaction_account, server, signature, test_db,
+};
 
 fn address(idx: usize) -> &'static str {
     const ADDRESSES: &[&str] = &[
@@ -569,6 +572,110 @@ async fn delete_program_not_found() -> httpc_test::Result<()> {
         .do_delete("/admin/programs/9999")
         .await?;
     assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+/// A program holding one row in every table that references it.
+async fn seed_indexed_program(db: &sea_orm::DatabaseConnection, http_url: &str) -> i32 {
+    let rpc_id = seed_rpc(db, http_url).await;
+    let program_id = seed_program(db, rpc_id, &pubkey(50)).await;
+    let sig = signature(70);
+    seed_account(
+        db,
+        program_id,
+        rpc_id,
+        &pubkey(51),
+        &pubkey(50),
+        &[1, 2, 3],
+        1_000,
+        700,
+        0,
+        None,
+    )
+    .await;
+    seed_transaction(db, Some(program_id), rpc_id, &sig, 700, true, None).await;
+    seed_transaction_account(db, &sig, &pubkey(52), 700, true).await;
+    seed_event(db, program_id, rpc_id, &sig, 0, 700, &[9], None).await;
+    program_id
+}
+
+#[tokio::test]
+async fn delete_program_with_indexed_data_is_a_conflict() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let program_id = seed_indexed_program(&db, "https://program-delete-blocked.example.com").await;
+
+    let res = server()
+        .authed_client()
+        .do_delete(&format!("/admin/programs/{}", program_id))
+        .await?;
+    assert_eq!(res.status(), 409);
+
+    // the restriction held, so the program and its data are still there
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", program_id))
+        .await?;
+    assert_eq!(res.status(), 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_program_with_force_purges_its_data() -> httpc_test::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+    use svm_indexer::db::entities::{
+        program_accounts, program_events, transaction_accounts, transactions,
+    };
+
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let program_id = seed_indexed_program(&db, "https://program-delete-force.example.com").await;
+
+    let res = server()
+        .authed_client()
+        .do_delete(&format!("/admin/programs/{}?force=true", program_id))
+        .await?;
+    assert_eq!(res.status(), 204);
+
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", program_id))
+        .await?;
+    assert_eq!(res.status(), 404);
+
+    assert_eq!(
+        program_accounts::Entity::find()
+            .filter(program_accounts::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        program_events::Entity::find()
+            .filter(program_events::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        transactions::Entity::find()
+            .filter(transactions::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    // no foreign key covers these, so the purge has to reach them by signature
+    assert_eq!(
+        transaction_accounts::Entity::find()
+            .filter(transaction_accounts::Column::TxSignature.eq(signature(70).as_ref().to_vec()))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
     Ok(())
 }
 

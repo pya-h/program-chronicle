@@ -1422,6 +1422,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const address = row?.dataset?.programAddress || '';
             detail.textContent = `${name}${address ? ` • ${address}` : ''}`;
         }
+        const force = document.getElementById('program-delete-force');
+        if (force) force.checked = false; // never carry a previous confirmation onto another program
         showFieldFeedback(document.getElementById('program-delete-feedback'), '');
         openModal('program-delete-modal');
     });
@@ -1433,8 +1435,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!deleteProgramTargetId) return;
             const feedback = document.getElementById('program-delete-feedback');
             showFieldFeedback(feedback, '');
+            const force = document.getElementById('program-delete-force')?.checked;
             setBtnLoading(btn, true);
-            const res = await apiCall('DELETE', `/admin/programs/${deleteProgramTargetId}`);
+            const res = await apiCall(
+                'DELETE',
+                `/admin/programs/${deleteProgramTargetId}${force ? '?force=true' : ''}`
+            );
             setBtnLoading(btn, false);
             if (!res.ok) return showFieldFeedback(feedback, res.message);
             deleteProgramTargetId = null;
