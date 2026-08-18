@@ -1,4 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
+use sea_orm::entity::prelude::DateTime;
 use serde::Serialize;
 use solana_sdk::signature::Signature;
 
@@ -17,6 +18,7 @@ pub struct ProgramEventResponse {
     pub data: String,
     pub slot: i64,
     pub block_time: Option<i64>,
+    pub created_at: DateTime,
 }
 
 impl ProgramEventResponse {
@@ -27,6 +29,7 @@ impl ProgramEventResponse {
             data: STANDARD.encode(&event.data),
             slot: event.slot,
             block_time,
+            created_at: event.created_at,
         }
     }
 }

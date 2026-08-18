@@ -59,7 +59,7 @@
     </article>
 
     <div class="modal-overlay" id="ev-detail-modal" aria-hidden="true">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ev-detail-title">
+        <div class="modal-card modal-card-lg" role="dialog" aria-modal="true" aria-labelledby="ev-detail-title">
             <div class="modal-header">
                 <h2 class="modal-title" id="ev-detail-title">Event</h2>
                 <button type="button" class="modal-close" data-close-modal aria-label="Close">
@@ -88,11 +88,16 @@
                         <span class="rpc-detail-label">Block Time</span>
                         <span class="rpc-detail-value" id="ev-detail-time">—</span>
                     </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Indexed At</span>
+                        <span class="rpc-detail-value" id="ev-detail-created">—</span>
+                    </div>
                 </div>
                 <div class="rpc-detail-block">
                     <div class="detail-data-head">
                         <span class="rpc-detail-label">Data</span>
-                        <button type="button" class="pager-btn" id="ev-detail-data-toggle">Show hex</button>
+                        <span class="detail-data-size" data-size-for="ev-detail-data"></span>
+                        <button type="button" class="pager-btn" data-hex-toggle="ev-detail-data">Show hex</button>
                     </div>
                     <div class="detail-data" id="ev-detail-data">—</div>
                 </div>

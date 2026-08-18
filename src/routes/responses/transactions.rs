@@ -1,4 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
+use sea_orm::entity::prelude::DateTime;
 use serde::Serialize;
 use serde_json::Value;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
@@ -31,6 +32,7 @@ pub struct TransactionResponse {
     pub fee: Option<i64>,
     pub fee_payer: Option<String>,
     pub block_time: Option<i64>,
+    pub created_at: DateTime,
     pub raw: Value,
 }
 
@@ -47,6 +49,7 @@ impl TransactionResponse {
             fee: tx.fee,
             fee_payer: tx.fee_payer.map(|payer| pubkey_string(&payer)),
             block_time,
+            created_at: tx.created_at,
             raw: tx.raw,
         }
     }
@@ -63,6 +66,7 @@ pub struct TransactionSummaryResponse {
     pub fee: Option<i64>,
     pub fee_payer: Option<String>,
     pub block_time: Option<i64>,
+    pub created_at: DateTime,
 }
 
 impl TransactionSummaryResponse {
@@ -77,6 +81,7 @@ impl TransactionSummaryResponse {
             fee: tx.fee,
             fee_payer: tx.fee_payer.map(|payer| pubkey_string(&payer)),
             block_time,
+            created_at: tx.created_at,
         }
     }
 }

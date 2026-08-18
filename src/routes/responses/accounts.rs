@@ -1,4 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
+use sea_orm::entity::prelude::DateTime;
 use serde::Serialize;
 use solana_sdk::pubkey::Pubkey;
 
@@ -23,6 +24,8 @@ pub struct AccountInfoResponse {
     pub slot: i64,
     pub write_version: i64,
     pub block_time: Option<i64>,
+    pub created_at: DateTime,
+    pub updated_at: DateTime,
 }
 
 impl AccountInfoResponse {
@@ -37,6 +40,8 @@ impl AccountInfoResponse {
             slot: account.latest_slot,
             write_version: account.latest_write_version,
             block_time,
+            created_at: account.created_at,
+            updated_at: account.updated_at,
         }
     }
 }

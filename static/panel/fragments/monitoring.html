@@ -76,4 +76,29 @@
             <p class="empty-state-text" id="mon-stream-empty-text">Pick a program and stream type, then Connect to watch live changes.</p>
         </div>
     </article>
+
+    <div class="modal-overlay" id="mon-stream-detail-modal" aria-hidden="true">
+        <div class="modal-card modal-card-lg" role="dialog" aria-modal="true" aria-labelledby="mon-stream-detail-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="mon-stream-detail-title">Streamed change</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="detail-grid" id="mon-stream-detail-fields"></div>
+                <div class="rpc-detail-block" id="mon-stream-detail-data-block" hidden>
+                    <div class="detail-data-head">
+                        <span class="rpc-detail-label">Data</span>
+                        <span class="detail-data-size" data-size-for="mon-stream-detail-data"></span>
+                        <button type="button" class="pager-btn" data-hex-toggle="mon-stream-detail-data">Show hex</button>
+                    </div>
+                    <div class="detail-data" id="mon-stream-detail-data">—</div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal>Close</button>
+            </div>
+        </div>
+    </div>
 </section>
