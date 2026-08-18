@@ -23,7 +23,22 @@ pub enum ProgramPhase {
     Restarting,
 }
 
-pub type ProgramPhases = Arc<Mutex<HashMap<i32, ProgramPhase>>>;
+#[derive(Debug, Clone, Copy)]
+pub struct ProgramRuntime {
+    pub phase: ProgramPhase,
+    pub head_slot: Option<i64>,
+}
+
+impl ProgramRuntime {
+    pub fn new(phase: ProgramPhase) -> Self {
+        Self {
+            phase,
+            head_slot: None,
+        }
+    }
+}
+
+pub type ProgramRuntimes = Arc<Mutex<HashMap<i32, ProgramRuntime>>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,7 +46,7 @@ pub struct AppState {
     pub admin_passkey: String, // To prevent rust to extract passkey from env everytime.
     pub supervisor_tx: Option<mpsc::Sender<ProgramCommand>>, // signals the supervisor to start/stop a program
     pub sse_tx: broadcast::Sender<SseEvent>, // fans live account/event changes out to SSE subscribers
-    pub phases: Option<ProgramPhases>,
+    pub runtimes: Option<ProgramRuntimes>,
 }
 
 impl AppState {
@@ -40,14 +55,14 @@ impl AppState {
         admin_passkey: String,
         supervisor_tx: Option<mpsc::Sender<ProgramCommand>>,
         sse_tx: broadcast::Sender<SseEvent>,
-        phases: Option<ProgramPhases>,
+        runtimes: Option<ProgramRuntimes>,
     ) -> Self {
         AppState {
             admin_passkey,
             db,
             supervisor_tx,
             sse_tx,
-            phases,
+            runtimes,
         }
     }
 }

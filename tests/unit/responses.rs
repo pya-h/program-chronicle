@@ -1,6 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use crate::core::state::ProgramPhase;
+use crate::core::state::{ProgramPhase, ProgramRuntime};
 use crate::db::entities::{program_accounts, program_events, programs, slots, transactions};
 use crate::routes::responses::accounts::{AccountInfoResponse, ProgramAccountsResponse};
 use crate::routes::responses::events::{ProgramEventResponse, ProgramEventsResponse};
@@ -153,7 +153,11 @@ fn program_progress_reads_straight_off_the_program_row() {
         updated_at: ts(),
     };
 
-    let resp = ProgramProgressResponse::from_model(program, Some(ProgramPhase::Backfilling));
+    let runtime = ProgramRuntime {
+        phase: ProgramPhase::Backfilling,
+        head_slot: Some(1_000),
+    };
+    let resp = ProgramProgressResponse::from_model(program, Some(runtime));
     assert_eq!(resp.id, 3);
     assert_eq!(resp.name.as_deref(), Some("my-program"));
     assert_eq!(resp.address, pubkey(7).to_string());
@@ -161,6 +165,7 @@ fn program_progress_reads_straight_off_the_program_row() {
     assert_eq!(resp.last_processed_slot, Some(900));
     assert_eq!(resp.last_processed_at, None);
     assert_eq!(resp.phase, Some(ProgramPhase::Backfilling));
+    assert_eq!(resp.head_slot, Some(1_000));
 }
 
 #[test]

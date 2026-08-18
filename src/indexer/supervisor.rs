@@ -115,7 +115,7 @@ impl Indexer {
     async fn stop_program(&self, program_id: i32) {
         if let Some(handle) = self.handles.lock().await.remove(&program_id) {
             handle.abort();
-            self.phases.lock().await.remove(&program_id);
+            self.runtimes.lock().await.remove(&program_id);
             tracing::info!(program_id, "Deactivated program; stopped its indexer task.");
         }
     }

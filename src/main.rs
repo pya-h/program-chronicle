@@ -81,7 +81,7 @@ async fn main() {
             .clone()
             .run_commitment_worker(commitment_worker_interval),
     );
-    let phases = indexer.phases();
+    let runtimes = indexer.runtimes();
     tokio::spawn(async move {
         if let Err(err) = indexer.start(supervisor_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");
@@ -98,7 +98,7 @@ async fn main() {
         admin_passkey,
         Some(supervisor_tx),
         sse_tx,
-        Some(phases),
+        Some(runtimes),
     );
 
     let app_port = {

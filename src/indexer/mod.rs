@@ -28,7 +28,7 @@ use crate::core::error::SvmIndexerError;
 use crate::core::indexer_error::{IndexerErrorKind, record};
 use crate::core::retry::RetryPolicy;
 use crate::core::sse::SseEvent;
-use crate::core::state::{ProgramPhase, ProgramPhases};
+use crate::core::state::{ProgramPhase, ProgramRuntime, ProgramRuntimes};
 use crate::db::entities::{programs, rpcs};
 use crate::indexer::rpc::SvmRpc;
 use crate::indexer::rpc::json_rpc::JsonRpc;
@@ -44,7 +44,7 @@ pub struct Indexer {
     sse_tx: broadcast::Sender<SseEvent>,
     clients: Mutex<HashMap<i32, Arc<dyn SvmRpc>>>,
     handles: Mutex<HashMap<i32, JoinHandle<()>>>,
-    phases: ProgramPhases,
+    runtimes: ProgramRuntimes,
     /// Bounds how many programs run their bulk catch-up at once
     catchup_semaphore: Semaphore,
     retry_policy: RetryPolicy,
@@ -71,7 +71,7 @@ impl Indexer {
             sse_tx,
             clients: Mutex::new(HashMap::new()),
             handles: Mutex::new(HashMap::new()),
-            phases: ProgramPhases::default(),
+            runtimes: ProgramRuntimes::default(),
             catchup_semaphore: Semaphore::new(catchup_concurrency),
             retry_policy: RetryPolicy::new(max_retries),
             restart_cooldown,
@@ -95,12 +95,25 @@ impl Indexer {
         client
     }
 
-    pub fn phases(&self) -> ProgramPhases {
-        self.phases.clone()
+    pub fn runtimes(&self) -> ProgramRuntimes {
+        self.runtimes.clone()
     }
 
     async fn set_phase(&self, program_id: i32, phase: ProgramPhase) {
-        self.phases.lock().await.insert(program_id, phase);
+        self.runtimes
+            .lock()
+            .await
+            .entry(program_id)
+            .and_modify(|runtime| runtime.phase = phase)
+            .or_insert_with(|| ProgramRuntime::new(phase));
+    }
+
+    /// Only touches a program that is already running: a head with no task behind it would report
+    /// progress on something that stopped moving.
+    async fn set_head(&self, program_id: i32, head: i64) {
+        if let Some(runtime) = self.runtimes.lock().await.get_mut(&program_id) {
+            runtime.head_slot = Some(head);
+        }
     }
 
     fn ingest_commitment(&self) -> TransactionCommitment {
@@ -118,6 +131,7 @@ impl Indexer {
         let head = rpc.get_slot().await? as i64;
         let program = self.resolve_start_slot(program, head).await?;
         self.set_phase(program.id, ProgramPhase::Backfilling).await;
+        self.set_head(program.id, head).await;
         {
             let _permit = self
                 .catchup_semaphore
@@ -257,6 +271,7 @@ impl Indexer {
         cursor: i64,
     ) -> Result<i64, SvmIndexerError> {
         let head = rpc.get_slot().await? as i64;
+        self.set_head(program.id, head).await;
         catch_up_transactions(
             rpc,
             &self.db,

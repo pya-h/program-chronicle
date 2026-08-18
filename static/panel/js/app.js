@@ -127,6 +127,33 @@ document.addEventListener('DOMContentLoaded', () => {
         [pdasList, txList, eventsList].forEach(list => list?.reload());
     }
 
+    // Background refresh for the two sections that watch a moving target. Only one timer lives at
+    // a time: sections are swapped, not stacked, so the outgoing one's DOM is already gone.
+    const DASHBOARD_POLL_MS = 15000;
+    const MONITORING_POLL_MS = 8000;
+    let sectionPoll = null;
+    let sectionPollTick = null;
+
+    function stopSectionPoll() {
+        if (sectionPoll) clearInterval(sectionPoll);
+        sectionPoll = null;
+        sectionPollTick = null;
+    }
+
+    function startSectionPoll(tick, everyMs) {
+        stopSectionPoll();
+        sectionPollTick = tick;
+        // a hidden tab has nobody reading it, and browsers throttle its timers anyway
+        sectionPoll = setInterval(() => { if (!document.hidden) tick(); }, everyMs);
+    }
+
+    // coming back to the tab should not wait out the rest of the interval
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) sectionPollTick?.();
+    });
+
+    window.addEventListener('pagehide', stopSectionPoll);
+
     setTimeout(() => {
         appLoader.classList.add('hidden');
         loginOverlay?.classList.remove('hidden');
@@ -624,6 +651,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (count) count.textContent = countText ? countText(total) : `${total} item${total === 1 ? '' : 's'}`;
 
             if (rows.length === 0) {
+                // the cursor outlives its data (a purge, a narrower filter), and clearing the pager
+                // on an out-of-range page would strand the section with no way back
+                if (page > 1) {
+                    page = 1;
+                    return load();
+                }
                 root.innerHTML = '';
                 if (empty) empty.hidden = false;
                 renderPager(0);
@@ -1081,7 +1114,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                 </div>
                 <div class="program-status">
-                    <span class="status-badge ${active ? (slot ? 'indexed' : 'pending') : 'paused'}">${active ? (slot ? `Slot ${escapeHtml(slot)}` : 'Pending') : 'Paused'}</span>
+                    <span class="status-badge ${active ? (slot ? 'indexed' : 'pending') : 'paused'}">${active ? (slot ? `Slot ${escapeHtml(formatCount(slot))}` : 'Pending') : 'Paused'}</span>
                 </div>
                 <div class="program-actions">
                     <button type="button" class="program-action-btn ${active ? 'warn' : 'success'}" data-program-id="${escapeHtml(program.id)}" data-active="${active}" data-action="toggle-active" aria-label="${toggleLabel}" title="${toggleLabel}">
@@ -1530,12 +1563,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Dashboard section ---------------------------------------------------------
     function initDashboardSection() {
-        loadDashboardStats();
-        loadDashboardActivity();
-        document.getElementById('dashboard-refresh')?.addEventListener('click', () => {
-            loadDashboardStats();
-            loadDashboardActivity();
-        });
+        const refresh = (quiet) => { loadDashboardStats(quiet); loadDashboardActivity(quiet); };
+        refresh(false);
+        document.getElementById('dashboard-refresh')?.addEventListener('click', () => refresh(false));
+        startSectionPoll(() => refresh(true), DASHBOARD_POLL_MS);
     }
 
     function formatCount(value) {
@@ -1543,7 +1574,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return Number.isFinite(num) ? num.toLocaleString('en-US') : '—';
     }
 
-    async function loadDashboardStats() {
+    // `quiet` marks a background refresh: it must not wipe good numbers off the screen or raise a
+    // toast on every failed tick.
+    async function loadDashboardStats(quiet = false) {
         const setStat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
         const statIds = ['stat-programs', 'stat-rpcs', 'stat-slots', 'stat-transactions', 'stat-events', 'stat-accounts'];
         const root = document.getElementById('dash-progress-root');
@@ -1552,6 +1585,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const res = await apiCall('GET', '/admin/stats');
         if (!res.ok) {
+            if (quiet) return;
             statIds.forEach(id => setStat(id, '—'));
             if (root) root.innerHTML = '';
             if (count) count.textContent = 'Failed to load';
@@ -1595,7 +1629,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    async function loadDashboardActivity() {
+    async function loadDashboardActivity(quiet = false) {
         const root = document.getElementById('dash-activity-root');
         const count = document.getElementById('dash-activity-count');
         const empty = document.getElementById('dash-activity-empty');
@@ -1603,6 +1637,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const res = await apiCall('GET', `/transactions${buildQuery({ page: 1, per_page: 8 })}`);
         if (!res.ok) {
+            if (quiet) return;
             root.innerHTML = '';
             if (count) count.textContent = 'Failed to load';
             if (empty) empty.hidden = false;
@@ -1996,25 +2031,29 @@ document.addEventListener('DOMContentLoaded', () => {
     function initMonitoringSection() {
         populateProgramSelect('mon-stream-program');
         loadMonitoringStats();
-        document.getElementById('monitoring-refresh')?.addEventListener('click', loadMonitoringStats);
+        document.getElementById('monitoring-refresh')?.addEventListener('click', () => loadMonitoringStats());
         document.getElementById('mon-stream-toggle')?.addEventListener('click', toggleStream);
         document.getElementById('mon-stream-clear')?.addEventListener('click', clearStreamLog);
         // A section re-swap discards the old log DOM, so drop any live stream too.
         disconnectStream();
+        startSectionPoll(() => loadMonitoringStats(true), MONITORING_POLL_MS);
     }
 
-    async function loadMonitoringStats() {
+    async function loadMonitoringStats(quiet = false) {
         const root = document.getElementById('mon-progress-root');
         const count = document.getElementById('mon-progress-count');
         const empty = document.getElementById('mon-progress-empty');
         if (!root) return;
 
-        root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
-        if (empty) empty.hidden = true;
-        if (count) count.textContent = 'Loading…';
+        if (!quiet) {
+            root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
+            if (empty) empty.hidden = true;
+            if (count) count.textContent = 'Loading…';
+        }
 
         const res = await apiCall('GET', '/admin/stats');
         if (!res.ok) {
+            if (quiet) return;
             root.innerHTML = '';
             if (count) count.textContent = 'Failed to load';
             if (empty) empty.hidden = false;
@@ -2030,10 +2069,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (empty) empty.hidden = true;
-        // Bars are scaled against the furthest program: without a chain tip there
-        // is no absolute target, so this shows relative fleet progress honestly.
-        const maxSlot = programs.reduce((m, p) => Math.max(m, p.last_processed_slot || 0), 0);
-        root.innerHTML = `<div class="progress-list">${programs.map(p => renderProgressBar(p, maxSlot)).join('')}</div>`;
+        root.innerHTML = `<div class="progress-list">${programs.map(renderProgressBar).join('')}</div>`;
     }
 
     const PHASES = {
@@ -2043,10 +2079,20 @@ document.addEventListener('DOMContentLoaded', () => {
         restarting: { label: 'Restarting', badge: 'failed' },
     };
 
-    function renderProgressBar(p, maxSlot) {
+    // How much of the program's own [start_slot, chain tip] range it has covered. Each bar is
+    // scaled to its own chain: two programs on different networks have unrelated slot numbers.
+    function progressPercent(p) {
+        const start = p.start_slot ?? 0;
+        const last = p.last_processed_slot;
+        const head = p.head_slot;
+        if (last == null || head == null || head <= start) return 0;
+        return Math.max(0, Math.min(100, Math.round(((last - start) / (head - start)) * 100)));
+    }
+
+    function renderProgressBar(p) {
         const name = p.name || `Program ${p.id}`;
         const last = p.last_processed_slot || 0;
-        const pct = maxSlot > 0 ? Math.round((last / maxSlot) * 100) : 0;
+        const pct = progressPercent(p);
         const started = p.start_slot != null ? `from ${formatCount(p.start_slot)}` : 'not started';
         const when = p.last_processed_at || 'never';
         const phase = PHASES[p.phase] || { label: 'Stopped', badge: 'paused' };
@@ -2057,7 +2103,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="status-badge ${phase.badge}">${escapeHtml(phase.label)}</span>
                     <span class="progress-slot mono">${last ? `Slot ${escapeHtml(formatCount(last))}` : 'Pending'}</span>
                 </div>
-                <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+                <div class="progress-track" title="${escapeHtml(p.head_slot != null ? `${pct}% · chain tip ${formatCount(p.head_slot)}` : 'Not indexing')}"><div class="progress-fill" style="width:${pct}%"></div></div>
                 <div class="progress-meta">
                     <span class="mono" title="${escapeHtml(p.address)}">${escapeHtml(p.address)}</span>
                     <span>${escapeHtml(started)} · ${escapeHtml(when)}</span>
@@ -2197,6 +2243,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
         Prefs.reflect();
+        // the outgoing section's elements are gone; whichever section lands re-arms its own poll
+        stopSectionPoll();
         const swapped = evt.detail.target;
         if (swapped?.matches?.('[data-section="rpcs"]') || swapped?.querySelector?.('[data-section="rpcs"]')) {
             initRpcSection();
