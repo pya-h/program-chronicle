@@ -515,6 +515,52 @@ async fn update_program_clears_account_filters() -> httpc_test::Result<()> {
 }
 
 #[tokio::test]
+async fn update_program_rpc_resets_the_cursor_but_keeps_it_on_other_edits() -> httpc_test::Result<()>
+{
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-repoint-from.example.com").await;
+    let other_rpc_id = create_rpc("https://program-repoint-to.example.com").await;
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0), "start_slot": 900}),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    // naming the same rpc is not a repoint
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"rpc_id": rpc_id, "name": "same-network"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.json_body_as::<serde_json::Value>()?["start_slot"], 900);
+
+    // slots are not comparable across networks, so the cursor cannot follow the program
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"rpc_id": other_rpc_id}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["rpc_id"], other_rpc_id);
+    assert!(body["start_slot"].is_null());
+    assert!(body["last_processed_slot"].is_null());
+    assert!(body["last_processed_at"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 

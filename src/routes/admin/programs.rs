@@ -30,7 +30,7 @@ use axum::{
 use sea_orm::{
     ActiveModelTrait, ActiveValue,
     ActiveValue::{NotSet, Set, Unchanged},
-    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QueryOrder, SelectExt,
+    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QueryOrder,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -294,8 +294,8 @@ async fn update_program_handler(
         )));
     }
 
-    if !programs::Entity::find_by_id(program_id)
-        .exists(&state.db)
+    let found = programs::Entity::find_by_id(program_id)
+        .one(&state.db)
         .await
         .map_err(|err| {
             SvmIndexerError::db_error_with_id(
@@ -303,12 +303,12 @@ async fn update_program_handler(
                 err,
                 program_id as u64,
             )
-        })?
-    {
+        })?;
+    let Some(current) = found else {
         return Err(SvmIndexerError::ItemNotFound(
             "Program not found!".to_owned(),
         ));
-    }
+    };
     let address = if let Some(address) = payload.address {
         Set(address
             .parse::<Pubkey>()
@@ -323,6 +323,11 @@ async fn update_program_handler(
         NotSet
     };
     let changed_rpc = get_or_add_rpc(&state, &payload.rpc_id, &payload.rpc_url).await?;
+    // both slot fields are numbered in the old network's space; carried onto a shorter chain they
+    // leave the catch-up floor above every signature the program will ever see there
+    let repointed = changed_rpc
+        .as_ref()
+        .is_some_and(|rpc| rpc.id != current.rpc_id);
     let program = programs::ActiveModel {
         id: Unchanged(program_id),
         address,
@@ -335,6 +340,9 @@ async fn update_program_handler(
             }
         }),
         rpc_id: changed_rpc.clone().map_or(NotSet, |nr| Set(nr.id)),
+        start_slot: if repointed { Set(None) } else { NotSet },
+        last_processed_slot: if repointed { Set(None) } else { NotSet },
+        last_processed_at: if repointed { Set(None) } else { NotSet },
         account_filters: account_filters_value(payload.account_filters)?,
         scan_partition_offset: scan_partition_offset_value(payload.scan_partition_offset)?,
         ..Default::default()
@@ -348,6 +356,12 @@ async fn update_program_handler(
             program_id as u64,
         )
     })?;
+
+    // without this the old task keeps ticking on the old client and rewrites the cursor just cleared
+    if repointed && let Some(tx) = &state.supervisor_tx {
+        let _ = tx.send(ProgramCommand::Stop(program_id)).await;
+        let _ = tx.send(ProgramCommand::Start(program_id)).await;
+    }
 
     if let Some(rpc) = changed_rpc {
         return Ok(ApiResponse::ok(ProgramWithRpcResponse { program, rpc }));

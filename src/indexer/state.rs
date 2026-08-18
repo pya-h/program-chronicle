@@ -134,7 +134,7 @@ async fn partitioned_scan<R: SvmRpc + ?Sized>(
 
     let offset = offset as usize;
     let mut snapshots = Vec::new();
-    let (mut failed, mut oversized) = (0u16, false);
+    let (mut failed, mut oversized) = (0u16, 0u16);
     for bucket in 0..=u8::MAX {
         // ANDed onto the stored descriptor rather than replacing it, so a program already narrowed
         // by data_size sweeps 256 buckets of that size class instead of 256 buckets of everything
@@ -146,29 +146,29 @@ async fn partitioned_scan<R: SvmRpc + ?Sized>(
         match scan_bucket(rpc, address, &partition).await {
             Ok(bucket_snapshots) => snapshots.extend(bucket_snapshots),
             Err(err) => {
-                oversized |= err.is_scan_limit();
                 failed += 1;
+                oversized += u16::from(err.is_scan_limit());
             }
         }
     }
 
-    if oversized {
+    if failed > 0 {
+        // the two causes need different remedies, so the count that is actionable is called out
+        let remedy = if oversized > 0 {
+            format!(
+                " {oversized} of them stayed over the node's scan limit — pick a \
+                 scan_partition_offset whose byte varies more."
+            )
+        } else {
+            String::new()
+        };
         record(
             db,
             IndexerErrorKind::Indexing,
             format!(
-                "Partitioned scan left {failed}/{SCAN_BUCKETS} buckets over the node's scan limit \
-                 at offset {offset}! Pick a scan_partition_offset whose byte varies more."
+                "Partitioned scan incomplete: {failed}/{SCAN_BUCKETS} buckets failed at offset \
+                 {offset}.{remedy}"
             ),
-            Some(program.id),
-            None,
-        )
-        .await;
-    } else if failed > 0 {
-        record(
-            db,
-            IndexerErrorKind::Indexing,
-            format!("Partitioned scan incomplete: {failed}/{SCAN_BUCKETS} buckets failed at offset {offset}."),
             Some(program.id),
             None,
         )

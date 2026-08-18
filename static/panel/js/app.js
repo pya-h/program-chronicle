@@ -988,6 +988,7 @@ document.addEventListener('DOMContentLoaded', () => {
         bindAddProgramForm();
         bindEditProgramForm();
         bindDeleteProgramConfirm();
+        bindRepointProgramConfirm();
         bindProgramRpcModeSwitch('program-add');
         bindProgramRpcModeSwitch('program-edit');
     }
@@ -1304,6 +1305,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (rpcSelect) rpcSelect.value = '';
 
         resetProgramRpcMode('program-edit');
+        pendingProgramEdit = null; // a repoint the operator backed out of must not follow the next edit
         showFieldFeedback(document.getElementById('program-edit-feedback'), '');
         openModal('program-edit-modal');
     }
@@ -1367,14 +1369,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 return showFieldFeedback(feedback, 'Change at least one field to save.');
             }
 
-            setBtnLoading(btn, true);
-            const res = await apiCall('PATCH', `/admin/programs/${programEditTargetId}`, payload);
-            setBtnLoading(btn, false);
+            // a repoint clears the start slot and the cursor server-side, so confirm it first
+            if (payload.rpc_id || payload.rpc_url) {
+                pendingProgramEdit = payload;
+                showFieldFeedback(document.getElementById('program-repoint-feedback'), '');
+                return openModal('program-repoint-modal');
+            }
+            await saveProgramEdit(payload, feedback, btn, 'Program updated successfully.');
+        });
+    }
 
-            if (!res.ok) return showFieldFeedback(feedback, res.message);
-            closeModal('program-edit-modal');
-            showToast('Program updated successfully.', 'success');
-            loadProgramList();
+    let pendingProgramEdit = null;
+
+    async function saveProgramEdit(payload, feedback, btn, message) {
+        setBtnLoading(btn, true);
+        const res = await apiCall('PATCH', `/admin/programs/${programEditTargetId}`, payload);
+        setBtnLoading(btn, false);
+
+        if (!res.ok) return showFieldFeedback(feedback, res.message);
+        closeModal('program-repoint-modal');
+        closeModal('program-edit-modal');
+        showToast(message, 'success');
+        loadProgramList();
+    }
+
+    function bindRepointProgramConfirm() {
+        const btn = document.getElementById('program-repoint-confirm');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            if (!pendingProgramEdit) return;
+            const payload = pendingProgramEdit;
+            pendingProgramEdit = null;
+            await saveProgramEdit(
+                payload,
+                document.getElementById('program-repoint-feedback'),
+                btn,
+                'Program moved to the new RPC; indexing restarts from its head.'
+            );
         });
     }
 

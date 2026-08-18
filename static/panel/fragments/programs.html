@@ -172,7 +172,7 @@
                                         <option value="" disabled selected>Keep current RPC</option>
                                     </select>
                                 </div>
-                                <span class="field-hint">Leave unselected to keep current RPC.</span>
+                                <span class="field-hint">Leave unselected to keep current RPC. Changing it clears the start slot and cursor.</span>
                             </div>
                         </div>
                         <div class="program-rpc-panel" data-panel="new" id="program-edit-new-panel">
@@ -186,7 +186,7 @@
                                     <input type="text" id="program-edit-rpc-ws" name="rpc_ws_url" class="input-field" placeholder="wss://api.mainnet-beta.solana.com" autocomplete="off">
                                 </div>
                             </div>
-                            <span class="field-hint">Leave empty to keep current RPC.</span>
+                            <span class="field-hint">Leave empty to keep current RPC. Changing it clears the start slot and cursor.</span>
                         </div>
                     </div>
                     <div class="form-feedback" id="program-edit-feedback" aria-live="polite"></div>
@@ -220,6 +220,30 @@
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
                 <button type="button" class="btn btn-danger" id="program-delete-confirm">
                     <span class="btn-text">Delete</span>
+                    <span class="btn-loader" aria-hidden="true"><span></span><span></span><span></span></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="program-repoint-modal" aria-hidden="true" data-static>
+        <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="program-repoint-title">
+            <div class="modal-header">
+                <h2 class="modal-title" id="program-repoint-title">Change Program RPC</h2>
+                <button type="button" class="modal-close" data-close-modal aria-label="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-text">You are moving this program to a different RPC.</p>
+                <p class="modal-warning">Slot numbers are not comparable across networks, so the start slot and the indexing cursor will be cleared and the program will restart from the new RPC's current head. Everything already indexed stays, but any history between the old cursor and the new head is never backfilled.</p>
+                <p class="modal-text-muted">Pointing at another endpoint for the <em>same</em> network is safe — the program simply re-pins and catches up.</p>
+                <div class="form-feedback" id="program-repoint-feedback" aria-live="polite"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="button" class="btn btn-danger" id="program-repoint-confirm">
+                    <span class="btn-text">Change RPC</span>
                     <span class="btn-loader" aria-hidden="true"><span></span><span></span><span></span></span>
                 </button>
             </div>

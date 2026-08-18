@@ -46,7 +46,9 @@ pub struct UpdateProgramPayload {
     pub rpc_url: Option<AddRpcPayload>,
     pub address: Option<String>,
     pub name: Option<String>,
+    /// Absent keeps the current filter; an empty descriptor clears it (back to track-all).
     pub account_filters: Option<AccountFilter>,
+    /// Double option: absent keeps the current offset, an explicit `null` clears it.
     #[serde(default, deserialize_with = "de_double_option")]
     pub scan_partition_offset: Option<Option<i32>>,
 }

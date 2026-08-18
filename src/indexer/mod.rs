@@ -25,6 +25,7 @@ use tokio::{
 
 use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
+use crate::core::indexer_error::{IndexerErrorKind, record};
 use crate::core::retry::RetryPolicy;
 use crate::core::sse::SseEvent;
 use crate::core::state::{ProgramPhase, ProgramPhases};
@@ -211,19 +212,36 @@ impl Indexer {
         // the run's own model goes stale the moment `advance_cursor` writes, so the walk's floor is
         // tracked here rather than read back from `program.last_processed_slot`
         let mut cursor = head;
+        let mut ticking = true;
         loop {
             tokio::time::sleep(self.cursor_interval).await;
             let next = match self
                 .walk_and_advance(rpc, program, commitment, cursor)
                 .await
             {
-                Ok(next) => next,
+                Ok(next) => {
+                    ticking = true;
+                    next
+                }
                 Err(err) => {
                     tracing::warn!(
                         error = %err,
                         program_id = program.id,
                         "Cursor tick failed; retrying on the next interval."
                     );
+                    // the run keeps reporting `Live`, so a stalled cursor is invisible unless it is
+                    // recorded here — once per streak, not once per tick
+                    if ticking {
+                        record(
+                            &self.db,
+                            IndexerErrorKind::Indexing,
+                            format!("Cursor stopped advancing on a live run! {err}"),
+                            Some(program.id),
+                            None,
+                        )
+                        .await;
+                        ticking = false;
+                    }
                     continue;
                 }
             };
