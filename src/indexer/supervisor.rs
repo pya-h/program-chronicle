@@ -9,7 +9,7 @@ use crate::core::error::SvmIndexerError;
 use crate::core::indexer_error::{IndexerErrorKind, record};
 use crate::core::retry::retry;
 use crate::core::state::{ProgramCommand, ProgramPhase};
-use crate::db::entities::{programs, rpcs};
+use crate::db::entities::programs;
 use crate::indexer::Indexer;
 
 impl Indexer {
@@ -19,17 +19,12 @@ impl Indexer {
     ) -> Result<(), SvmIndexerError> {
         let programs = programs::Entity::find()
             .filter(programs::Column::Active.eq(true))
-            .find_also_related(rpcs::Entity)
             .all(&self.db)
             .await
             .map_err(|err| SvmIndexerError::db_error("Failed loading programs to index!", err))?;
 
-        for (program, rpc) in programs {
-            let Some(rpc) = rpc else {
-                tracing::error!(program_id = program.id, "Skipping program with no rpc row!");
-                continue;
-            };
-            self.clone().spawn_program(program, rpc).await;
+        for program in programs {
+            self.clone().spawn_program(program.id).await;
         }
 
         // The admin API signals here to start a just-added/reactivated program or stop a deactivated one
@@ -43,21 +38,15 @@ impl Indexer {
     }
 
     async fn spawn_by_id(self: Arc<Self>, program_id: i32) {
-        let found = programs::Entity::find_by_id(program_id)
-            .find_also_related(rpcs::Entity)
-            .one(&self.db)
-            .await;
+        let found = programs::Entity::find_by_id(program_id).one(&self.db).await;
         match found {
-            Ok(Some((program, Some(rpc)))) if program.active => {
-                self.spawn_program(program, rpc).await
-            }
-            Ok(Some((program, Some(_)))) => {
+            Ok(Some(program)) if program.active => self.spawn_program(program.id).await,
+            Ok(Some(program)) => {
                 tracing::debug!(
                     program_id = program.id,
                     "Ignoring start for inactive program."
                 )
             }
-            Ok(Some((_, None))) => tracing::error!(program_id, "New program has no rpc row!"),
             Ok(None) => tracing::error!(program_id, "New program vanished before indexing!"),
             Err(err) => {
                 tracing::error!(program_id, error = %err, "Failed loading new program to index!")
@@ -65,8 +54,7 @@ impl Indexer {
         }
     }
 
-    async fn spawn_program(self: Arc<Self>, program: programs::Model, rpc: rpcs::Model) {
-        let program_id = program.id;
+    async fn spawn_program(self: Arc<Self>, program_id: i32) {
         let mut handles = self.handles.lock().await;
         if handles
             .get(&program_id)
@@ -74,7 +62,6 @@ impl Indexer {
         {
             return;
         }
-        let client = self.client_for(&rpc).await;
         let indexer = self.clone();
         let policy = self.retry_policy;
         let base_cooldown = self.restart_cooldown;
@@ -85,7 +72,7 @@ impl Indexer {
             loop {
                 let started = Instant::now();
                 match retry(policy, "program-indexer", || {
-                    indexer.run_program(program.clone(), client.clone())
+                    indexer.run_program(program_id)
                 })
                 .await
                 {
@@ -146,7 +133,6 @@ impl Indexer {
     async fn reconcile_once(self: Arc<Self>) {
         let found = programs::Entity::find()
             .filter(programs::Column::Active.eq(true))
-            .find_also_related(rpcs::Entity)
             .all(&self.db)
             .await;
         let programs = match found {
@@ -155,8 +141,7 @@ impl Indexer {
                 return tracing::error!(error = %err, "Reconcile pass failed loading programs!");
             }
         };
-        for (program, rpc) in programs {
-            let Some(rpc) = rpc else { continue };
+        for program in programs {
             let program_id = program.id;
             let stopped = {
                 let handles = self.handles.lock().await;
@@ -179,7 +164,7 @@ impl Indexer {
                 None,
             )
             .await;
-            self.clone().spawn_program(program, rpc).await;
+            self.clone().spawn_program(program_id).await;
         }
     }
 }

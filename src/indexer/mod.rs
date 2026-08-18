@@ -110,11 +110,9 @@ impl Indexer {
         self.commitment == CommitmentConfig::confirmed()
     }
 
-    async fn run_program(
-        &self,
-        program: programs::Model,
-        rpc: Arc<dyn SvmRpc>,
-    ) -> Result<(), SvmIndexerError> {
+    async fn run_program(&self, program_id: i32) -> Result<(), SvmIndexerError> {
+        let (program, network) = self.load_program(program_id).await?;
+        let rpc = self.client_for(&network).await;
         let commitment = self.ingest_commitment();
         let head = rpc.get_slot().await? as i64;
         let program = self.resolve_start_slot(program, head).await?;
@@ -252,6 +250,26 @@ impl Indexer {
         .await?;
         self.advance_cursor(program, head).await?;
         Ok(head)
+    }
+
+    async fn load_program(
+        &self,
+        program_id: i32,
+    ) -> Result<(programs::Model, rpcs::Model), SvmIndexerError> {
+        let found = programs::Entity::find_by_id(program_id)
+            .find_also_related(rpcs::Entity)
+            .one(&self.db)
+            .await
+            .map_err(|err| SvmIndexerError::db_error("Failed loading program to index!", err))?;
+        match found {
+            Some((program, Some(network))) => Ok((program, network)),
+            Some(_) => Err(SvmIndexerError::ItemNotFound(
+                "Program points at an rpc that no longer exists!".to_owned(),
+            )),
+            None => Err(SvmIndexerError::ItemNotFound(
+                "Program vanished before indexing it!".to_owned(),
+            )),
+        }
     }
 
     async fn resolve_start_slot(
