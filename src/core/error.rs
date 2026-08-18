@@ -1,6 +1,9 @@
 use axum::{Json, http::StatusCode, response};
 use thiserror::Error;
 
+/// `getProgramAccounts` refused: too many accounts accumulated for the node to serve in one scan.
+const SCAN_LIMIT_EXCEEDED: i64 = -32012;
+
 #[allow(unused)] // TODO: Remove this in the end
 #[derive(Error, Debug)]
 pub enum SvmIndexerError {
@@ -27,6 +30,10 @@ pub enum SvmIndexerError {
 
     #[error("RPC request failed! {0}")]
     RpcRequestFailed(String),
+
+    /// with the code
+    #[error("RPC request failed! {1}")]
+    RpcResponseError(i64, String),
 
     #[error("RPC subscription failed! {0}")]
     SubscriptionFailed(String),
@@ -88,5 +95,14 @@ impl SvmIndexerError {
 
     pub fn db_error_with_id(message: &str, sea_orm_err: sea_orm::DbErr, id: u64) -> Self {
         SvmIndexerError::DatabaseError(String::from(message), sea_orm_err, Some(id))
+    }
+
+    /// The node refused to scan the program because too many accounts matched — the failure a
+    /// partitioned scan works around, and the only one worth retrying differently.
+    pub fn is_scan_limit(&self) -> bool {
+        matches!(
+            self,
+            SvmIndexerError::RpcResponseError(SCAN_LIMIT_EXCEEDED, _)
+        )
     }
 }

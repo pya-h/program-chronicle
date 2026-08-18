@@ -14,6 +14,7 @@ fn program(last_processed_slot: Option<i64>, start_slot: Option<i64>) -> program
         start_slot,
         active: true,
         account_filters: None,
+        scan_partition_offset: None,
         created_at: ts(),
         updated_at: ts(),
     }

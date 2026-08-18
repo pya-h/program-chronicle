@@ -34,6 +34,11 @@
                     <input type="number" id="program-add-start-slot" name="start_slot" class="input-field" placeholder="Auto" min="0">
                     <span class="field-hint">Optional. Backfill begins at this slot.</span>
                 </div>
+                <div class="input-group">
+                    <label for="program-add-scan-partition-offset" class="input-label">Scan Partition Offset</label>
+                    <input type="number" id="program-add-scan-partition-offset" name="scan_partition_offset" class="input-field" placeholder="None" min="0">
+                    <span class="field-hint">Optional. Only used when the node refuses to scan the program whole; splits the scan on the byte at this position.</span>
+                </div>
                 <div class="input-group program-filters-group">
                     <label for="program-add-account-filters" class="input-label">Account Filters <span class="label-optional">(advanced)</span></label>
                     <textarea id="program-add-account-filters" name="account_filters" class="input-field textarea-field" rows="4" autocomplete="off" spellcheck="false" placeholder='{ "data_size": 165, "memcmp": [{ "offset": 0, "bytes": "<base58>" }], "addresses": [] }'></textarea>
@@ -138,6 +143,11 @@
                         <label for="program-edit-name" class="input-label">Name</label>
                         <input type="text" id="program-edit-name" name="name" class="input-field" placeholder="Token Program" autocomplete="off">
                         <span class="field-hint">Leave empty to keep current name.</span>
+                    </div>
+                    <div class="input-group">
+                        <label for="program-edit-scan-partition-offset" class="input-label">Scan Partition Offset</label>
+                        <input type="number" id="program-edit-scan-partition-offset" name="scan_partition_offset" class="input-field" placeholder="None" min="0">
+                        <span class="field-hint">Empty clears it. Takes effect after the program is deactivated and reactivated.</span>
                     </div>
                     <div class="input-group program-filters-group">
                         <label for="program-edit-account-filters" class="input-label">Account Filters <span class="label-optional">(advanced)</span></label>

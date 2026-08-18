@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use crate::indexer::rpc::AccountFilter;
-use crate::routes::payloads::common::{PaginationQuery, de_opt_bool};
+use crate::routes::payloads::common::{PaginationQuery, de_double_option, de_opt_bool};
 
 #[derive(Deserialize)]
 pub struct IndexerErrorsQuery {
@@ -32,6 +32,7 @@ pub struct AddProgramPayload {
     pub start_slot: Option<u64>,
     /// Optional ingestion narrowing; absent/empty tracks every account the program owns.
     pub account_filters: Option<AccountFilter>,
+    pub scan_partition_offset: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -45,8 +46,9 @@ pub struct UpdateProgramPayload {
     pub rpc_url: Option<AddRpcPayload>,
     pub address: Option<String>,
     pub name: Option<String>,
-    /// Absent keeps the current filter; an empty descriptor clears it (back to track-all).
     pub account_filters: Option<AccountFilter>,
+    #[serde(default, deserialize_with = "de_double_option")]
+    pub scan_partition_offset: Option<Option<i32>>,
 }
 
 impl UpdateProgramPayload {
@@ -56,5 +58,6 @@ impl UpdateProgramPayload {
             && self.address.is_none()
             && self.name.is_none()
             && self.account_filters.is_none()
+            && self.scan_partition_offset.is_none()
     }
 }

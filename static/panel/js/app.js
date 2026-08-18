@@ -1147,6 +1147,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Reads a scan-partition-offset field. Empty → { value: null } (unset); otherwise a
+    // non-negative integer, or { error }.
+    function parseScanPartitionOffset(fieldId) {
+        const raw = (document.getElementById(fieldId)?.value || '').trim();
+        if (!raw) return { value: null };
+        const offset = parseInt(raw, 10);
+        if (!Number.isFinite(offset) || offset < 0) {
+            return { error: 'Scan partition offset must be a non-negative integer.' };
+        }
+        return { value: offset };
+    }
+
     function bindAddProgramForm() {
         const form = document.getElementById('program-add-form');
         if (!form) return;
@@ -1174,6 +1186,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return showFieldFeedback(feedback, 'Select an existing RPC or provide a new RPC URL.');
             }
 
+            const offset = parseScanPartitionOffset('program-add-scan-partition-offset');
+            if (offset.error) return showFieldFeedback(feedback, offset.error);
+
             const filters = parseAccountFilters('program-add-account-filters');
             if (filters.error) return showFieldFeedback(feedback, filters.error);
 
@@ -1181,6 +1196,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const payload = { address: address.value, ...rpcPayload };
             if (name) payload.name = name;
             if (startSlot !== null) payload.start_slot = startSlot;
+            if (offset.value !== null) payload.scan_partition_offset = offset.value;
             if (filters.value !== undefined) payload.account_filters = filters.value;
 
             setBtnLoading(btn, true);
@@ -1240,6 +1256,7 @@ document.addEventListener('DOMContentLoaded', () => {
             address,
             name: program.name || '',
             rpc_id: String(program.rpc_id || ''),
+            scan_partition_offset: program.scan_partition_offset ?? null,
             // compact form for change detection; the textarea shows a pretty-printed copy
             account_filters: program.account_filters ? JSON.stringify(program.account_filters) : ''
         };
@@ -1273,6 +1290,10 @@ document.addEventListener('DOMContentLoaded', () => {
         idEl.value = program.id;
         document.getElementById('program-edit-address').value = programEditOriginal.address;
         document.getElementById('program-edit-name').value = programEditOriginal.name;
+        const offsetField = document.getElementById('program-edit-scan-partition-offset');
+        if (offsetField) {
+            offsetField.value = programEditOriginal.scan_partition_offset ?? '';
+        }
         const filtersField = document.getElementById('program-edit-account-filters');
         if (filtersField) {
             filtersField.value = program.account_filters
@@ -1321,6 +1342,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (String(rpcPayload.rpc_id) !== programEditOriginal.rpc_id) payload.rpc_id = rpcPayload.rpc_id;
             } else if (rpcPayload.rpc_url) {
                 payload.rpc_url = rpcPayload.rpc_url;
+            }
+
+            const offset = parseScanPartitionOffset('program-edit-scan-partition-offset');
+            if (offset.error) return showFieldFeedback(feedback, offset.error);
+            // an explicit null clears the column; absent leaves it alone
+            if (offset.value !== programEditOriginal.scan_partition_offset) {
+                payload.scan_partition_offset = offset.value;
             }
 
             const filters = parseAccountFilters('program-edit-account-filters');

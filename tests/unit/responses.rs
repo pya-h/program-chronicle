@@ -148,6 +148,7 @@ fn program_progress_reads_straight_off_the_program_row() {
         start_slot: Some(100),
         active: true,
         account_filters: None,
+        scan_partition_offset: None,
         created_at: ts(),
         updated_at: ts(),
     };

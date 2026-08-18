@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use solana_account_decoder::UiAccountEncoding;
+use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_client::rpc_filter::RpcFilterType;
@@ -9,6 +10,8 @@ use solana_rpc_client_api::config::{
     RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
     RpcTransactionLogsFilter,
 };
+use solana_rpc_client_api::request::{RpcError, RpcRequest};
+use solana_rpc_client_api::response::{OptionalContext, RpcKeyedAccount};
 use solana_sdk::{
     account::Account, commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature,
 };
@@ -51,6 +54,15 @@ impl JsonRpc {
 
 const SUB_CHANNEL_CAPACITY: usize = 1024;
 
+fn rpc_error(err: ClientError) -> SvmIndexerError {
+    match err.kind() {
+        ClientErrorKind::RpcError(RpcError::RpcResponseError { code, .. }) => {
+            SvmIndexerError::RpcResponseError(*code, err.to_string())
+        }
+        _ => SvmIndexerError::RpcRequestFailed(err.to_string()),
+    }
+}
+
 /// Wraps a channel receiver as an owned `'static` stream — nothing borrowed, so the caller can hold
 /// it without pinning the pubsub client alive.
 fn receiver_stream<T: Send + 'static>(rx: mpsc::Receiver<RpcResult<T>>) -> SubStream<T> {
@@ -62,10 +74,7 @@ fn receiver_stream<T: Send + 'static>(rx: mpsc::Receiver<RpcResult<T>>) -> SubSt
 #[async_trait]
 impl SvmRpc for JsonRpc {
     async fn get_slot(&self) -> RpcResult<u64> {
-        self.client
-            .get_slot()
-            .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))
+        self.client.get_slot().await.map_err(rpc_error)
     }
 
     async fn get_block_time(&self, slot: u64) -> RpcResult<Option<i64>> {
@@ -78,38 +87,57 @@ impl SvmRpc for JsonRpc {
         program: &Pubkey,
         filter: Option<&AccountFilter>,
     ) -> RpcResult<Vec<AccountSnapshot>> {
-        let slot = self
-            .client
-            .get_slot()
-            .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
         let config = RpcProgramAccountsConfig {
             filters: rpc_filters(filter),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64Zstd),
+                commitment: Some(self.commitment),
                 ..Default::default()
             },
+            with_context: Some(true),
             ..Default::default()
         };
-        let accounts = self
+        let response: OptionalContext<Vec<RpcKeyedAccount>> = self
             .client
-            .get_program_accounts_with_config(program, config)
+            .send(
+                RpcRequest::GetProgramAccounts,
+                serde_json::json!([program.to_string(), config]),
+            )
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            .map_err(rpc_error)?;
+        let (slot, accounts) = match response {
+            OptionalContext::Context(response) => (response.context.slot, response.value),
+            // a node that ignores `withContext` still answers, just without a slot to attribute it to
+            OptionalContext::NoContext(accounts) => (self.get_slot().await?, accounts),
+        };
 
-        Ok(accounts
+        accounts
             .into_iter()
-            .map(|(address, acct)| AccountSnapshot {
-                address,
-                owner: acct.owner,
-                lamports: acct.lamports,
-                data: acct.data,
-                rent_epoch: acct.rent_epoch,
-                executable: acct.executable,
-                slot,
-                write_version: None,
+            .map(|keyed| {
+                let address = keyed.pubkey.parse().map_err(|_| {
+                    SvmIndexerError::RpcRequestFailed(format!(
+                        "invalid account key {}",
+                        keyed.pubkey
+                    ))
+                })?;
+                let account = keyed.account.decode::<Account>().ok_or_else(|| {
+                    SvmIndexerError::RpcRequestFailed(format!(
+                        "undecodable account {}",
+                        keyed.pubkey
+                    ))
+                })?;
+                Ok(AccountSnapshot {
+                    address,
+                    owner: account.owner,
+                    lamports: account.lamports,
+                    data: account.data,
+                    rent_epoch: account.rent_epoch,
+                    executable: account.executable,
+                    slot,
+                    write_version: None,
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn get_multiple_accounts(&self, addresses: &[Pubkey]) -> RpcResult<Vec<AccountSnapshot>> {
@@ -124,7 +152,7 @@ impl SvmRpc for JsonRpc {
                 .client
                 .get_multiple_accounts_with_config(chunk, config.clone())
                 .await
-                .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+                .map_err(rpc_error)?;
             let slot = response.context.slot;
             snapshots.extend(
                 chunk
@@ -164,7 +192,7 @@ impl SvmRpc for JsonRpc {
             .client
             .get_signatures_for_address_with_config(address, config)
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            .map_err(rpc_error)?;
 
         signatures
             .into_iter()
@@ -192,7 +220,7 @@ impl SvmRpc for JsonRpc {
             .client
             .get_transaction_with_config(signature, config)
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            .map_err(rpc_error)?;
 
         let meta = tx.transaction.meta.as_ref();
         let logs = meta
@@ -224,7 +252,7 @@ impl SvmRpc for JsonRpc {
             .client
             .get_signature_statuses(signatures)
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?
+            .map_err(rpc_error)?
             .value;
         Ok(statuses
             .into_iter()
@@ -248,7 +276,7 @@ impl SvmRpc for JsonRpc {
             .client
             .get_signature_statuses_with_history(signatures)
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?
+            .map_err(rpc_error)?
             .value;
         Ok(statuses
             .into_iter()

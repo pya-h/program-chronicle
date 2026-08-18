@@ -8,6 +8,7 @@ fn update_program_payload_is_empty_when_no_field_set() {
         address: None,
         name: None,
         account_filters: None,
+        scan_partition_offset: None,
     };
     assert!(payload.is_empty());
 }
@@ -20,6 +21,7 @@ fn update_program_payload_not_empty_with_any_field() {
         address: None,
         name: None,
         account_filters: None,
+        scan_partition_offset: None,
     };
     assert!(!with_rpc.is_empty());
 
@@ -29,6 +31,7 @@ fn update_program_payload_not_empty_with_any_field() {
         address: Some("addr".into()),
         name: None,
         account_filters: None,
+        scan_partition_offset: None,
     };
     assert!(!with_address.is_empty());
 }

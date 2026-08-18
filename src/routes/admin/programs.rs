@@ -51,6 +51,24 @@ fn account_filters_value(
     }
 }
 
+/// A `memcmp` never matches past the end of an account's data, so an offset beyond the largest
+/// account the runtime allows can only be a typo.
+const MAX_SCAN_PARTITION_OFFSET: i32 = 10 * 1024 * 1024;
+
+fn scan_partition_offset_value(
+    offset: Option<Option<i32>>,
+) -> Result<ActiveValue<Option<i32>>, SvmIndexerError> {
+    match offset {
+        Some(Some(offset)) if !(0..=MAX_SCAN_PARTITION_OFFSET).contains(&offset) => {
+            Err(SvmIndexerError::BadInput(format!(
+                "scan_partition_offset must be between 0 and {MAX_SCAN_PARTITION_OFFSET}!"
+            )))
+        }
+        Some(offset) => Ok(Set(offset)),
+        None => Ok(NotSet),
+    }
+}
+
 async fn get_or_add_rpc(
     state: &AppState,
     rpc_id: &Option<i32>,
@@ -117,6 +135,9 @@ async fn add_program_handler(
         start_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
         name: payload.name.map_or(NotSet, |name| Set(Some(name))),
         account_filters: account_filters_value(payload.account_filters)?,
+        scan_partition_offset: scan_partition_offset_value(
+            payload.scan_partition_offset.map(Some),
+        )?,
         ..Default::default()
     };
 
@@ -315,6 +336,7 @@ async fn update_program_handler(
         }),
         rpc_id: changed_rpc.clone().map_or(NotSet, |nr| Set(nr.id)),
         account_filters: account_filters_value(payload.account_filters)?,
+        scan_partition_offset: scan_partition_offset_value(payload.scan_partition_offset)?,
         ..Default::default()
     }
     .update(&state.db)

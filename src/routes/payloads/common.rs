@@ -32,6 +32,14 @@ where
     }
 }
 
+pub(crate) fn de_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
 #[derive(Deserialize)]
 pub struct PaginationQuery {
     #[serde(default, deserialize_with = "de_opt_u16")]
