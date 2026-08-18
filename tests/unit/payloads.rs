@@ -8,6 +8,7 @@ fn update_program_payload_is_empty_when_no_field_set() {
         address: None,
         name: None,
         account_filters: None,
+        track_account_states: None,
     };
     assert!(payload.is_empty());
 }
@@ -20,6 +21,7 @@ fn update_program_payload_not_empty_with_any_field() {
         address: None,
         name: None,
         account_filters: None,
+        track_account_states: None,
     };
     assert!(!with_rpc.is_empty());
 
@@ -29,8 +31,22 @@ fn update_program_payload_not_empty_with_any_field() {
         address: Some("addr".into()),
         name: None,
         account_filters: None,
+        track_account_states: None,
     };
     assert!(!with_address.is_empty());
+
+    let with_track = UpdateProgramPayload {
+        rpc_id: None,
+        rpc_url: None,
+        address: None,
+        name: None,
+        account_filters: None,
+        track_account_states: Some(false),
+    };
+    assert!(
+        !with_track.is_empty(),
+        "toggling history alone is a real update"
+    );
 }
 
 #[test]
@@ -42,6 +58,8 @@ fn add_program_payload_requires_only_address() {
     assert!(payload.rpc_url.is_none());
     assert!(payload.name.is_none());
     assert!(payload.start_slot.is_none());
+    // absent means "use the default" (true), decided at the handler, not the payload
+    assert!(payload.track_account_states.is_none());
 }
 
 #[test]

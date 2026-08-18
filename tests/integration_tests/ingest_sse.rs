@@ -55,6 +55,7 @@ async fn rejected_older_write_is_not_broadcast() {
         &snapshot(&addr, &owner, &[2], 600),
         None,
         Some(1001),
+        true,
     )
     .await
     .unwrap();
@@ -72,6 +73,7 @@ async fn rejected_older_write_is_not_broadcast() {
         &snapshot(&addr, &owner, &[3], 500),
         None,
         Some(1000),
+        true,
     )
     .await
     .unwrap();

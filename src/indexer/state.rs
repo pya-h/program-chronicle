@@ -55,6 +55,7 @@ pub async fn catch_up_state<R: SvmRpc + ?Sized>(
             snapshot,
             None,
             block_time,
+            program.track_account_states,
         )
         .await?;
     }
@@ -96,6 +97,7 @@ pub async fn stream_state<R: SvmRpc + ?Sized>(
             &snapshot,
             None,
             None,
+            program.track_account_states,
         )
         .await?;
     }

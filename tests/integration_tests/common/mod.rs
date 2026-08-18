@@ -260,6 +260,38 @@ pub async fn seed_account(
     write_version: u64,
     block_time: Option<i64>,
 ) {
+    seed_account_ex(
+        db,
+        program_id,
+        rpc_id,
+        address,
+        owner,
+        data,
+        lamports,
+        slot,
+        write_version,
+        block_time,
+        true,
+    )
+    .await;
+}
+
+/// Same as [`seed_account`] but lets the caller opt out of history, mirroring a program with
+/// `track_account_states = false`.
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_account_ex(
+    db: &DatabaseConnection,
+    program_id: i32,
+    rpc_id: i32,
+    address: &Pubkey,
+    owner: &Pubkey,
+    data: &[u8],
+    lamports: u64,
+    slot: u64,
+    write_version: u64,
+    block_time: Option<i64>,
+    record_history: bool,
+) {
     let (sse_tx, _) = broadcast::channel::<SseEvent>(16);
     let snapshot = AccountSnapshot {
         address: *address,
@@ -271,9 +303,18 @@ pub async fn seed_account(
         slot,
         write_version: Some(write_version),
     };
-    upsert_account_snapshot(db, &sse_tx, program_id, rpc_id, &snapshot, None, block_time)
-        .await
-        .expect("failed to seed account snapshot");
+    upsert_account_snapshot(
+        db,
+        &sse_tx,
+        program_id,
+        rpc_id,
+        &snapshot,
+        None,
+        block_time,
+        record_history,
+    )
+    .await
+    .expect("failed to seed account snapshot");
 }
 
 pub async fn seed_transaction(

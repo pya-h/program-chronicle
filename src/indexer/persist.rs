@@ -49,6 +49,7 @@ pub async fn ensure_slot<C: ConnectionTrait>(
 }
 
 // `tx_sig` is only supplied by Geyser. Json rpc doesnt provide that; In future we handle that with a workaround.
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_account_snapshot(
     db: &DatabaseConnection,
     sse_tx: &broadcast::Sender<SseEvent>,
@@ -57,6 +58,8 @@ pub async fn upsert_account_snapshot(
     snapshot: &AccountSnapshot,
     tx_sig: Option<Vec<u8>>,
     block_time: Option<i64>,
+    // when false the program opted out of history: still cache the latest state, just skip the append
+    record_history: bool,
 ) -> Result<(), SvmIndexerError> {
     let now = chrono::Utc::now().naive_utc();
     let address = snapshot.address.to_bytes().to_vec();
@@ -130,39 +133,41 @@ pub async fn upsert_account_snapshot(
         }
     };
 
-    account_states::Entity::insert(account_states::ActiveModel {
-        program_account_id: Set(program_account_id),
-        data: Set(snapshot.data.clone()),
-        lamports: Set(lamports),
-        owner: Set(owner.clone()),
-        slot: Set(slot),
-        slot_id: Set(slot_id),
-        write_version: Set(write_version),
-        tx_signature: Set(tx_sig.clone()),
-        created_at: Set(now),
-        updated_at: Set(now),
-        ..Default::default()
-    })
-    .on_conflict(
-        OnConflict::columns([
-            account_states::Column::ProgramAccountId,
-            account_states::Column::Slot,
-            account_states::Column::WriteVersion,
-        ])
-        // json-rpc has no write_version, so it collapses to 0: two distinct values in one slot
-        // collide on the key. the later arrival is the slot's newer state, so let it win here too
-        .update_columns([
-            account_states::Column::Data,
-            account_states::Column::Lamports,
-            account_states::Column::Owner,
-            account_states::Column::TxSignature,
-            account_states::Column::UpdatedAt,
-        ])
-        .to_owned(),
-    )
-    .exec_without_returning(&txn)
-    .await
-    .map_err(|err| SvmIndexerError::db_error("Failed appending account state!", err))?;
+    if record_history {
+        account_states::Entity::insert(account_states::ActiveModel {
+            program_account_id: Set(program_account_id),
+            data: Set(snapshot.data.clone()),
+            lamports: Set(lamports),
+            owner: Set(owner.clone()),
+            slot: Set(slot),
+            slot_id: Set(slot_id),
+            write_version: Set(write_version),
+            tx_signature: Set(tx_sig.clone()),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .on_conflict(
+            OnConflict::columns([
+                account_states::Column::ProgramAccountId,
+                account_states::Column::Slot,
+                account_states::Column::WriteVersion,
+            ])
+            // json-rpc has no write_version, so it collapses to 0: two distinct values in one slot
+            // collide on the key. the later arrival is the slot's newer state, so let it win here too
+            .update_columns([
+                account_states::Column::Data,
+                account_states::Column::Lamports,
+                account_states::Column::Owner,
+                account_states::Column::TxSignature,
+                account_states::Column::UpdatedAt,
+            ])
+            .to_owned(),
+        )
+        .exec_without_returning(&txn)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed appending account state!", err))?;
+    }
 
     let advanced = program_accounts::Entity::update_many()
         .col_expr(
