@@ -2,10 +2,12 @@ use std::collections::HashSet;
 
 use futures::StreamExt;
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QuerySelect, TransactionTrait, sea_query::OnConflict,
+    ActiveValue::Set,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QuerySelect, TransactionTrait,
+    sea_query::{Expr, OnConflict},
 };
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use tokio::sync::broadcast;
 
 use crate::core::commitment::TransactionCommitment;
@@ -17,6 +19,7 @@ use crate::indexer::persist::ensure_slot;
 use crate::indexer::rpc::{RawTransaction, SignatureInfo, SubReady, SvmRpc};
 
 const CATCH_UP_PAGE_SIZE: usize = 1000;
+const TRANSACTION_BATCH_SIZE: usize = 25;
 
 /// Where the backward walk stops. `since` raises the floor above the program cursor, for the narrow
 /// re-sweep that closes the window between the bulk walk and the live subscription.
@@ -42,11 +45,51 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
         )
     })?;
     let floor = catch_up_floor(program, since);
+    let track = since.is_none();
 
-    let mut before = None;
-    'pages: loop {
+    if track && let Some(cursor) = resume_cursor(program) {
+        // pages arrive newest-first, so a gap that keeps growing at the top would starve the walk of
+        // its own tail forever. Finish where the last run died before looking at anything above it.
+        walk(
+            rpc,
+            db,
+            sse_tx,
+            program,
+            commitment,
+            &address,
+            floor,
+            Some(cursor),
+            true,
+        )
+        .await?;
+    }
+    walk(
+        rpc, db, sse_tx, program, commitment, &address, floor, None, track,
+    )
+    .await
+}
+
+/// The signature an interrupted walk should page on from, if one was recorded.
+pub(crate) fn resume_cursor(program: &programs::Model) -> Option<Signature> {
+    Signature::try_from(program.backfill_cursor.as_deref()?).ok()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn walk<R: SvmRpc + ?Sized>(
+    rpc: &R,
+    db: &DatabaseConnection,
+    sse_tx: &broadcast::Sender<SseEvent>,
+    program: &programs::Model,
+    commitment: TransactionCommitment,
+    address: &Pubkey,
+    floor: i64,
+    from: Option<Signature>,
+    track: bool,
+) -> Result<(), SvmIndexerError> {
+    let mut before = from;
+    loop {
         let page = rpc
-            .get_signatures_for_address(&address, before, CATCH_UP_PAGE_SIZE)
+            .get_signatures_for_address(address, before, CATCH_UP_PAGE_SIZE)
             .await?;
         let page_len = page.len();
         if page_len == 0 {
@@ -54,29 +97,89 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
         }
         before = page.last().map(|sig| sig.signature);
         let stored = stored_signatures(db, program.id, &page, floor).await?;
-        for sig in page {
+
+        let mut reached_floor = false;
+        let mut missing = Vec::new();
+        for sig in &page {
             if (sig.slot as i64) < floor {
-                break 'pages;
+                reached_floor = true;
+                break;
             }
-            if stored.contains(sig.signature.as_ref()) {
-                continue;
+            if !stored.contains(sig.signature.as_ref()) {
+                missing.push(sig.signature);
             }
-            let tx = rpc.get_transaction(&sig.signature).await?;
-            index_transaction(
-                db,
-                sse_tx,
-                program.id,
-                program.rpc_id,
-                &address,
-                &tx,
-                commitment,
-            )
-            .await?;
         }
-        if page_len < CATCH_UP_PAGE_SIZE {
+
+        for chunk in missing.chunks(TRANSACTION_BATCH_SIZE) {
+            for tx in rpc.get_transactions(chunk).await?.into_iter().flatten() {
+                index_transaction(
+                    db,
+                    sse_tx,
+                    program.id,
+                    program.rpc_id,
+                    address,
+                    &tx,
+                    commitment,
+                )
+                .await?;
+            }
+        }
+
+        if reached_floor || page_len < CATCH_UP_PAGE_SIZE {
             break;
         }
+        if track && let (Some(cursor), Some(oldest)) = (before, page.last().map(|sig| sig.slot)) {
+            // this page is stored end to end, so a restart can page on from strictly below it
+            record_backfill_frontier(db, program.id, oldest as i64, &cursor).await?;
+        }
     }
+    if track {
+        clear_backfill_frontier(db, program.id).await?;
+    }
+    Ok(())
+}
+
+async fn record_backfill_frontier(
+    db: &DatabaseConnection,
+    program_id: i32,
+    slot: i64,
+    cursor: &Signature,
+) -> Result<(), SvmIndexerError> {
+    programs::Entity::update_many()
+        .col_expr(programs::Column::BackfillSlot, Expr::value(slot))
+        .col_expr(
+            programs::Column::BackfillCursor,
+            Expr::value(cursor.as_ref().to_vec()),
+        )
+        .filter(programs::Column::Id.eq(program_id))
+        .filter(
+            Condition::any()
+                .add(programs::Column::BackfillSlot.is_null())
+                .add(programs::Column::BackfillSlot.gt(slot)),
+        )
+        .exec(db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed recording backfill progress!", err))?;
+    Ok(())
+}
+
+async fn clear_backfill_frontier(
+    db: &DatabaseConnection,
+    program_id: i32,
+) -> Result<(), SvmIndexerError> {
+    programs::Entity::update_many()
+        .col_expr(
+            programs::Column::BackfillSlot,
+            Expr::value(Option::<i64>::None),
+        )
+        .col_expr(
+            programs::Column::BackfillCursor,
+            Expr::value(Option::<Vec<u8>>::None),
+        )
+        .filter(programs::Column::Id.eq(program_id))
+        .exec(db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed clearing backfill progress!", err))?;
     Ok(())
 }
 

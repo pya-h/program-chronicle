@@ -647,6 +647,50 @@ async fn update_program_rpc_drops_account_state_but_keeps_history() -> httpc_tes
 }
 
 #[tokio::test]
+async fn update_program_rpc_clears_the_backfill_frontier() -> httpc_test::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
+    use svm_indexer::db::entities::programs;
+
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://backfill-frontier-from.example.com").await;
+    let other_rpc_id = seed_rpc(&db, "https://backfill-frontier-to.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(62)).await;
+
+    programs::Entity::update_many()
+        .col_expr(programs::Column::BackfillSlot, Expr::value(900_i64))
+        .col_expr(
+            programs::Column::BackfillCursor,
+            Expr::value(signature(81).as_ref().to_vec()),
+        )
+        .filter(programs::Column::Id.eq(program_id))
+        .exec(&db)
+        .await
+        .unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", program_id),
+            json!({"rpc_id": other_rpc_id}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    let program = programs::Entity::find_by_id(program_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        program.backfill_slot, None,
+        "the frontier is a position on the old chain"
+    );
+    assert_eq!(program.backfill_cursor, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 

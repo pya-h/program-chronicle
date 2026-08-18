@@ -110,6 +110,17 @@ pub trait SvmRpc: Send + Sync {
 
     async fn get_transaction(&self, signature: &Signature) -> RpcResult<RawTransaction>;
 
+    async fn get_transactions(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<RawTransaction>>> {
+        let mut transactions = Vec::with_capacity(signatures.len());
+        for signature in signatures {
+            transactions.push(Some(self.get_transaction(signature).await?));
+        }
+        Ok(transactions)
+    }
+
     async fn get_signature_statuses(
         &self,
         signatures: &[Signature],

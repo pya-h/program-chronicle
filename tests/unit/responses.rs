@@ -149,6 +149,8 @@ fn program_progress_reads_straight_off_the_program_row() {
         active: true,
         account_filters: None,
         scan_partition_offset: None,
+        backfill_slot: None,
+        backfill_cursor: None,
         created_at: ts(),
         updated_at: ts(),
     };

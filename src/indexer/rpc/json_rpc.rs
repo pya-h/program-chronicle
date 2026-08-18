@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use solana_account_decoder::UiAccountEncoding;
@@ -32,17 +34,116 @@ const MAX_MULTIPLE_ACCOUNTS: usize = 100;
 
 pub struct JsonRpc {
     client: RpcClient,
+    http: reqwest::Client,
+    http_url: String,
     ws_url: String,
     commitment: CommitmentConfig,
+    batching: AtomicBool,
 }
 
 impl JsonRpc {
     pub fn new(http_url: String, ws_url: String, commitment: CommitmentConfig) -> Self {
         Self {
-            client: RpcClient::new_with_commitment(http_url, commitment),
+            client: RpcClient::new_with_commitment(http_url.clone(), commitment),
+            http: reqwest::Client::new(),
+            http_url,
             ws_url,
             commitment,
+            batching: AtomicBool::new(true),
         }
+    }
+
+    fn transaction_config(&self) -> RpcTransactionConfig {
+        RpcTransactionConfig {
+            encoding: Some(UiTransactionEncoding::Json),
+            commitment: Some(self.commitment),
+            max_supported_transaction_version: Some(0),
+        }
+    }
+
+    async fn get_transactions_batched(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Option<Vec<Option<RawTransaction>>>> {
+        let config = self.transaction_config();
+        let body: Vec<serde_json::Value> = signatures
+            .iter()
+            .enumerate()
+            .map(|(id, signature)| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "getTransaction",
+                    "params": [signature.to_string(), config],
+                })
+            })
+            .collect();
+
+        let response = self
+            .http
+            .post(&self.http_url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            // being throttled is back-pressure, not a verdict on batching — giving up on batches
+            // there would multiply the request count that caused it
+            return if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                Ok(None)
+            } else {
+                Err(SvmIndexerError::RpcRequestFailed(format!(
+                    "batched getTransaction failed with {status}"
+                )))
+            };
+        }
+
+        let payload: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+        let Some(entries) = payload.as_array() else {
+            return Ok(None);
+        };
+        if entries.len() != signatures.len() {
+            return Err(SvmIndexerError::RpcRequestFailed(format!(
+                "batched getTransaction answered {} of {} requests",
+                entries.len(),
+                signatures.len()
+            )));
+        }
+
+        // responses may come back in any order, so each is placed by its own id
+        let mut transactions: Vec<Option<RawTransaction>> = vec![None; signatures.len()];
+        for entry in entries {
+            let id = entry.get("id").and_then(serde_json::Value::as_u64);
+            let Some(index) = id.map(|id| id as usize).filter(|id| *id < signatures.len()) else {
+                return Err(SvmIndexerError::RpcRequestFailed(
+                    "batched getTransaction answered with an unknown id".to_owned(),
+                ));
+            };
+            if let Some(error) = entry.get("error").filter(|error| !error.is_null()) {
+                return Err(SvmIndexerError::RpcRequestFailed(format!(
+                    "getTransaction {}: {error}",
+                    signatures[index]
+                )));
+            }
+            match entry.get("result") {
+                None | Some(serde_json::Value::Null) => continue, // node has no record of it
+                Some(result) => {
+                    let tx: EncodedConfirmedTransactionWithStatusMeta =
+                        serde_json::from_value(result.clone()).map_err(|err| {
+                            SvmIndexerError::RpcRequestFailed(format!(
+                                "undecodable transaction {}: {err}",
+                                signatures[index]
+                            ))
+                        })?;
+                    transactions[index] = Some(raw_transaction(signatures[index], tx)?);
+                }
+            }
+        }
+        Ok(Some(transactions))
     }
 
     async fn connect(&self) -> RpcResult<PubsubClient> {
@@ -211,37 +312,35 @@ impl SvmRpc for JsonRpc {
     }
 
     async fn get_transaction(&self, signature: &Signature) -> RpcResult<RawTransaction> {
-        let config = RpcTransactionConfig {
-            encoding: Some(UiTransactionEncoding::Json),
-            commitment: Some(self.commitment),
-            max_supported_transaction_version: Some(0),
-        };
         let tx = self
             .client
-            .get_transaction_with_config(signature, config)
+            .get_transaction_with_config(signature, self.transaction_config())
             .await
             .map_err(rpc_error)?;
+        raw_transaction(*signature, tx)
+    }
 
-        let meta = tx.transaction.meta.as_ref();
-        let logs = meta
-            .and_then(|m| Option::<Vec<String>>::from(m.log_messages.clone()))
-            .unwrap_or_default();
-
-        Ok(RawTransaction {
-            signature: *signature,
-            slot: tx.slot,
-            block_time: tx.block_time,
-            success: meta.map(|m| m.err.is_none()).unwrap_or(false),
-            err: meta
-                .and_then(|m| m.err.as_ref())
-                .map(|e| serde_json::to_value(e).unwrap_or_default()),
-            fee: meta.map(|m| m.fee),
-            fee_payer: fee_payer(&tx),
-            logs,
-            accounts: account_keys(&tx),
-            raw: serde_json::to_value(&tx)
-                .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?,
-        })
+    async fn get_transactions(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<RawTransaction>>> {
+        if signatures.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.batching.load(Ordering::Relaxed) {
+            if let Some(transactions) = self.get_transactions_batched(signatures).await? {
+                return Ok(transactions);
+            }
+            self.batching.store(false, Ordering::Relaxed);
+            tracing::warn!(
+                "Node refused a batched getTransaction; falling back to one request per transaction."
+            );
+        }
+        let mut transactions = Vec::with_capacity(signatures.len());
+        for signature in signatures {
+            transactions.push(Some(self.get_transaction(signature).await?));
+        }
+        Ok(transactions)
     }
 
     async fn get_signature_statuses(
@@ -485,6 +584,32 @@ impl SvmRpc for JsonRpc {
 fn rpc_filters(filter: Option<&AccountFilter>) -> Option<Vec<RpcFilterType>> {
     let filters = filter?.rpc_filters();
     (!filters.is_empty()).then_some(filters)
+}
+
+pub(crate) fn raw_transaction(
+    signature: Signature,
+    tx: EncodedConfirmedTransactionWithStatusMeta,
+) -> RpcResult<RawTransaction> {
+    let meta = tx.transaction.meta.as_ref();
+    let logs = meta
+        .and_then(|m| Option::<Vec<String>>::from(m.log_messages.clone()))
+        .unwrap_or_default();
+
+    Ok(RawTransaction {
+        signature,
+        slot: tx.slot,
+        block_time: tx.block_time,
+        success: meta.map(|m| m.err.is_none()).unwrap_or(false),
+        err: meta
+            .and_then(|m| m.err.as_ref())
+            .map(|e| serde_json::to_value(e).unwrap_or_default()),
+        fee: meta.map(|m| m.fee),
+        fee_payer: fee_payer(&tx),
+        logs,
+        accounts: account_keys(&tx),
+        raw: serde_json::to_value(&tx)
+            .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?,
+    })
 }
 
 /// fee payer is always the first account key

@@ -356,7 +356,7 @@ async fn update_program_handler(
         NotSet
     };
     let changed_rpc = get_or_add_rpc(&state, &payload.rpc_id, &payload.rpc_url).await?;
-    // both slot fields are numbered in the old network's space; carried onto a shorter chain they
+    // the slot fields are numbered in the old network's space; carried onto a shorter chain they
     // leave the catch-up floor above every signature the program will ever see there
     let repointed = changed_rpc
         .as_ref()
@@ -380,6 +380,9 @@ async fn update_program_handler(
         start_slot: if repointed { Set(None) } else { NotSet },
         last_processed_slot: if repointed { Set(None) } else { NotSet },
         last_processed_at: if repointed { Set(None) } else { NotSet },
+        // the frontier names a signature of the old chain; the new node cannot page on from it
+        backfill_slot: if repointed { Set(None) } else { NotSet },
+        backfill_cursor: if repointed { Set(None) } else { NotSet },
         account_filters: account_filters_value(payload.account_filters)?,
         scan_partition_offset: scan_partition_offset_value(payload.scan_partition_offset)?,
         ..Default::default()

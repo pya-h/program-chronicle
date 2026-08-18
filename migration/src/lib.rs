@@ -17,6 +17,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260809_130000_create_transaction_accounts::Migration),
             Box::new(m20260810_120000_create_indexer_errors::Migration),
             Box::new(m20260818_120000_add_programs_scan_partition_offset::Migration),
+            Box::new(m20260818_140000_add_programs_backfill_frontier::Migration),
         ]
     }
 }
@@ -31,3 +32,4 @@ mod m20260809_120100_index_transactions_program_slot;
 mod m20260809_130000_create_transaction_accounts;
 mod m20260810_120000_create_indexer_errors;
 mod m20260818_120000_add_programs_scan_partition_offset;
+mod m20260818_140000_add_programs_backfill_frontier;

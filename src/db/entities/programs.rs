@@ -22,6 +22,9 @@ pub struct Model {
     #[sea_orm(column_type = "JsonBinary", nullable)]
     pub account_filters: Option<Json>,
     pub scan_partition_offset: Option<i32>,
+    pub backfill_slot: Option<i64>,
+    #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
+    pub backfill_cursor: Option<Vec<u8>>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
     #[sea_orm(has_many)]
