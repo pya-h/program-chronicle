@@ -81,6 +81,13 @@
     box-sizing: border-box;
 }
 
+/* The user-agent rule loses to any author `display`, so every element the JS hides with the
+   attribute needs this to actually disappear. `!important` because those rules match with the same
+   specificity and would otherwise win on source order alone. */
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     height: 100%;
 }

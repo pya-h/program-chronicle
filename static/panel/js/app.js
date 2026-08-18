@@ -1636,8 +1636,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // PDAs section --------------------------------------------------------------
     let pdasList = null;
 
-    function initPdasSection() {
-        populateProgramSelect('pdas-program');
+    async function initPdasSection() {
+        // held rather than awaited here so the filter controls bind before the fetch resolves
+        const populated = populateProgramSelect('pdas-program');
         pdasList = createListSection({
             rootId: 'pdas-root', emptyId: 'pdas-empty', countId: 'pdas-count', pagerId: 'pdas-pager',
             endpoint: () => {
@@ -1663,6 +1664,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
 
+        await populated; // the select drives `endpoint()`; loading first would ask for nothing
         pdasList.load();
     }
 
@@ -1736,8 +1738,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Transactions section ------------------------------------------------------
     let txList = null;
 
-    function initTxSection() {
-        populateProgramSelect('tx-program');
+    async function initTxSection() {
+        const populated = populateProgramSelect('tx-program');
         txList = createListSection({
             rootId: 'tx-root', emptyId: 'tx-empty', countId: 'tx-count', pagerId: 'tx-pager',
             endpoint: () => {
@@ -1782,6 +1784,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ['tx-from', 'tx-to'].forEach(id => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
+        await populated;
         txList.load();
     }
 
@@ -1859,8 +1862,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return bytesToHex(bytes.subarray(0, 8));
     }
 
-    function initEventsSection() {
-        populateProgramSelect('ev-program');
+    async function initEventsSection() {
+        const populated = populateProgramSelect('ev-program');
         eventsList = createListSection({
             rootId: 'ev-root', emptyId: 'ev-empty', countId: 'ev-count', pagerId: 'ev-pager',
             endpoint: () => {
@@ -1892,6 +1895,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ['ev-discriminator', 'ev-signature', 'ev-from', 'ev-to'].forEach(id => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
+        await populated;
         eventsList.load();
     }
 
