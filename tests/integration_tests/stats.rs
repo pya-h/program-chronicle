@@ -63,8 +63,8 @@ async fn stats_reports_counts_and_per_program_progress() -> httpc_test::Result<(
     assert_eq!(per_program[0]["start_slot"], 0);
     assert!(per_program[0]["phase"].is_null());
 
-    // large-table totals come from pg_class.reltuples (planner estimate, not COUNT),
-    // which stays 0 until autovacuum/ANALYZE runs — assert the shape, never exact values
+    // large-table totals come from pg_stat_user_tables.n_live_tup, not COUNT — the collector
+    // reports it a moment after commit, so assert the shape, never exact values
     let est = &body["estimates"];
     for key in ["slots", "transactions", "events", "accounts"] {
         assert!(est[key].is_i64(), "estimate `{key}` should be an integer");

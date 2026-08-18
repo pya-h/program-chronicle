@@ -18,11 +18,13 @@ document.addEventListener('DOMContentLoaded', () => {
     let overlay = null;
     let isUnlocking = false;
 
-    // Persisted appearance preferences (theme / accent / animations), applied to
+    // Persisted preferences (theme / accent / animations / page size), applied to
     // the document root and reflected into the Settings controls when present.
     const Prefs = (() => {
-        const KEYS = { theme: 'umbra-theme', accent: 'umbra-accent', anim: 'umbra-anim' };
-        const DEFAULTS = { theme: 'dark', accent: 'blue', anim: 'on' };
+        const KEYS = { theme: 'umbra-theme', accent: 'umbra-accent', anim: 'umbra-anim', pageSize: 'umbra-page-size' };
+        const DEFAULTS = { theme: 'dark', accent: 'blue', anim: 'on', pageSize: '20' };
+        // the api clamps `per_page` to this range, so anything outside it is silently ignored
+        const PAGE_SIZE_MIN = 1, PAGE_SIZE_MAX = 100;
         const ACCENTS = {
             blue:    { rgb: '59, 130, 246',  c400: '#60a5fa', c500: '#3b82f6', c600: '#2563eb', c700: '#1d4ed8' },
             violet:  { rgb: '139, 92, 246',  c400: '#a78bfa', c500: '#8b5cf6', c600: '#7c3aed', c700: '#6d28d9' },
@@ -55,6 +57,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function applyAll() { applyTheme(); applyAccent(); applyAnim(); }
 
+        function clampPageSize(raw) {
+            const size = parseInt(raw, 10);
+            if (!Number.isFinite(size)) return parseInt(DEFAULTS.pageSize, 10);
+            return Math.min(PAGE_SIZE_MAX, Math.max(PAGE_SIZE_MIN, size));
+        }
+
+        function pageSize() { return clampPageSize(get('pageSize')); }
+
         function reflect() {
             const panel = document.getElementById('settings-panel');
             if (!panel) return;
@@ -68,17 +78,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 sw.classList.toggle('on', on);
                 sw.setAttribute('aria-checked', String(on));
             }
+            const size = panel.querySelector('[data-set-page-size]');
+            if (size) size.value = pageSize();
         }
 
         function setTheme(v) { localStorage.setItem(KEYS.theme, v); applyTheme(); reflect(); }
         function setAccent(v) { localStorage.setItem(KEYS.accent, v); applyAccent(); reflect(); }
         function setAnim(on) { localStorage.setItem(KEYS.anim, on ? 'on' : 'off'); applyAnim(); reflect(); }
+        function setPageSize(v) { localStorage.setItem(KEYS.pageSize, String(clampPageSize(v))); reflect(); }
         function toggleTheme() { setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
         function reset() { Object.values(KEYS).forEach(k => localStorage.removeItem(k)); applyAll(); reflect(); }
 
         media.addEventListener('change', () => { if (get('theme') === 'system') applyTheme(); });
 
-        return { setTheme, setAccent, setAnim, toggleTheme, reset, applyAll, reflect };
+        return { setTheme, setAccent, setAnim, setPageSize, pageSize, toggleTheme, reset, applyAll, reflect };
     })();
 
     Prefs.applyAll();
@@ -96,9 +109,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const resetBtn = e.target.closest('[data-reset-prefs]');
         if (resetBtn) {
             Prefs.reset();
+            reloadPagedSections();
             showToast('Preferences reset to defaults.', 'info');
         }
     });
+
+    document.body.addEventListener('change', (e) => {
+        const sizeInput = e.target.closest('[data-set-page-size]');
+        if (!sizeInput) return;
+        Prefs.setPageSize(sizeInput.value);
+        reloadPagedSections();
+        showToast(`Showing ${Prefs.pageSize()} items per page.`, 'info');
+    });
+
+    // back to page 1 on every list: the old cursor can sit past the end at a larger size
+    function reloadPagedSections() {
+        [pdasList, txList, eventsList].forEach(list => list?.reload());
+    }
 
     setTimeout(() => {
         appLoader.classList.add('hidden');
@@ -539,7 +566,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const {
             rootId, emptyId, countId, pagerId,
             endpoint,                 // string | () => string|null (path, no query)
-            perPage = 20,
             renderRows,               // (items) => html
             countText,                // (total) => string
             params = () => ({}),      // () => extra query params (filters + slot bounds)
@@ -580,7 +606,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (empty) empty.hidden = true;
             if (count) count.textContent = 'Loading…';
 
-            const query = buildQuery({ ...params(), page, per_page: perPage });
+            // read per load, so changing the setting takes effect without a reload
+            const query = buildQuery({ ...params(), page, per_page: Prefs.pageSize() });
             const res = await apiCall('GET', `${path}${query}`);
             if (!res.ok) {
                 root.innerHTML = '';
@@ -2052,7 +2079,6 @@ document.addEventListener('DOMContentLoaded', () => {
         disconnectStream();
         monStreamProgram = id;
         monStreamType = type;
-        document.getElementById('mon-stream-empty')?.setAttribute('hidden', '');
         setStreamStatus('pending', 'Connecting…');
 
         const es = new EventSource(`/sse/programs/${id}/${type}`);
@@ -2065,12 +2091,31 @@ document.addEventListener('DOMContentLoaded', () => {
         es.addEventListener('transaction', (e) => pushStreamRow('transaction', safeJson(e.data)));
         es.addEventListener('resync', (e) => handleResync(safeJson(e.data)));
         updateStreamButton();
+        updateStreamEmpty();
     }
 
     function disconnectStream() {
         if (monEventSource) { monEventSource.close(); monEventSource = null; }
         setStreamStatus('pending', 'Idle');
         updateStreamButton();
+        updateStreamEmpty();
+    }
+
+    // the log starts empty, so hiding this on connect leaves the card blank until the first change
+    // arrives — which on a quiet program is minutes
+    function updateStreamEmpty() {
+        const empty = document.getElementById('mon-stream-empty');
+        if (!empty) return;
+        const streaming = monEventSource != null;
+        empty.hidden = (document.getElementById('mon-stream-log')?.children.length || 0) > 0;
+        const title = document.getElementById('mon-stream-empty-title');
+        const text = document.getElementById('mon-stream-empty-text');
+        if (title) title.textContent = streaming ? 'Waiting for changes' : 'Not streaming';
+        if (text) {
+            text.textContent = streaming
+                ? 'Connected. Nothing has changed on this program yet.'
+                : 'Pick a program and stream type, then Connect to watch live changes.';
+        }
     }
 
     function updateStreamButton() {
@@ -2092,16 +2137,15 @@ document.addEventListener('DOMContentLoaded', () => {
     function clearStreamLog() {
         const log = document.getElementById('mon-stream-log');
         if (log) log.innerHTML = '';
-        const empty = document.getElementById('mon-stream-empty');
-        if (empty && !monEventSource) empty.hidden = false;
+        updateStreamEmpty();
     }
 
     function appendStreamHtml(html) {
         const log = document.getElementById('mon-stream-log');
         if (!log) return;
-        document.getElementById('mon-stream-empty')?.setAttribute('hidden', '');
         log.insertAdjacentHTML('afterbegin', html);
         while (log.children.length > STREAM_LOG_CAP) log.lastElementChild.remove();
+        updateStreamEmpty();
     }
 
     function pushStreamRow(kind, payload, backfill = false) {

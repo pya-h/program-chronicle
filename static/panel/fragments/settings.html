@@ -71,5 +71,27 @@
                 </div>
             </div>
         </div>
+
+        <div class="setting-group">
+            <div class="setting-group-head">
+                <span class="setting-group-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                </span>
+                <div>
+                    <div class="setting-group-title">Data</div>
+                    <div class="setting-group-sub">How much is fetched per page</div>
+                </div>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-label">Items per page</span>
+                    <span class="setting-hint">Applies to PDAs, Transactions and Events. Between 1 and 100.</span>
+                </div>
+                <div class="setting-control">
+                    <input type="number" class="input-field setting-input" data-set-page-size min="1" max="100" step="1" value="20" aria-label="Items per page">
+                </div>
+            </div>
+        </div>
     </div>
 </section>

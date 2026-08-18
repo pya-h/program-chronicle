@@ -25,12 +25,14 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed counting rpcs!", err))?;
 
-    // large tables use the planner estimate (near-instant) instead of an exact COUNT(*)
+    // large tables are estimated (near-instant) instead of an exact COUNT(*). `n_live_tup` rather
+    // than `pg_class.reltuples`: the latter only moves when autovacuum analyses the table, so a
+    // freshly filled one reads 0 while its rows are already listable.
     let rows = state
         .db
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
-            "SELECT relname, GREATEST(reltuples, 0)::bigint AS estimate FROM pg_class \
+            "SELECT relname, GREATEST(n_live_tup, 0) AS estimate FROM pg_stat_user_tables \
              WHERE relname IN ('slots', 'transactions', 'program_events', 'program_accounts')",
         ))
         .await

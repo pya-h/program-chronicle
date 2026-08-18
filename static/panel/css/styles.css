@@ -1574,6 +1574,11 @@ html.no-anim *::after {
     flex-shrink: 0;
 }
 
+.setting-input {
+    width: 6rem;
+    text-align: center;
+}
+
 /* Segmented control */
 .segmented {
     display: inline-flex;
