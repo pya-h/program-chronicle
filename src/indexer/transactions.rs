@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use futures::StreamExt;
 use sea_orm::{
-    ActiveValue::Set, ConnectionTrait, DatabaseConnection, EntityTrait, TransactionTrait,
-    sea_query::OnConflict,
+    ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QuerySelect, TransactionTrait, sea_query::OnConflict,
 };
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::broadcast;
@@ -12,7 +14,7 @@ use crate::core::sse::SseEvent;
 use crate::db::entities::{program_events, programs, transaction_accounts, transactions};
 use crate::indexer::events::{EventParser, ParsedEvent, RawLogParser};
 use crate::indexer::persist::ensure_slot;
-use crate::indexer::rpc::{RawTransaction, SubReady, SvmRpc};
+use crate::indexer::rpc::{RawTransaction, SignatureInfo, SubReady, SvmRpc};
 
 const CATCH_UP_PAGE_SIZE: usize = 1000;
 
@@ -51,9 +53,13 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
             break;
         }
         before = page.last().map(|sig| sig.signature);
+        let stored = stored_signatures(db, program.id, &page, floor).await?;
         for sig in page {
             if (sig.slot as i64) < floor {
                 break 'pages;
+            }
+            if stored.contains(sig.signature.as_ref()) {
+                continue;
             }
             let tx = rpc.get_transaction(&sig.signature).await?;
             index_transaction(
@@ -72,6 +78,34 @@ pub async fn catch_up_transactions<R: SvmRpc + ?Sized>(
         }
     }
     Ok(())
+}
+
+/// Which of a page's signatures this program already stored, so the walk spends a `getTransaction`
+/// only on what is missing.
+pub async fn stored_signatures(
+    db: &DatabaseConnection,
+    program_id: i32,
+    page: &[SignatureInfo],
+    floor: i64,
+) -> Result<HashSet<Vec<u8>>, SvmIndexerError> {
+    let keys: Vec<Vec<u8>> = page
+        .iter()
+        .filter(|sig| (sig.slot as i64) >= floor)
+        .map(|sig| sig.signature.as_ref().to_vec())
+        .collect();
+    if keys.is_empty() {
+        return Ok(HashSet::new());
+    }
+    transactions::Entity::find()
+        .select_only()
+        .column(transactions::Column::Signature)
+        .filter(transactions::Column::ProgramId.eq(program_id))
+        .filter(transactions::Column::Signature.is_in(keys))
+        .into_tuple::<Vec<u8>>()
+        .all(db)
+        .await
+        .map(HashSet::from_iter)
+        .map_err(|err| SvmIndexerError::db_error("Failed checking indexed signatures!", err))
 }
 
 pub async fn stream_transactions<R: SvmRpc + ?Sized>(

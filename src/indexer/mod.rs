@@ -49,9 +49,11 @@ pub struct Indexer {
     retry_policy: RetryPolicy,
     restart_cooldown: Duration,
     restart_cooldown_cap: Duration,
+    cursor_interval: Duration,
 }
 
 impl Indexer {
+    #[allow(clippy::too_many_arguments)] // tuning knobs, each read straight from its own env var
     pub fn new(
         db: DatabaseConnection,
         commitment: CommitmentConfig,
@@ -60,6 +62,7 @@ impl Indexer {
         max_retries: u32,
         restart_cooldown: Duration,
         restart_cooldown_cap: Duration,
+        cursor_interval: Duration,
     ) -> Self {
         Self {
             db,
@@ -72,6 +75,7 @@ impl Indexer {
             retry_policy: RetryPolicy::new(max_retries),
             restart_cooldown,
             restart_cooldown_cap,
+            cursor_interval,
         }
     }
 
@@ -148,14 +152,19 @@ impl Indexer {
                 commitment,
                 tx_ready
             ),
-            self.close_subscribe_gap(
-                rpc.as_ref(),
-                &program,
-                commitment,
-                head,
-                state_live,
-                tx_live
-            ),
+            async {
+                self.close_subscribe_gap(
+                    rpc.as_ref(),
+                    &program,
+                    commitment,
+                    head,
+                    state_live,
+                    tx_live,
+                )
+                .await?;
+                self.track_cursor(rpc.as_ref(), &program, commitment, head)
+                    .await
+            },
         )?; // try_join so when one stream ends/errors the other stops too; the caller
         // (spawn_program) then retries the whole run with backoff, then cools down and restarts.
         Ok(())
@@ -189,6 +198,60 @@ impl Indexer {
 
         self.set_phase(program.id, ProgramPhase::Live).await;
         Ok(())
+    }
+
+    /// Keeps the cursor moving for the life of a live run. Each tick re-walks `[cursor, newest]`
+    /// *before* moving the cursor, so a notification the live stream dropped is repaired instead of
+    /// skipped past; advancing on its own would cement the loss.
+    async fn track_cursor(
+        &self,
+        rpc: &dyn SvmRpc,
+        program: &programs::Model,
+        commitment: TransactionCommitment,
+        head: i64,
+    ) -> Result<(), SvmIndexerError> {
+        // the run's own model goes stale the moment `advance_cursor` writes, so the walk's floor is
+        // tracked here rather than read back from `program.last_processed_slot`
+        let mut cursor = head;
+        loop {
+            tokio::time::sleep(self.cursor_interval).await;
+            let next = match self
+                .walk_and_advance(rpc, program, commitment, cursor)
+                .await
+            {
+                Ok(next) => next,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        program_id = program.id,
+                        "Cursor tick failed; retrying on the next interval."
+                    );
+                    continue;
+                }
+            };
+            cursor = next;
+        }
+    }
+
+    async fn walk_and_advance(
+        &self,
+        rpc: &dyn SvmRpc,
+        program: &programs::Model,
+        commitment: TransactionCommitment,
+        cursor: i64,
+    ) -> Result<i64, SvmIndexerError> {
+        let head = rpc.get_slot().await? as i64;
+        catch_up_transactions(
+            rpc,
+            &self.db,
+            &self.sse_tx,
+            program,
+            commitment,
+            Some(cursor),
+        )
+        .await?;
+        self.advance_cursor(program, head).await?;
+        Ok(head)
     }
 
     async fn resolve_start_slot(

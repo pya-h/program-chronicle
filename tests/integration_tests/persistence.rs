@@ -3,6 +3,8 @@ use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use svm_indexer::db::entities::{program_accounts, slots};
 use svm_indexer::indexer::backfill::backfill_latest_tx_signatures_once;
 use svm_indexer::indexer::persist::ensure_slot;
+use svm_indexer::indexer::rpc::SignatureInfo;
+use svm_indexer::indexer::transactions::stored_signatures;
 
 use crate::common::{
     pubkey, reset_db, seed_account, seed_program, seed_rpc, seed_transaction,
@@ -425,4 +427,62 @@ async fn same_slot_json_rpc_rewrite_wins_last() {
         "json-rpc rewrites both collapse to write_version 0"
     );
     assert_eq!(account.state, vec![2], "the later same-slot write must win");
+}
+
+fn sig_info(sig: &solana_sdk::signature::Signature, slot: u64) -> SignatureInfo {
+    SignatureInfo {
+        signature: *sig,
+        slot,
+        err: None,
+        block_time: None,
+    }
+}
+
+#[tokio::test]
+async fn stored_signatures_skips_only_this_programs_own_rows() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://stored-signatures.example.com").await;
+    let mine = seed_program(&db, rpc_id, &pubkey(40)).await;
+    let other = seed_program(&db, rpc_id, &pubkey(41)).await;
+
+    let ours = signature(60);
+    let theirs = signature(61);
+    let unseen = signature(62);
+    seed_transaction(&db, Some(mine), rpc_id, &ours, 900, true, None).await;
+    seed_transaction(&db, Some(other), rpc_id, &theirs, 900, true, None).await;
+
+    let page = vec![
+        sig_info(&ours, 900),
+        sig_info(&theirs, 900),
+        sig_info(&unseen, 900),
+    ];
+    let stored = stored_signatures(&db, mine, &page, 0).await.unwrap();
+
+    assert!(
+        stored.contains(ours.as_ref()),
+        "our own row must be skipped"
+    );
+    assert!(
+        !stored.contains(theirs.as_ref()),
+        "a row another program ingested first still owes us its program_events"
+    );
+    assert!(!stored.contains(unseen.as_ref()));
+}
+
+#[tokio::test]
+async fn stored_signatures_ignores_signatures_below_the_floor() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://stored-signatures-floor.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(42)).await;
+
+    let below = signature(63);
+    seed_transaction(&db, Some(program_id), rpc_id, &below, 100, true, None).await;
+
+    let page = vec![sig_info(&below, 100)];
+    let stored = stored_signatures(&db, program_id, &page, 500)
+        .await
+        .unwrap();
+    assert!(stored.is_empty(), "the walk stops at the floor anyway");
 }

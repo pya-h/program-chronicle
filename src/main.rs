@@ -58,6 +58,7 @@ async fn main() {
         env_u64("INDEXER_MAX_RETRIES", 5) as u32, // RetryPolicy clamps to at least one attempt
         Duration::from_secs(restart_cooldown_secs),
         Duration::from_secs(restart_cooldown_cap_secs),
+        Duration::from_secs(env_u64("INDEXER_CURSOR_INTERVAL_SECS", 60).max(1)),
     ));
 
     let backfill_interval =
