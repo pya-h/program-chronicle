@@ -1,7 +1,7 @@
-FROM rust:1.97 as builder
+FROM rust:1.97 AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --workspace
 
 FROM debian:bookworm-slim
 WORKDIR /app
@@ -15,10 +15,14 @@ RUN apt-get update && \
 
 COPY --from=builder /app/target/release/svm-indexer /app/svm-indexer
 
+COPY --from=builder /app/target/release/migration /app/migration
+
 COPY --from=builder /app/static /app/static
 
-RUN chmod +x /app/svm-indexer
+RUN chmod +x /app/svm-indexer /app/migration
 
 EXPOSE 3000
 
-CMD ["./svm-indexer"]
+# `migration` is the migrator crate's own binary; it reads DATABASE_URL and exits non-zero on
+# failure, so a bad schema stops the container instead of starting the indexer against it.
+CMD ["sh", "-c", "./migration up && exec ./svm-indexer"]
