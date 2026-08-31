@@ -9,8 +9,8 @@ use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_client::rpc_filter::RpcFilterType;
 use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{
-    RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
-    RpcTransactionLogsFilter,
+    RpcAccountInfoConfig, RpcBlockConfig, RpcProgramAccountsConfig, RpcTransactionConfig,
+    RpcTransactionLogsConfig, RpcTransactionLogsFilter,
 };
 use solana_rpc_client_api::request::{RpcError, RpcRequest};
 use solana_rpc_client_api::response::{OptionalContext, RpcKeyedAccount};
@@ -18,16 +18,16 @@ use solana_sdk::{
     account::Account, commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature,
 };
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiLoadedAddresses, UiMessage,
-    UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, TransactionDetails,
+    UiLoadedAddresses, UiMessage, UiTransactionEncoding,
 };
 use tokio::sync::mpsc;
 
 use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
-    AccountFilter, AccountSnapshot, LogsNotification, RawTransaction, RpcResult, SignatureInfo,
-    SubReady, SubStream, SvmRpc, TxAccount,
+    AccountFilter, AccountSnapshot, BlockSignatures, LogsNotification, RawTransaction, RpcResult,
+    SignatureInfo, SubReady, SubStream, SvmRpc, TxAccount,
 };
 
 const MAX_MULTIPLE_ACCOUNTS: usize = 100;
@@ -181,6 +181,49 @@ impl SvmRpc for JsonRpc {
     async fn get_block_time(&self, slot: u64) -> RpcResult<Option<i64>> {
         // best-effort: a pruned/absent block time is not a failure, just unknown yet
         Ok(self.client.get_block_time(slot).await.ok())
+    }
+
+    async fn get_block_signatures(&self, slot: u64) -> RpcResult<Option<BlockSignatures>> {
+        let config = RpcBlockConfig {
+            encoding: None,
+            transaction_details: Some(TransactionDetails::Signatures),
+            rewards: Some(false),
+            // pinned, not `self.commitment`: membership of a finalized block is what makes an absent
+            // signature evidence rather than a guess
+            commitment: Some(CommitmentConfig::finalized()),
+            // omitting it makes the call fail outright on any block holding a versioned transaction
+            max_supported_transaction_version: Some(0),
+        };
+        let block = match self.client.get_block_with_config(slot, config).await {
+            Ok(block) => block,
+            Err(err) => {
+                let err = rpc_error(err);
+                return if err.is_block_missing() {
+                    Ok(None)
+                } else {
+                    Err(err)
+                };
+            }
+        };
+
+        let signatures = block
+            .signatures
+            .unwrap_or_default()
+            .into_iter()
+            .map(|signature| {
+                signature.parse().map_err(|_| {
+                    SvmIndexerError::RpcRequestFailed(format!(
+                        "block {slot} listed an unparseable signature {signature}"
+                    ))
+                })
+            })
+            .collect::<RpcResult<Vec<_>>>()?;
+
+        Ok(Some(BlockSignatures {
+            blockhash: block.blockhash,
+            block_time: block.block_time,
+            signatures,
+        }))
     }
 
     async fn get_program_accounts(

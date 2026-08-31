@@ -4,6 +4,13 @@ use thiserror::Error;
 /// `getProgramAccounts` refused: too many accounts accumulated for the node to serve in one scan.
 const SCAN_LIMIT_EXCEEDED: i64 = -32012;
 
+/// The four ways `getBlock` answers "there is no block here", reported as errors rather than as an
+/// empty result. The code says *why*, which is what separates a reorg from a gap in the node.
+const BLOCK_PRUNED: i64 = -32001;
+const BLOCK_NOT_YET_AVAILABLE: i64 = -32004;
+const SLOT_SKIPPED: i64 = -32007;
+const ARCHIVED_SLOT_SKIPPED: i64 = -32009;
+
 #[allow(unused)] // TODO: Remove this in the end
 #[derive(Error, Debug)]
 pub enum SvmIndexerError {
@@ -107,6 +114,16 @@ impl SvmIndexerError {
         matches!(
             self,
             SvmIndexerError::RpcResponseError(SCAN_LIMIT_EXCEEDED, _)
+        )
+    }
+
+    pub fn is_block_missing(&self) -> bool {
+        matches!(
+            self,
+            SvmIndexerError::RpcResponseError(
+                BLOCK_PRUNED | BLOCK_NOT_YET_AVAILABLE | SLOT_SKIPPED | ARCHIVED_SLOT_SKIPPED,
+                _
+            )
         )
     }
 }

@@ -40,6 +40,14 @@ pub struct SignatureInfo {
 }
 
 #[derive(Clone, Debug)]
+pub struct BlockSignatures {
+    pub blockhash: String,
+    pub block_time: Option<i64>,
+    /// Every signature the block contains, program-agnostic.
+    pub signatures: Vec<Signature>,
+}
+
+#[derive(Clone, Debug)]
 pub struct RawTransaction {
     pub signature: Signature,
     pub slot: u64,
@@ -89,6 +97,9 @@ pub trait SvmRpc: Send + Sync {
     async fn get_slot(&self) -> RpcResult<u64>;
 
     async fn get_block_time(&self, slot: u64) -> RpcResult<Option<i64>>;
+
+    /// The finalized block at `slot`, signatures only. Option: since skipped slots return Ok(None)
+    async fn get_block_signatures(&self, slot: u64) -> RpcResult<Option<BlockSignatures>>;
 
     async fn get_program_accounts(
         &self,

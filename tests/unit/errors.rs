@@ -73,6 +73,21 @@ fn dberr_converts_into_database_error() {
     assert!(matches!(err, SvmIndexerError::DatabaseError(_, _, None)));
 }
 
+#[test]
+fn only_the_no_block_codes_read_as_a_missing_block() {
+    for code in [-32001, -32004, -32007, -32009] {
+        assert!(
+            SvmIndexerError::RpcResponseError(code, "no block".into()).is_block_missing(),
+            "{code} is the node answering that it holds no block"
+        );
+    }
+    // a failure that merely prevented an answer leaves the slot unknown; reading it as an empty
+    // block would let a blip fabricate a reorg drop
+    assert!(!SvmIndexerError::RpcResponseError(-32005, "unhealthy".into()).is_block_missing());
+    assert!(!SvmIndexerError::RpcResponseError(-32012, "scan limit".into()).is_block_missing());
+    assert!(!SvmIndexerError::RpcRequestFailed("timed out".into()).is_block_missing());
+}
+
 #[tokio::test]
 async fn response_body_is_a_json_message_envelope() {
     let resp = SvmIndexerError::BadInput("bad thing".into()).into_response();
