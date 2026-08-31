@@ -151,6 +151,10 @@ async fn record_backfill_frontier(
             programs::Column::BackfillCursor,
             Expr::value(cursor.as_ref().to_vec()),
         )
+        .col_expr(
+            programs::Column::UpdatedAt,
+            Expr::value(chrono::Utc::now().naive_utc()),
+        )
         .filter(programs::Column::Id.eq(program_id))
         .filter(
             Condition::any()
@@ -175,6 +179,10 @@ async fn clear_backfill_frontier(
         .col_expr(
             programs::Column::BackfillCursor,
             Expr::value(Option::<Vec<u8>>::None),
+        )
+        .col_expr(
+            programs::Column::UpdatedAt,
+            Expr::value(chrono::Utc::now().naive_utc()),
         )
         .filter(programs::Column::Id.eq(program_id))
         .exec(db)

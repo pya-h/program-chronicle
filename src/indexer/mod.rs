@@ -332,6 +332,7 @@ impl Indexer {
         programs::Entity::update_many()
             .col_expr(programs::Column::LastProcessedSlot, Expr::value(slot))
             .col_expr(programs::Column::LastProcessedAt, Expr::value(now))
+            .col_expr(programs::Column::UpdatedAt, Expr::value(now))
             .filter(programs::Column::Id.eq(program.id))
             .exec(&self.db)
             .await
