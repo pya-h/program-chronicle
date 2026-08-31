@@ -14,6 +14,7 @@ pub struct Model {
     #[sea_orm(unique_key = "slot")]
     pub slot: i64,
     pub block_time: Option<i64>,
+    pub status: String,
     pub created_at: DateTime,
     pub updated_at: DateTime,
     #[sea_orm(has_many)]

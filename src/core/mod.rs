@@ -4,5 +4,6 @@ pub mod indexer_error;
 pub mod logging;
 pub mod response;
 pub mod retry;
+pub mod slot_status;
 pub mod sse;
 pub mod state;

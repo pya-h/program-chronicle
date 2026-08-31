@@ -1,5 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 
+use crate::core::slot_status::SlotStatus;
 use crate::core::state::{ProgramPhase, ProgramRuntime};
 use crate::db::entities::{program_accounts, program_events, programs, slots, transactions};
 use crate::routes::responses::accounts::{AccountInfoResponse, ProgramAccountsResponse};
@@ -66,6 +67,7 @@ fn slot_model(block_time: Option<i64>) -> slots::Model {
         rpc_id: 1,
         slot: 500,
         block_time,
+        status: SlotStatus::Unknown.as_str().into(),
         created_at: ts(),
         updated_at: ts(),
     }
