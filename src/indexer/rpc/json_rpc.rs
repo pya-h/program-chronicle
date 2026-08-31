@@ -27,7 +27,7 @@ use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
     AccountFilter, AccountSnapshot, BlockSignatures, LogsNotification, RawTransaction, RpcResult,
-    SignatureInfo, SubReady, SubStream, SvmRpc, TxAccount,
+    SignatureInfo, SignatureStatus, SlotBlock, SubReady, SubStream, SvmRpc, TxAccount,
 };
 
 const MAX_MULTIPLE_ACCOUNTS: usize = 100;
@@ -183,7 +183,7 @@ impl SvmRpc for JsonRpc {
         Ok(self.client.get_block_time(slot).await.ok())
     }
 
-    async fn get_block_signatures(&self, slot: u64) -> RpcResult<Option<BlockSignatures>> {
+    async fn get_block_signatures(&self, slot: u64) -> RpcResult<SlotBlock> {
         let config = RpcBlockConfig {
             encoding: None,
             transaction_details: Some(TransactionDetails::Signatures),
@@ -198,8 +198,14 @@ impl SvmRpc for JsonRpc {
             Ok(block) => block,
             Err(err) => {
                 let err = rpc_error(err);
-                return if err.is_block_missing() {
-                    Ok(None)
+                // an allowlist, never "anything that is not pruned": a timeout, a rate limit or a
+                // proxy that flattens codes says the node could not answer, not that the slot is gone
+                return if err.is_slot_skipped() {
+                    Ok(SlotBlock::Reorged)
+                } else if err.is_block_pruned() {
+                    Ok(SlotBlock::Pruned)
+                } else if err.is_block_not_yet_available() {
+                    Ok(SlotBlock::NotYetFinal)
                 } else {
                     Err(err)
                 };
@@ -219,7 +225,7 @@ impl SvmRpc for JsonRpc {
             })
             .collect::<RpcResult<Vec<_>>>()?;
 
-        Ok(Some(BlockSignatures {
+        Ok(SlotBlock::Found(BlockSignatures {
             blockhash: block.blockhash,
             block_time: block.block_time,
             signatures,
@@ -413,7 +419,7 @@ impl SvmRpc for JsonRpc {
     async fn get_signature_statuses_with_history(
         &self,
         signatures: &[Signature],
-    ) -> RpcResult<Vec<Option<TransactionCommitment>>> {
+    ) -> RpcResult<Vec<Option<SignatureStatus>>> {
         let statuses = self
             .client
             .get_signature_statuses_with_history(signatures)
@@ -423,12 +429,13 @@ impl SvmRpc for JsonRpc {
         Ok(statuses
             .into_iter()
             .map(|status| {
-                status.map(|status| {
-                    status
+                status.map(|status| SignatureStatus {
+                    commitment: status
                         .confirmation_status
                         .as_ref()
                         .map(TransactionCommitment::from)
-                        .unwrap_or(TransactionCommitment::Processed)
+                        .unwrap_or(TransactionCommitment::Processed),
+                    slot: status.slot,
                 })
             })
             .collect())

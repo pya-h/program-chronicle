@@ -117,13 +117,23 @@ impl SvmIndexerError {
         )
     }
 
-    pub fn is_block_missing(&self) -> bool {
+    pub fn is_block_pruned(&self) -> bool {
+        matches!(self, SvmIndexerError::RpcResponseError(BLOCK_PRUNED, _))
+    }
+
+    pub fn is_block_not_yet_available(&self) -> bool {
         matches!(
             self,
-            SvmIndexerError::RpcResponseError(
-                BLOCK_PRUNED | BLOCK_NOT_YET_AVAILABLE | SLOT_SKIPPED | ARCHIVED_SLOT_SKIPPED,
-                _
-            )
+            SvmIndexerError::RpcResponseError(BLOCK_NOT_YET_AVAILABLE, _)
+        )
+    }
+
+    /// No block at this slot on the node's canonical chain. The two codes are the same fact from
+    /// two storage layers — the local blockstore and the archival backend behind it.
+    pub fn is_slot_skipped(&self) -> bool {
+        matches!(
+            self,
+            SvmIndexerError::RpcResponseError(SLOT_SKIPPED | ARCHIVED_SLOT_SKIPPED, _)
         )
     }
 }

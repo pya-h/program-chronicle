@@ -208,7 +208,12 @@ impl Indexer {
                     .await
                 {
                     Ok(history) => {
-                        let (rescued, gone) = classify_commitment_sweep(candidate_bytes, history);
+                        let commitments = history
+                            .into_iter()
+                            .map(|status| status.map(|status| status.commitment))
+                            .collect();
+                        let (rescued, gone) =
+                            classify_commitment_sweep(candidate_bytes, commitments);
                         finalized.extend(rescued);
                         dropped = gone;
                     }
