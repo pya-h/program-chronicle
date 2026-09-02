@@ -332,7 +332,8 @@ impl Indexer {
 
             // a verdict reachable without the block is applied straight from the ledger; without this
             // a reorged slot is re-downloaded on every tick its remaining rows sit unsettled
-            let block = if status.answers_without_block() {
+            let cached = status.answers_without_block();
+            let block = if cached {
                 if status == SlotStatus::Reorged {
                     SlotBlock::Reorged
                 } else {
@@ -354,27 +355,37 @@ impl Indexer {
                 continue; // not finalized yet: the slot stays `unknown` and the next tick asks again
             };
 
-            let survivors = self
-                .check_leftovers(rpc_id, client, slot, split.leftovers, &mut split.drop)
-                .await;
+            // the short-circuit spent no call, so repeating it next tick is free and the rows pass 1
+            // has not reached wait for it — the asymmetry is what makes the check worth paying for
+            // on a slot that already bought a download
+            let survivors = if cached {
+                Vec::new()
+            } else {
+                self.check_leftovers(rpc_id, client, slot, split.leftovers, &mut split.drop)
+                    .await
+            };
 
             let txn = self.db.begin().await.map_err(|err| {
                 SvmIndexerError::db_error("Failed opening the settlement transaction!", err)
             })?;
             set_commitment(&txn, split.promote, TransactionCommitment::Finalized).await?;
             set_commitment(&txn, split.drop, TransactionCommitment::Dropped).await?;
-            slots::Entity::update_many()
-                .col_expr(slots::Column::Status, Expr::value(verdict.as_str()))
-                .col_expr(
-                    slots::Column::UpdatedAt,
-                    Expr::value(chrono::Utc::now().naive_utc()),
-                )
-                .filter(slots::Column::Id.eq(slot_id))
-                .exec(&txn)
-                .await
-                .map_err(|err| {
-                    SvmIndexerError::db_error("Failed recording a slot verdict!", err)
-                })?;
+            // re-applying a cached verdict changes nothing, and `updated_at` should say when the
+            // verdict was reached rather than when a draining row last touched the row
+            if verdict != status {
+                slots::Entity::update_many()
+                    .col_expr(slots::Column::Status, Expr::value(verdict.as_str()))
+                    .col_expr(
+                        slots::Column::UpdatedAt,
+                        Expr::value(chrono::Utc::now().naive_utc()),
+                    )
+                    .filter(slots::Column::Id.eq(slot_id))
+                    .exec(&txn)
+                    .await
+                    .map_err(|err| {
+                        SvmIndexerError::db_error("Failed recording a slot verdict!", err)
+                    })?;
+            }
             txn.commit().await.map_err(|err| {
                 SvmIndexerError::db_error("Failed committing the settlement!", err)
             })?;
