@@ -13,6 +13,7 @@ use crate::core::error::SvmIndexerError;
 use crate::db::entities::{programs, rpcs, slots, transactions};
 use crate::indexer::Indexer;
 use crate::indexer::persist::ensure_slot;
+use crate::indexer::settlement::set_commitment;
 
 const BACKFILL_BATCH: u64 = 500;
 /// Cap the work per tx_signature backfill pass; leftovers are picked up on the next tick.
@@ -220,16 +221,14 @@ impl Indexer {
                 }
             }
 
-            if let Err(err) = self
-                .set_commitment(finalized, TransactionCommitment::Finalized)
-                .await
+            if let Err(err) =
+                set_commitment(&self.db, finalized, TransactionCommitment::Finalized).await
             {
                 tracing::warn!(rpc_id = rpc.id, error = %err, "Failed promoting finalized commitments!");
                 continue;
             }
-            if let Err(err) = self
-                .set_commitment(dropped, TransactionCommitment::Dropped)
-                .await
+            if let Err(err) =
+                set_commitment(&self.db, dropped, TransactionCommitment::Dropped).await
             {
                 tracing::warn!(rpc_id = rpc.id, error = %err, "Failed marking dropped commitments!");
             }
