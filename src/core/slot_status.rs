@@ -29,7 +29,10 @@ impl SlotStatus {
         }
     }
 
-    pub fn is_settled(self) -> bool {
-        matches!(self, SlotStatus::Canonical | SlotStatus::Reorged)
+    /// Whether the verdict is already known without downloading the block: `Reorged` drops the rows
+    /// a status pass answered `None` for, `Pruned` finalizes them all. `Canonical` is absent on
+    /// purpose — a row indexed at that slot later still needs the signature list read.
+    pub fn answers_without_block(self) -> bool {
+        matches!(self, SlotStatus::Reorged | SlotStatus::Pruned)
     }
 }

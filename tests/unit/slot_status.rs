@@ -28,10 +28,13 @@ fn from_query_accepts_known_statuses_only() {
 }
 
 #[test]
-fn only_a_chain_verdict_settles_a_slot() {
-    assert!(SlotStatus::Canonical.is_settled());
-    assert!(SlotStatus::Reorged.is_settled());
-    // both mean "no answer yet" — a settled slot is never re-checked, so these must stay open
-    assert!(!SlotStatus::Unknown.is_settled());
-    assert!(!SlotStatus::Pruned.is_settled());
+fn only_a_missing_block_answers_without_a_download() {
+    // no block at all, so the rows evidenced absent are dropped; below the floor, they all finalize
+    assert!(SlotStatus::Reorged.answers_without_block());
+    assert!(SlotStatus::Pruned.answers_without_block());
+
+    assert!(!SlotStatus::Unknown.answers_without_block());
+    // a transaction indexed at a canonical slot later still needs the signature list, so marking
+    // the slot verified must never skip the read
+    assert!(!SlotStatus::Canonical.answers_without_block());
 }

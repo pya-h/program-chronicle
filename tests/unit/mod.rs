@@ -11,6 +11,7 @@ mod response;
 mod responses;
 mod retry;
 mod rpc;
+mod settlement;
 mod slot_status;
 mod sse;
 mod urls;

@@ -3,6 +3,7 @@ pub mod events;
 pub mod filter;
 pub mod persist;
 pub mod rpc;
+pub mod settlement;
 pub mod state;
 pub mod supervisor;
 pub mod transactions;

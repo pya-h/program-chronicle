@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, sea_query::Expr,
+    QuerySelect,
 };
 use solana_sdk::signature::Signature;
 
@@ -23,10 +23,6 @@ const STATUS_BATCH: u64 = 256;
 /// retention, so an absent signature is a reorg drop, not an aged-out finalized tx.
 const COMMITMENT_RECENT_SLOTS: i64 = 150;
 
-/// Splits a swept batch by its freshly fetched status: rows the node reports finalized are promoted,
-/// rows absent from the recent status cache (`None`) become drop *candidates* the caller re-confirms
-/// at finalized before dropping; anything still processed/confirmed is left untouched for the next
-/// tick. Callers must only pass signatures within the recent-slots window.
 pub(crate) fn classify_commitment_sweep(
     signatures: Vec<Vec<u8>>,
     statuses: Vec<Option<TransactionCommitment>>,
@@ -238,34 +234,6 @@ impl Indexer {
                 tracing::warn!(rpc_id = rpc.id, error = %err, "Failed marking dropped commitments!");
             }
         }
-        Ok(())
-    }
-
-    async fn set_commitment(
-        &self,
-        signatures: Vec<Vec<u8>>,
-        commitment: TransactionCommitment,
-    ) -> Result<(), SvmIndexerError> {
-        if signatures.is_empty() {
-            return Ok(());
-        }
-        let count = signatures.len();
-        transactions::Entity::update_many()
-            .col_expr(
-                transactions::Column::Commitment,
-                Expr::value(commitment.as_str()),
-            )
-            .filter(transactions::Column::Signature.is_in(signatures))
-            .exec(&self.db)
-            .await
-            .map_err(|err| {
-                SvmIndexerError::db_error("Failed updating transaction commitment!", err)
-            })?;
-        tracing::info!(
-            count,
-            commitment = commitment.as_str(),
-            "advanced transaction commitment"
-        );
         Ok(())
     }
 
