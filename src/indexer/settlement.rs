@@ -34,6 +34,17 @@ pub(crate) enum SettlementRoute {
     Absent,
 }
 
+impl SettlementRoute {
+    pub(crate) fn confirms_reorg(self) -> bool {
+        matches!(self, SettlementRoute::Survivor(_))
+    }
+}
+
+/// The lowest slot a tick confirmed a reorg at; re-walking from there covers the rest on the way up.
+pub(crate) fn lowest(current: Option<i64>, found: Option<i64>) -> Option<i64> {
+    current.into_iter().chain(found).min()
+}
+
 /// Kept apart from the batching around it: pass 2's leftover check runs the same four ways over the
 /// rows pass 1 could not reach.
 pub(crate) fn route_status(stored_slot: i64, status: Option<SignatureStatus>) -> SettlementRoute {
@@ -172,18 +183,23 @@ impl Indexer {
             }
 
             let client = self.client_for(&rpc).await;
-            let absent = self
+            let (absent, mut reorged) = self
                 .settle_from_statuses(rpc.id, &program_ids, client.as_ref(), batch)
                 .await?;
             if !absent.is_empty() {
-                self.escalate(
-                    rpc.id,
-                    &program_ids,
-                    client.as_ref(),
-                    absent,
-                    escalations.max(1),
-                )
-                .await?;
+                let escalated = self
+                    .escalate(
+                        rpc.id,
+                        &program_ids,
+                        client.as_ref(),
+                        absent,
+                        escalations.max(1),
+                    )
+                    .await?;
+                reorged = lowest(reorged, escalated);
+            }
+            if let Some(slot) = reorged {
+                self.rewind_cursors(&program_ids, slot).await?;
             }
         }
         Ok(())
@@ -197,7 +213,7 @@ impl Indexer {
         program_ids: &[i32],
         client: &dyn SvmRpc,
         batch: u64,
-    ) -> Result<HashMap<i64, Vec<Vec<u8>>>, SvmIndexerError> {
+    ) -> Result<(HashMap<i64, Vec<Vec<u8>>>, Option<i64>), SvmIndexerError> {
         let pending: Vec<Candidate> = transactions::Entity::find()
             .select_only()
             .column(transactions::Column::Signature)
@@ -222,13 +238,18 @@ impl Indexer {
         let mut survivors: Vec<(Vec<u8>, i64)> = Vec::new();
         let mut canonical: HashSet<i64> = HashSet::new();
         let mut absent: HashMap<i64, Vec<Vec<u8>>> = HashMap::new();
+        let mut reorged: Option<i64> = None;
 
         for chunk in pending.chunks(STATUS_CHUNK) {
             let Some(statuses) = self.read_statuses(rpc_id, client, chunk).await else {
                 break;
             };
             for ((signature, slot), status) in chunk.iter().zip(statuses) {
-                match route_status(*slot, status) {
+                let route = route_status(*slot, status);
+                if route.confirms_reorg() {
+                    reorged = lowest(reorged, Some(*slot));
+                }
+                match route {
                     SettlementRoute::Finalized => {
                         finalized.push(signature.clone());
                         canonical.insert(*slot);
@@ -252,7 +273,7 @@ impl Indexer {
         }
         set_commitment(&self.db, finalized, TransactionCommitment::Finalized).await?;
         self.mark_canonical(rpc_id, canonical).await?;
-        Ok(absent)
+        Ok((absent, reorged))
     }
 
     /// Pass 2 — the slots holding pass-1 absentees, and only those. Each is one block read, so the
@@ -264,7 +285,7 @@ impl Indexer {
         client: &dyn SvmRpc,
         mut absent: HashMap<i64, Vec<Vec<u8>>>,
         budget: usize,
-    ) -> Result<(), SvmIndexerError> {
+    ) -> Result<Option<i64>, SvmIndexerError> {
         let mut suspected: Vec<i64> = absent.keys().copied().collect();
         suspected.sort_unstable();
         if suspected.len() > budget {
@@ -315,6 +336,7 @@ impl Indexer {
         for (signature, slot) in held {
             rows_at.entry(slot).or_default().push(signature);
         }
+        let mut reorged: Option<i64> = None;
 
         for slot in suspected {
             let rows = rows_at.remove(&slot).unwrap_or_default();
@@ -355,9 +377,6 @@ impl Indexer {
                 continue; // not finalized yet: the slot stays `unknown` and the next tick asks again
             };
 
-            // the short-circuit spent no call, so repeating it next tick is free and the rows pass 1
-            // has not reached wait for it — the asymmetry is what makes the check worth paying for
-            // on a slot that already bought a download
             let survivors = if cached {
                 Vec::new()
             } else {
@@ -365,13 +384,13 @@ impl Indexer {
                     .await
             };
 
+            let dropped = !split.drop.is_empty();
             let txn = self.db.begin().await.map_err(|err| {
                 SvmIndexerError::db_error("Failed opening the settlement transaction!", err)
             })?;
             set_commitment(&txn, split.promote, TransactionCommitment::Finalized).await?;
             set_commitment(&txn, split.drop, TransactionCommitment::Dropped).await?;
-            // re-applying a cached verdict changes nothing, and `updated_at` should say when the
-            // verdict was reached rather than when a draining row last touched the row
+
             if verdict != status {
                 slots::Entity::update_many()
                     .col_expr(slots::Column::Status, Expr::value(verdict.as_str()))
@@ -390,13 +409,17 @@ impl Indexer {
                 SvmIndexerError::db_error("Failed committing the settlement!", err)
             })?;
 
+            // `Pruned` reaches neither: the node losing a block is not the chain losing one
+            if dropped || !survivors.is_empty() {
+                reorged = lowest(reorged, Some(slot));
+            }
             for (signature, moved) in survivors {
                 if let Err(err) = self.reslot_survivor(rpc_id, &signature, moved).await {
                     tracing::warn!(rpc_id, slot = moved, error = %err, "Failed re-slotting a re-included transaction!");
                 }
             }
         }
-        Ok(())
+        Ok(reorged)
     }
 
     /// Rows at a settled slot that pass 1 never answered for. Absence from the block is a slot-level
@@ -492,8 +515,6 @@ impl Indexer {
         Ok(())
     }
 
-    /// Moves a re-included transaction to the slot the node now reports. The slot is denormalised
-    /// across four tables, so a partial move would leave them contradicting the row they describe.
     async fn reslot_survivor(
         &self,
         rpc_id: i32,

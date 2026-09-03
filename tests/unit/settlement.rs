@@ -5,7 +5,7 @@ use solana_sdk::signature::Signature;
 use crate::core::commitment::TransactionCommitment;
 use crate::core::slot_status::SlotStatus;
 use crate::indexer::rpc::{BlockSignatures, SignatureStatus, SlotBlock};
-use crate::indexer::settlement::{SettlementRoute, route_status, split_by_block};
+use crate::indexer::settlement::{SettlementRoute, lowest, route_status, split_by_block};
 
 const STORED_SLOT: i64 = 500;
 
@@ -69,6 +69,36 @@ fn an_unsettled_answer_waits_for_the_next_tick() {
 #[test]
 fn only_a_ledger_wide_miss_can_ever_reach_a_drop() {
     assert_eq!(route_status(STORED_SLOT, None), SettlementRoute::Absent);
+}
+
+#[test]
+fn a_reorg_whose_rows_all_survived_elsewhere_still_confirms_it() {
+    // driving the rewind off drops alone would miss this one entirely: every row re-included on the
+    // winning fork means no drop is ever issued, and the replacement block at S is never walked
+    assert!(
+        route_status(STORED_SLOT, answered(TransactionCommitment::Finalized, 507)).confirms_reorg()
+    );
+    for route in [
+        route_status(
+            STORED_SLOT,
+            answered(TransactionCommitment::Finalized, STORED_SLOT as u64),
+        ),
+        route_status(STORED_SLOT, answered(TransactionCommitment::Confirmed, 507)),
+        // still ambiguous here — pass 2 is what turns it into evidence of anything
+        route_status(STORED_SLOT, None),
+    ] {
+        assert!(!route.confirms_reorg(), "{route:?} proves nothing about S");
+    }
+}
+
+#[test]
+fn a_tick_rewinds_to_the_lowest_reorg_it_confirmed() {
+    // the re-walk runs newest→oldest to a floor, so the deepest one covers the rest on the way up
+    assert_eq!(lowest(Some(600), Some(500)), Some(500));
+    assert_eq!(lowest(Some(500), Some(600)), Some(500));
+    assert_eq!(lowest(None, Some(500)), Some(500));
+    assert_eq!(lowest(Some(500), None), Some(500));
+    assert_eq!(lowest(None, None), None);
 }
 
 #[test]

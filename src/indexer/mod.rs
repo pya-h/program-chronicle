@@ -117,6 +117,60 @@ impl Indexer {
         }
     }
 
+    async fn rewind_floor(&self, program_id: i32) -> Option<i64> {
+        self.runtimes.lock().await.get(&program_id)?.pending_rewind
+    }
+
+    async fn clear_rewind(&self, program_id: i32, covered: i64) {
+        if let Some(runtime) = self.runtimes.lock().await.get_mut(&program_id)
+            && runtime.pending_rewind == Some(covered)
+        {
+            runtime.pending_rewind = None;
+        }
+    }
+
+    pub(crate) async fn rewind_cursors(
+        &self,
+        program_ids: &[i32],
+        slot: i64,
+    ) -> Result<(), SvmIndexerError> {
+        let floor = (slot - 1).max(0);
+        let now = chrono::Utc::now().naive_utc();
+        // never a step forward: a program still behind the reorg would skip everything between its
+        // own cursor and this floor
+        let rewound = programs::Entity::update_many()
+            .col_expr(programs::Column::LastProcessedSlot, Expr::value(floor))
+            .col_expr(programs::Column::LastProcessedAt, Expr::value(now))
+            .col_expr(programs::Column::UpdatedAt, Expr::value(now))
+            .filter(programs::Column::Id.is_in(program_ids.to_vec()))
+            .filter(programs::Column::LastProcessedSlot.gt(floor))
+            .exec(&self.db)
+            .await
+            .map_err(|err| SvmIndexerError::db_error("Failed rewinding program cursors!", err))?;
+        if rewound.rows_affected == 0 {
+            return Ok(());
+        }
+
+        // the column first, then memory: a crash between the two leaves the restart path correct,
+        // where the reverse order loses the rewind entirely
+        let mut runtimes = self.runtimes.lock().await;
+        for program_id in program_ids {
+            if let Some(runtime) = runtimes.get_mut(program_id) {
+                runtime.pending_rewind = Some(
+                    runtime
+                        .pending_rewind
+                        .map_or(floor, |pending| pending.min(floor)),
+                );
+            }
+        }
+        tracing::info!(
+            floor,
+            programs = rewound.rows_affected,
+            "rewound program cursors past a confirmed reorg"
+        );
+        Ok(())
+    }
+
     fn ingest_commitment(&self) -> TransactionCommitment {
         TransactionCommitment::from_ingest(self.commitment)
     }
@@ -271,6 +325,10 @@ impl Indexer {
         commitment: TransactionCommitment,
         cursor: i64,
     ) -> Result<i64, SvmIndexerError> {
+        // peeked, not consumed: a walk that fails would otherwise swallow the rewind, and the column
+        // behind it is only ever read at program start
+        let rewind = self.rewind_floor(program.id).await;
+        let cursor = rewind.map_or(cursor, |floor| floor.min(cursor));
         let head = rpc.get_slot().await? as i64;
         self.set_head(program.id, head).await;
         catch_up_transactions(
@@ -282,6 +340,9 @@ impl Indexer {
             Some(cursor),
         )
         .await?;
+        if let Some(floor) = rewind {
+            self.clear_rewind(program.id, floor).await;
+        }
         self.advance_cursor(program, head).await?;
         Ok(head)
     }
@@ -324,11 +385,17 @@ impl Indexer {
         .map_err(|err| SvmIndexerError::db_error("Failed pinning program start slot!", err))
     }
 
+    /// No-ops while a rewind is outstanding. Stamping the head here would erase the column the
+    /// rewind just wrote, and a restart in that window would lose it for good; the guard sits inside
+    /// rather than at the call sites so no future one can forget it.
     async fn advance_cursor(
         &self,
         program: &programs::Model,
         slot: i64,
     ) -> Result<(), SvmIndexerError> {
+        if self.rewind_floor(program.id).await.is_some() {
+            return Ok(());
+        }
         let now = chrono::Utc::now().naive_utc();
         programs::Entity::update_many()
             .col_expr(programs::Column::LastProcessedSlot, Expr::value(slot))

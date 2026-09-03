@@ -27,6 +27,7 @@ pub enum ProgramPhase {
 pub struct ProgramRuntime {
     pub phase: ProgramPhase,
     pub head_slot: Option<i64>,
+    pub pending_rewind: Option<i64>,
 }
 
 impl ProgramRuntime {
@@ -34,6 +35,7 @@ impl ProgramRuntime {
         Self {
             phase,
             head_slot: None,
+            pending_rewind: None,
         }
     }
 }

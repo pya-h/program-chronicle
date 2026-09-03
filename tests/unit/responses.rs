@@ -160,6 +160,7 @@ fn program_progress_reads_straight_off_the_program_row() {
     let runtime = ProgramRuntime {
         phase: ProgramPhase::Backfilling,
         head_slot: Some(1_000),
+        pending_rewind: None,
     };
     let resp = ProgramProgressResponse::from_model(program, Some(runtime));
     assert_eq!(resp.id, 3);
