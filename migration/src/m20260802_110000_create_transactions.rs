@@ -137,7 +137,7 @@ impl MigrationTrait for Migration {
                     .name("idx-transactions-commitment-slot")
                     .table(Transactions::Table)
                     .col(Transactions::Commitment)
-                    .col(Transactions::Slot) // the commitment promote/sweep worker scans recent non-final rows
+                    .col(Transactions::Slot) // the settlement worker scans non-final rows oldest first
                     .to_owned(),
             )
             .await?;
