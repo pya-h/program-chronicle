@@ -5,7 +5,9 @@ use solana_sdk::signature::Signature;
 use crate::core::commitment::TransactionCommitment;
 use crate::core::slot_status::SlotStatus;
 use crate::indexer::rpc::{BlockSignatures, SignatureStatus, SlotBlock};
-use crate::indexer::settlement::{SettlementRoute, lowest, route_status, split_by_block};
+use crate::indexer::settlement::{
+    SettlementRoute, fills_block_time, lowest, route_status, split_by_block,
+};
 
 const STORED_SLOT: i64 = 500;
 
@@ -26,6 +28,14 @@ fn block_holding(seeds: &[u8]) -> SlotBlock {
             .iter()
             .map(|seed| Signature::from([*seed; 64]))
             .collect(),
+    })
+}
+
+fn block_timed(block_time: Option<i64>) -> SlotBlock {
+    SlotBlock::Found(BlockSignatures {
+        blockhash: "whatever".to_owned(),
+        block_time,
+        signatures: Vec::new(),
     })
 }
 
@@ -99,6 +109,25 @@ fn a_tick_rewinds_to_the_lowest_reorg_it_confirmed() {
     assert_eq!(lowest(None, Some(500)), Some(500));
     assert_eq!(lowest(Some(500), None), Some(500));
     assert_eq!(lowest(None, None), None);
+}
+
+#[test]
+fn a_read_block_fills_a_missing_block_time_and_never_rewrites_one() {
+    assert_eq!(
+        fills_block_time(None, &block_timed(Some(1_700_000_000))),
+        Some(1_700_000_000)
+    );
+    // write-once: the backfill worker may have got there first, and a slot's time cannot change
+    assert_eq!(fills_block_time(Some(1), &block_timed(Some(2))), None);
+    assert_eq!(fills_block_time(None, &block_timed(None)), None);
+    // no block, no time — and `Pruned` is exactly the case the backfill worker still exists for
+    for block in [
+        SlotBlock::Reorged,
+        SlotBlock::Pruned,
+        SlotBlock::NotYetFinal,
+    ] {
+        assert_eq!(fills_block_time(None, &block), None);
+    }
 }
 
 #[test]

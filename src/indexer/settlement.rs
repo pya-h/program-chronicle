@@ -45,8 +45,13 @@ pub(crate) fn lowest(current: Option<i64>, found: Option<i64>) -> Option<i64> {
     current.into_iter().chain(found).min()
 }
 
-/// Kept apart from the batching around it: pass 2's leftover check runs the same four ways over the
-/// rows pass 1 could not reach.
+pub(crate) fn fills_block_time(known: Option<i64>, block: &SlotBlock) -> Option<i64> {
+    match block {
+        SlotBlock::Found(found) if known.is_none() => found.block_time,
+        _ => None,
+    }
+}
+
 pub(crate) fn route_status(stored_slot: i64, status: Option<SignatureStatus>) -> SettlementRoute {
     match status {
         Some(status) if status.commitment == TransactionCommitment::Finalized => {
@@ -298,21 +303,22 @@ impl Indexer {
             );
         }
 
-        let verdicts: HashMap<i64, (i64, SlotStatus)> = slots::Entity::find()
+        let verdicts: HashMap<i64, (i64, SlotStatus, Option<i64>)> = slots::Entity::find()
             .select_only()
             .column(slots::Column::Slot)
             .column(slots::Column::Id)
             .column(slots::Column::Status)
+            .column(slots::Column::BlockTime)
             .filter(slots::Column::RpcId.eq(rpc_id))
             .filter(slots::Column::Slot.is_in(suspected.clone()))
-            .into_tuple::<(i64, i64, String)>()
+            .into_tuple::<(i64, i64, String, Option<i64>)>()
             .all(&self.db)
             .await
             .map_err(|err| SvmIndexerError::db_error("Failed loading slot verdicts!", err))?
             .into_iter()
-            .map(|(slot, id, status)| {
+            .map(|(slot, id, status, block_time)| {
                 let status = SlotStatus::from_query(&status).unwrap_or(SlotStatus::Unknown);
-                (slot, (id, status))
+                (slot, (id, status, block_time))
             })
             .collect();
 
@@ -345,7 +351,7 @@ impl Indexer {
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
-            let Some(&(slot_id, status)) = verdicts.get(&slot) else {
+            let Some(&(slot_id, status, known_time)) = verdicts.get(&slot) else {
                 continue;
             };
             if rows.is_empty() {
@@ -372,6 +378,7 @@ impl Indexer {
                 }
             };
 
+            let fill_time = fills_block_time(known_time, &block);
             let mut split = split_by_block(&block, rows, &evidenced);
             let Some(verdict) = split.status else {
                 continue; // not finalized yet: the slot stays `unknown` and the next tick asks again
@@ -391,19 +398,24 @@ impl Indexer {
             set_commitment(&txn, split.promote, TransactionCommitment::Finalized).await?;
             set_commitment(&txn, split.drop, TransactionCommitment::Dropped).await?;
 
-            if verdict != status {
-                slots::Entity::update_many()
-                    .col_expr(slots::Column::Status, Expr::value(verdict.as_str()))
+            // re-applying a cached verdict changes nothing, and `updated_at` should say when the row
+            // last actually changed rather than when a draining slot last passed through
+            if verdict != status || fill_time.is_some() {
+                let mut record = slots::Entity::update_many()
                     .col_expr(
                         slots::Column::UpdatedAt,
                         Expr::value(chrono::Utc::now().naive_utc()),
                     )
-                    .filter(slots::Column::Id.eq(slot_id))
-                    .exec(&txn)
-                    .await
-                    .map_err(|err| {
-                        SvmIndexerError::db_error("Failed recording a slot verdict!", err)
-                    })?;
+                    .filter(slots::Column::Id.eq(slot_id));
+                if verdict != status {
+                    record = record.col_expr(slots::Column::Status, Expr::value(verdict.as_str()));
+                }
+                if let Some(block_time) = fill_time {
+                    record = record.col_expr(slots::Column::BlockTime, Expr::value(block_time));
+                }
+                record.exec(&txn).await.map_err(|err| {
+                    SvmIndexerError::db_error("Failed recording a slot verdict!", err)
+                })?;
             }
             txn.commit().await.map_err(|err| {
                 SvmIndexerError::db_error("Failed committing the settlement!", err)

@@ -23,6 +23,20 @@ async fn main() {
         }
     };
 
+    let env_flag = |key: &str, default: bool| -> bool {
+        match env::var(key)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "" => default,
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => panic!("{key} must be a boolean!"),
+        }
+    };
+
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL not set!");
     let mut db_options = ConnectOptions::new(database_url);
     db_options
@@ -74,13 +88,22 @@ async fn main() {
     let reconcile_interval =
         Duration::from_secs(env_u64("INDEXER_RECONCILE_INTERVAL_SECS", 300).max(1));
     tokio::spawn(indexer.clone().run_reconciler(reconcile_interval));
-    let commitment_worker_interval =
-        Duration::from_secs(env_u64("INDEXER_COMMITMENT_WORKER_SECS", 60).max(1));
-    tokio::spawn(
-        indexer
-            .clone()
-            .run_commitment_worker(commitment_worker_interval),
-    );
+    // Exactly one of these settles, never both: the retired sweep promotes on a finalized status
+    // without checking which slot it names, so it would finalize a survivor in place and put the row
+    // out of the settlement worker's reach for good. The flag is an escape hatch back to the old
+    // behaviour without a redeploy, not a mode to run alongside it.
+    if env_flag("INDEXER_SETTLEMENT_WORKER", true) {
+        tokio::spawn(indexer.clone().run_settlement_worker(
+            Duration::from_secs(env_u64("INDEXER_SETTLEMENT_WORKER_SECS", 60).max(1)),
+            env_u64("INDEXER_SETTLEMENT_BATCH", 10_240),
+            env_u64("INDEXER_SETTLEMENT_ESCALATIONS", 64) as usize,
+        ));
+    } else {
+        tracing::warn!("settlement worker disabled; falling back to the recent-window sweep");
+        tokio::spawn(indexer.clone().run_commitment_worker(Duration::from_secs(
+            env_u64("INDEXER_COMMITMENT_WORKER_SECS", 60).max(1),
+        )));
+    }
     let runtimes = indexer.runtimes();
     tokio::spawn(async move {
         if let Err(err) = indexer.start(supervisor_rx).await {

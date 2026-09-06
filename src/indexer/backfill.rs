@@ -109,6 +109,10 @@ impl Indexer {
         }
     }
 
+    /// Superseded by `run_settlement_worker`, and kept only as the escape hatch behind
+    /// `INDEXER_SETTLEMENT_WORKER`. It settles inside a recent-slot window, so a row that falls out
+    /// of it never settles at all, and it promotes on a finalized status without checking which slot
+    /// that status names. The two must never run together.
     pub async fn run_commitment_worker(self: Arc<Self>, interval: Duration) {
         if !self.ingests_confirmed() {
             return;
