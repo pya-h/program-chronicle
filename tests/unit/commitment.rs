@@ -2,7 +2,6 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_transaction_status::TransactionConfirmationStatus;
 
 use crate::core::commitment::TransactionCommitment;
-use crate::indexer::backfill::classify_commitment_sweep;
 
 #[test]
 fn as_str_round_trips_every_level() {
@@ -51,34 +50,6 @@ fn from_query_accepts_known_levels_only() {
     assert_eq!(TransactionCommitment::from_query("finalizd"), None);
     assert_eq!(TransactionCommitment::from_query("Confirmed"), None);
     assert_eq!(TransactionCommitment::from_query(""), None);
-}
-
-#[test]
-fn commitment_sweep_promotes_finalized_and_drops_absent() {
-    let sig = |n: u8| vec![n; 4];
-    let signatures = vec![sig(1), sig(2), sig(3), sig(4)];
-    let statuses = vec![
-        Some(TransactionCommitment::Finalized), // promote
-        Some(TransactionCommitment::Confirmed), // still pending, untouched
-        Some(TransactionCommitment::Processed), // still pending, untouched
-        None,                                   // absent from recent cache => reorged away
-    ];
-
-    let (finalized, dropped) = classify_commitment_sweep(signatures, statuses);
-    assert_eq!(finalized, vec![sig(1)]);
-    assert_eq!(dropped, vec![sig(4)]);
-}
-
-#[test]
-fn commitment_sweep_partitions_are_empty_when_all_still_pending() {
-    let signatures = vec![vec![1; 4], vec![2; 4]];
-    let statuses = vec![
-        Some(TransactionCommitment::Confirmed),
-        Some(TransactionCommitment::Processed),
-    ];
-    let (finalized, dropped) = classify_commitment_sweep(signatures, statuses);
-    assert!(finalized.is_empty());
-    assert!(dropped.is_empty());
 }
 
 #[test]

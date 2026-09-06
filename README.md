@@ -106,11 +106,9 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_RECONCILE_INTERVAL_SECS` | `300` | interval of the reconcile pass that respawns active programs whose task died out-of-band (e.g. a panic) |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
 | `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `program_accounts.latest_tx_signature` backfill pass |
-| `INDEXER_SETTLEMENT_WORKER` | `true` | run the settlement worker. `false` falls back to the superseded recent-window sweep — an escape hatch, not a second mode: exactly one of the two ever runs |
 | `INDEXER_SETTLEMENT_WORKER_SECS` | `60` | quiet time between settlement passes. A pass that overruns it does not re-fire immediately |
-| `INDEXER_SETTLEMENT_BATCH` | `10240` | unsettled rows a pass asks about, per RPC. This is the drain rate: `batch × 3600 / interval` rows/hour must exceed the rate new transactions arrive, or the backlog grows without bound |
-| `INDEXER_SETTLEMENT_ESCALATIONS` | `64` | distinct slots a pass may download a block for. Slots over budget simply wait for the next pass |
-| `INDEXER_COMMITMENT_WORKER_SECS` | `60` | interval of the superseded sweep; read only when `INDEXER_SETTLEMENT_WORKER=false` |
+| `INDEXER_SETTLEMENT_BATCH` | `2560` | unsettled rows a pass asks about, per RPC. This is the drain rate: `batch × 3600 / interval` rows/hour must exceed the rate new transactions arrive, or the backlog grows without bound |
+| `INDEXER_SETTLEMENT_ESCALATIONS` | `64` | distinct slots a pass may download a block for. Slots over budget simply wait for the next pass. Raise this, not `INDEXER_SETTLEMENT_BATCH`, when a backlog of *old* rows is draining slowly — those escalate per slot |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
 | `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
 | `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |
@@ -127,11 +125,11 @@ It asks the cheap question first. Each pass looks up the stored signatures again
 - still **processed/confirmed** → left alone for the next pass;
 - **absent from the ledger entirely** → suspicious, but not yet evidence.
 
-Only the last group escalates, and only once per *slot* rather than per row: the pass downloads that slot's block and compares. If the block exists and holds the signature, the row is finalized after all. If the chain has no block there, the absent rows are marked `dropped`. A row the first question never reached is asked individually before it can be dropped — absence from a block is a slot-level fact, and a drop is not reversible. If the node has simply pruned the slot, nothing is dropped: a node losing a block is not the chain losing one. A confirmed reorg also pushes the affected programs' cursors back below that slot, so the block that replaced ours is walked and its transactions are indexed.
+Only the last group escalates, and only once per *slot* rather than per row: the pass downloads that slot's block and compares. If the block exists and holds the signature, the row is finalized after all. If the chain has no block there, the absent rows are marked `dropped`. A row the first question never reached is asked individually before it can be dropped — absence from a block is a slot-level fact, and a drop is not reversible. If the node has simply pruned the slot, nothing is dropped — a node losing a block is not the chain losing one — and the rows finalize by inference instead, on the grounds that they had already reached `confirmed`. A confirmed reorg also pushes the affected programs' cursors back below that slot, so the block that replaced ours is walked and its transactions are indexed.
 
 **What this means for a consumer:**
 
-- `dropped` transactions are excluded from all reads. They are not deleted — the row stays, so a dropped signature is distinguishable from one that was never indexed.
+- `dropped` transactions are hidden from the transaction **list** endpoints by default, and `?commitment=dropped` asks for them explicitly. They are never deleted — the row stays, so a dropped signature is distinguishable from one that was never indexed, and a direct `GET /transactions/{signature}` still returns it with `commitment: "dropped"` rather than a 404. **`GET /accounts/{address}/transactions` does not filter them yet.**
 - **A dropped transaction's `program_events` keep being served.** `program_events` has no commitment filter, so `GET /programs/{id}/events` can return log events from a block that is not on the chain. Cross-check against the transactions endpoint if that matters to you. Same for events already delivered over SSE — a live event may in effect be retracted later.
 - **A survivor's SSE event was already sent carrying its old slot.** Re-slotting corrects the stored row and the read APIs, but does not re-emit or amend the broadcast event.
 - `slots.status` records the verdict per slot (`unknown`, `canonical`, `reorged`, `pruned`), so `latest_slot` on an account can be checked against the slot it points at. Only slots the worker actually visits get a verdict; the rest stay `unknown`.

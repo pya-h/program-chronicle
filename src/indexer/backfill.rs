@@ -2,43 +2,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::core::error::SvmIndexerError;
+use crate::db::entities::{rpcs, slots};
+use crate::indexer::Indexer;
+use crate::indexer::persist::ensure_slot;
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect,
 };
-use solana_sdk::signature::Signature;
-
-use crate::core::commitment::TransactionCommitment;
-use crate::core::error::SvmIndexerError;
-use crate::db::entities::{programs, rpcs, slots, transactions};
-use crate::indexer::Indexer;
-use crate::indexer::persist::ensure_slot;
-use crate::indexer::settlement::set_commitment;
 
 const BACKFILL_BATCH: u64 = 500;
 /// Cap the work per tx_signature backfill pass; leftovers are picked up on the next tick.
 const TX_SIGNATURE_BACKFILL_MAX_BATCHES: usize = 40;
-/// `getSignatureStatuses` caps at 256 signatures per call.
-const STATUS_BATCH: u64 = 256;
-/// Only sweep transactions within this many slots of the head — inside the node's recent status-cache
-/// retention, so an absent signature is a reorg drop, not an aged-out finalized tx.
-const COMMITMENT_RECENT_SLOTS: i64 = 150;
-
-pub(crate) fn classify_commitment_sweep(
-    signatures: Vec<Vec<u8>>,
-    statuses: Vec<Option<TransactionCommitment>>,
-) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-    let mut finalized = Vec::new();
-    let mut dropped = Vec::new();
-    for (bytes, status) in signatures.into_iter().zip(statuses) {
-        match status {
-            Some(TransactionCommitment::Finalized) => finalized.push(bytes),
-            Some(_) => {}
-            None => dropped.push(bytes),
-        }
-    }
-    (finalized, dropped)
-}
 
 pub async fn backfill_latest_tx_signatures_once(
     db: &DatabaseConnection,
@@ -107,137 +82,6 @@ impl Indexer {
                 }
             }
         }
-    }
-
-    /// Superseded by `run_settlement_worker`, and kept only as the escape hatch behind
-    /// `INDEXER_SETTLEMENT_WORKER`. It settles inside a recent-slot window, so a row that falls out
-    /// of it never settles at all, and it promotes on a finalized status without checking which slot
-    /// that status names. The two must never run together.
-    pub async fn run_commitment_worker(self: Arc<Self>, interval: Duration) {
-        if !self.ingests_confirmed() {
-            return;
-        }
-        let mut ticker = tokio::time::interval(interval);
-        loop {
-            ticker.tick().await;
-            if let Err(err) = self.promote_commitments_once().await {
-                tracing::error!(error = %err, "commitment promote/sweep pass failed!");
-            }
-        }
-    }
-
-    async fn promote_commitments_once(&self) -> Result<(), SvmIndexerError> {
-        let networks = rpcs::Entity::find().all(&self.db).await.map_err(|err| {
-            SvmIndexerError::db_error("Failed loading rpcs for commitment sweep!", err)
-        })?;
-
-        for rpc in networks {
-            let program_ids: Vec<i32> = programs::Entity::find()
-                .filter(programs::Column::RpcId.eq(rpc.id))
-                .all(&self.db)
-                .await
-                .map_err(|err| SvmIndexerError::db_error("Failed loading rpc programs!", err))?
-                .into_iter()
-                .map(|program| program.id)
-                .collect();
-            if program_ids.is_empty() {
-                continue;
-            }
-
-            let client = self.client_for(&rpc).await;
-            let head = match client.get_slot().await {
-                Ok(head) => head as i64,
-                Err(err) => {
-                    tracing::warn!(rpc_id = rpc.id, error = %err, "Failed reading head for commitment sweep!");
-                    continue;
-                }
-            };
-            let floor = (head - COMMITMENT_RECENT_SLOTS).max(0);
-
-            let pending = transactions::Entity::find()
-                .filter(transactions::Column::ProgramId.is_in(program_ids))
-                .filter(transactions::Column::Commitment.is_in([
-                    TransactionCommitment::Processed.as_str(),
-                    TransactionCommitment::Confirmed.as_str(),
-                ]))
-                .filter(transactions::Column::Slot.gte(floor))
-                // oldest first: rows nearest `floor` are about to age out of the window, so resolve
-                // them before a backlog past STATUS_BATCH strands them at a non-final level
-                .order_by_asc(transactions::Column::Slot)
-                .limit(STATUS_BATCH)
-                .all(&self.db)
-                .await
-                .map_err(|err| {
-                    SvmIndexerError::db_error("Failed loading pending commitments!", err)
-                })?;
-
-            let mut sigs = Vec::with_capacity(pending.len());
-            let mut sig_bytes = Vec::with_capacity(pending.len());
-            for tx in &pending {
-                if let Ok(sig) = Signature::try_from(tx.signature.as_slice()) {
-                    sigs.push(sig);
-                    sig_bytes.push(tx.signature.clone());
-                }
-            }
-            if sigs.is_empty() {
-                continue;
-            }
-
-            let statuses = match client.get_signature_statuses(&sigs).await {
-                Ok(statuses) => statuses,
-                Err(err) => {
-                    tracing::warn!(rpc_id = rpc.id, error = %err, "Failed fetching signature statuses for commitment sweep!");
-                    continue;
-                }
-            };
-            let (mut finalized, candidates) = classify_commitment_sweep(sig_bytes, statuses);
-
-            let mut dropped = Vec::new();
-            if !candidates.is_empty() {
-                let mut candidate_bytes = Vec::with_capacity(candidates.len());
-                let mut candidate_sigs = Vec::with_capacity(candidates.len());
-                for bytes in candidates {
-                    if let Ok(sig) = Signature::try_from(bytes.as_slice()) {
-                        candidate_sigs.push(sig);
-                        candidate_bytes.push(bytes);
-                    }
-                }
-                // second pass: a `None` from the recent status cache can be an aged-out finalized tx,
-                // not a reorg; re-check the candidates against full ledger history before dropping
-                match client
-                    .get_signature_statuses_with_history(&candidate_sigs)
-                    .await
-                {
-                    Ok(history) => {
-                        let commitments = history
-                            .into_iter()
-                            .map(|status| status.map(|status| status.commitment))
-                            .collect();
-                        let (rescued, gone) =
-                            classify_commitment_sweep(candidate_bytes, commitments);
-                        finalized.extend(rescued);
-                        dropped = gone;
-                    }
-                    Err(err) => {
-                        // inconclusive — leave the candidates for the next tick, never fabricate a drop
-                        tracing::warn!(rpc_id = rpc.id, error = %err, "Failed confirming suspected drops at finalized!");
-                    }
-                }
-            }
-
-            if let Err(err) =
-                set_commitment(&self.db, finalized, TransactionCommitment::Finalized).await
-            {
-                tracing::warn!(rpc_id = rpc.id, error = %err, "Failed promoting finalized commitments!");
-                continue;
-            }
-            if let Err(err) =
-                set_commitment(&self.db, dropped, TransactionCommitment::Dropped).await
-            {
-                tracing::warn!(rpc_id = rpc.id, error = %err, "Failed marking dropped commitments!");
-            }
-        }
-        Ok(())
     }
 
     async fn backfill_block_times_once(
