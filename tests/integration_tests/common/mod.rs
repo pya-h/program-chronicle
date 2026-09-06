@@ -1,7 +1,4 @@
-use std::sync::OnceLock;
-use std::time::Duration;
 use httpc_test::Client;
-use tokio::sync::{Mutex, MutexGuard};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectOptions, ConnectionTrait, Database,
@@ -9,8 +6,11 @@ use sea_orm::{
 };
 use serde_json::Value;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
+use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
+use tokio::sync::{Mutex, MutexGuard};
 use url::Url;
 
 use svm_indexer::core::sse::SseEvent;
@@ -76,10 +76,10 @@ fn test_database_url() -> String {
 }
 
 async fn ensure_test_database(test_url: &str) {
-    if let Ok(db) = Database::connect(test_url).await {
-        if db.execute_unprepared("SELECT 1").await.is_ok() {
-            return;
-        }
+    if let Ok(db) = Database::connect(test_url).await
+        && db.execute_unprepared("SELECT 1").await.is_ok()
+    {
+        return;
     }
 
     let url =
@@ -141,7 +141,7 @@ fn setup_server() -> ServerInfo {
                 .expect("failed to refresh test database schema");
 
             let (sse_tx, _) = broadcast::channel::<SseEvent>(64);
-            let app = svm_indexer::app(db, passkey_for_thread.clone(), None, sse_tx.clone());
+            let app = svm_indexer::app(db, passkey_for_thread.clone(), None, sse_tx.clone(), None);
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("failed to bind test server");
@@ -154,7 +154,8 @@ fn setup_server() -> ServerInfo {
 
             (port, sse_tx)
         });
-        tx.send((port, sse_tx)).expect("failed to send server handle");
+        tx.send((port, sse_tx))
+            .expect("failed to send server handle");
 
         // Keep the server runtime alive for the whole test process.
         rt.block_on(std::future::pending::<()>());
@@ -193,7 +194,7 @@ pub async fn reset_db() -> MutexGuard<'static, ()> {
     let db = test_db().await;
     // child rows first so the Restrict foreign keys don't block the truncation
     db.execute_unprepared(
-        "DELETE FROM indexer_errors; DELETE FROM account_states; DELETE FROM program_events; \
+        "DELETE FROM indexer_errors; DELETE FROM program_events; \
          DELETE FROM transaction_accounts; DELETE FROM transactions; DELETE FROM program_accounts; \
          DELETE FROM slots; DELETE FROM programs; DELETE FROM rpcs;",
     )
@@ -245,7 +246,7 @@ pub async fn seed_program(db: &DatabaseConnection, rpc_id: i32, address: &Pubkey
 }
 
 /// Persists an account snapshot through the real indexer path, so seeded reads exercise the same
-/// cache/history rows production writes. Returns nothing; the caller reads back via the API.
+/// program_accounts rows production writes. Returns nothing; the caller reads back via the API.
 #[allow(clippy::too_many_arguments)]
 pub async fn seed_account(
     db: &DatabaseConnection,
@@ -340,6 +341,7 @@ pub async fn seed_transaction_account(
     .expect("failed to seed transaction account");
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn seed_event(
     db: &DatabaseConnection,
     program_id: i32,

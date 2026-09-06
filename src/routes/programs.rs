@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -17,16 +15,12 @@ use crate::{
         response::{ApiResponse, FinalResponse},
         state::AppState,
     },
-    db::entities::{account_states, program_accounts, program_events, slots, transactions},
+    db::entities::{program_accounts, program_events, slots, transactions},
     routes::{
         correlation::correlated_signatures,
-        payloads::programs::{
-            ProgramAccountsQuery, ProgramChangesQuery, ProgramEventsQuery, ProgramTransactionsQuery,
-        },
+        payloads::programs::{ProgramAccountsQuery, ProgramEventsQuery, ProgramTransactionsQuery},
         responses::{
-            accounts::{AccountChangeResponse, ProgramAccountsResponse},
-            changes::ProgramChangesResponse,
-            events::{ProgramEventResponse, ProgramEventsResponse},
+            accounts::ProgramAccountsResponse, events::ProgramEventsResponse,
             transactions::TransactionsResponse,
         },
     },
@@ -49,9 +43,15 @@ fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
                 "memcmp offset must be an integer in [0, 10485760]!".to_owned(),
             )
         })?;
-    let bytes = bs58::decode(encoded).into_vec().map_err(|_| {
-        SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned())
-    })?;
+    let bytes = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|_| SvmIndexerError::BadInput("memcmp bytes must be valid base58!".to_owned()))?;
+    if bytes.is_empty() {
+        // an empty payload makes `substr(...) = ''` match every row — reject it as a no-op filter
+        return Err(SvmIndexerError::BadInput(
+            "memcmp needs at least one byte to match!".to_owned(),
+        ));
+    }
     // substr is 1-indexed, memcmp offset is 0-indexed; substr on bytea needs integer args
     Ok(Expr::cust_with_values(
         "substr(program_accounts.state, $1, $2) = $3",
@@ -65,11 +65,10 @@ fn memcmp_filter(raw: &str) -> Result<Expr, SvmIndexerError> {
 
 async fn get_program_accounts_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(query): Query<ProgramAccountsQuery>,
 ) -> FinalResponse<ProgramAccountsResponse> {
-    let mut condition =
-        Condition::all().add(program_accounts::Column::ProgramId.eq(program_id as i32));
+    let mut condition = Condition::all().add(program_accounts::Column::ProgramId.eq(program_id));
     if let Some(memcmp) = &query.memcmp {
         condition = condition.add(memcmp_filter(memcmp)?);
     }
@@ -92,7 +91,11 @@ async fn get_program_accounts_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(accounts_query, &state.db, Some("Failed fetching program accounts!"))
+        .paginate_or_all(
+            accounts_query,
+            &state.db,
+            Some("Failed fetching program accounts!"),
+        )
         .await?;
     Ok(ApiResponse::ok(ProgramAccountsResponse::new(
         rows, total, pages,
@@ -101,11 +104,10 @@ async fn get_program_accounts_handler(
 
 async fn get_program_events_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(query): Query<ProgramEventsQuery>,
 ) -> FinalResponse<ProgramEventsResponse> {
-    let mut condition =
-        Condition::all().add(program_events::Column::ProgramId.eq(program_id as i32));
+    let mut condition = Condition::all().add(program_events::Column::ProgramId.eq(program_id));
     if let Some(since_slot) = query.since_slot {
         condition = condition.add(program_events::Column::Slot.gte(since_slot));
     }
@@ -146,7 +148,11 @@ async fn get_program_events_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(events_query, &state.db, Some("Failed fetching program events!"))
+        .paginate_or_all(
+            events_query,
+            &state.db,
+            Some("Failed fetching program events!"),
+        )
         .await?;
     Ok(ApiResponse::ok(ProgramEventsResponse::new(
         rows, total, pages,
@@ -155,7 +161,7 @@ async fn get_program_events_handler(
 
 async fn get_program_transactions_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(query): Query<ProgramTransactionsQuery>,
 ) -> FinalResponse<TransactionsResponse> {
     let correlated = query.correlated.unwrap_or(false);
@@ -167,16 +173,14 @@ async fn get_program_transactions_handler(
         ));
     }
 
-    let mut condition = if correlated {
-        Condition::all().add(transactions::Column::Signature.in_subquery(correlated_signatures(
-            program_id as i32,
-            query.since_slot,
-            query.from_slot,
-            query.to_slot,
-        )))
-    } else {
-        Condition::all().add(transactions::Column::ProgramId.eq(program_id as i32))
-    };
+    let mut condition =
+        if correlated {
+            Condition::all().add(transactions::Column::Signature.in_subquery(
+                correlated_signatures(program_id, query.since_slot, query.from_slot, query.to_slot),
+            ))
+        } else {
+            Condition::all().add(transactions::Column::ProgramId.eq(program_id))
+        };
     // an explicit ?commitment= matches that level; otherwise reorg-ed `dropped` rows are hidden
     match &query.commitment {
         Some(level) => {
@@ -213,99 +217,15 @@ async fn get_program_transactions_handler(
 
     let (rows, total, pages) = query
         .pagination
-        .paginate_or_all(transactions_query, &state.db, Some("Failed fetching program transactions!"))
+        .paginate_or_all(
+            transactions_query,
+            &state.db,
+            Some("Failed fetching program transactions!"),
+        )
         .await?;
     Ok(ApiResponse::ok(TransactionsResponse::new(
         rows, total, pages,
     )))
-}
-
-async fn get_program_changes_handler(
-    State(state): State<AppState>,
-    Path(program_id): Path<u16>,
-    Query(query): Query<ProgramChangesQuery>,
-) -> FinalResponse<ProgramChangesResponse> {
-    let mut states_condition =
-        Condition::all().add(program_accounts::Column::ProgramId.eq(program_id as i32));
-    if let Some(from_slot) = query.from_slot {
-        states_condition = states_condition.add(account_states::Column::Slot.gte(from_slot));
-    }
-    if let Some(to_slot) = query.to_slot {
-        states_condition = states_condition.add(account_states::Column::Slot.lte(to_slot));
-    }
-
-    let states_query = account_states::Entity::find()
-        .find_also_related(program_accounts::Entity)
-        .filter(states_condition)
-        .order_by_asc(account_states::Column::Slot)
-        .order_by_asc(account_states::Column::WriteVersion);
-
-    let (state_rows, states_total, states_pages) = query
-        .pagination
-        .paginate_or_all(states_query, &state.db, Some("Failed fetching program changes!"))
-        .await?;
-
-    let slot_ids: Vec<i64> = state_rows.iter().map(|(state, _)| state.slot_id).collect();
-    let block_times: HashMap<i64, Option<i64>> = if slot_ids.is_empty() {
-        HashMap::new()
-    } else {
-        slots::Entity::find()
-            .filter(slots::Column::Id.is_in(slot_ids))
-            .all(&state.db)
-            .await
-            .map_err(|err| SvmIndexerError::db_error("Failed resolving change-set slots!", err))?
-            .into_iter()
-            .map(|slot| (slot.id, slot.block_time))
-            .collect()
-    };
-
-    let account_states = state_rows
-        .into_iter()
-        .map(|(state, account)| {
-            let block_time = block_times.get(&state.slot_id).copied().flatten();
-            let address = account.map(|account| account.address).unwrap_or_default();
-            AccountChangeResponse::from_model(state, &address, block_time)
-        })
-        .collect();
-
-    let (events, events_total, events_pages) = if query.include_events.unwrap_or(false) {
-        let mut events_condition =
-            Condition::all().add(program_events::Column::ProgramId.eq(program_id as i32));
-        if let Some(from_slot) = query.from_slot {
-            events_condition = events_condition.add(program_events::Column::Slot.gte(from_slot));
-        }
-        if let Some(to_slot) = query.to_slot {
-            events_condition = events_condition.add(program_events::Column::Slot.lte(to_slot));
-        }
-        let events_query = program_events::Entity::find()
-            .filter(events_condition)
-            .find_also_related(slots::Entity)
-            .order_by_asc(program_events::Column::Slot)
-            .order_by_asc(program_events::Column::Id);
-
-        let (event_rows, events_total, events_pages) = query
-            .pagination
-            .paginate_or_all(events_query, &state.db, Some("Failed fetching program change events!"))
-            .await?;
-        let events = event_rows
-            .into_iter()
-            .map(|(event, slot)| {
-                ProgramEventResponse::from_model(event, slot.and_then(|slot| slot.block_time))
-            })
-            .collect();
-        (Some(events), Some(events_total), Some(events_pages))
-    } else {
-        (None, None, None)
-    };
-
-    Ok(ApiResponse::ok(ProgramChangesResponse {
-        account_states,
-        account_states_total: states_total,
-        account_states_pages: states_pages,
-        events,
-        events_total,
-        events_pages,
-    }))
 }
 
 pub fn routes() -> Router<AppState> {
@@ -316,5 +236,4 @@ pub fn routes() -> Router<AppState> {
             "/{program_id}/transactions",
             get(get_program_transactions_handler),
         )
-        .route("/{program_id}/changes", get(get_program_changes_handler))
 }

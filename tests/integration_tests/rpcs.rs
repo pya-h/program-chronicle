@@ -34,7 +34,10 @@ async fn add_rpc_without_ws_url_auto_generates() -> httpc_test::Result<()> {
 
     let res = server()
         .authed_client()
-        .do_post("/admin/rpcs", json!({"http_url": "https://rpc-auto.example.com"}))
+        .do_post(
+            "/admin/rpcs",
+            json!({"http_url": "https://rpc-auto.example.com"}),
+        )
         .await?;
     assert_eq!(res.status(), 201);
 
@@ -51,7 +54,10 @@ async fn add_rpc_auto_ws_only_swaps_the_scheme() -> httpc_test::Result<()> {
     // the host itself contains "http"; only the scheme should change, not every occurrence
     let res = server()
         .authed_client()
-        .do_post("/admin/rpcs", json!({"http_url": "https://http-mainnet.rpc.io"}))
+        .do_post(
+            "/admin/rpcs",
+            json!({"http_url": "https://http-mainnet.rpc.io"}),
+        )
         .await?;
     assert_eq!(res.status(), 201);
 
@@ -90,7 +96,10 @@ async fn add_rpc_without_auth_is_unauthorized() -> httpc_test::Result<()> {
 
     let res = server()
         .unauthed_client()
-        .do_post("/admin/rpcs", json!({"http_url": "https://rpc.example.com"}))
+        .do_post(
+            "/admin/rpcs",
+            json!({"http_url": "https://rpc.example.com"}),
+        )
         .await?;
     assert_eq!(res.status(), 401);
     Ok(())
@@ -102,12 +111,18 @@ async fn add_rpc_duplicate_http_url_fails() -> httpc_test::Result<()> {
 
     server()
         .authed_client()
-        .do_post("/admin/rpcs", json!({"http_url": "https://rpc-dup.example.com"}))
+        .do_post(
+            "/admin/rpcs",
+            json!({"http_url": "https://rpc-dup.example.com"}),
+        )
         .await?;
 
     let res = server()
         .authed_client()
-        .do_post("/admin/rpcs", json!({"http_url": "https://rpc-dup.example.com"}))
+        .do_post(
+            "/admin/rpcs",
+            json!({"http_url": "https://rpc-dup.example.com"}),
+        )
         .await?;
     assert_eq!(res.status(), 500);
     Ok(())
@@ -232,7 +247,9 @@ async fn update_rpc_ws_url_only() -> httpc_test::Result<()> {
             }),
         )
         .await?;
-    let id = created.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     let res = server()
         .authed_client()
@@ -245,7 +262,10 @@ async fn update_rpc_ws_url_only() -> httpc_test::Result<()> {
 
     let body = res.json_body_as::<serde_json::Value>()?;
     assert_eq!(body["ws_url"], "wss://rpc-wsonly-updated.example.com");
-    assert_eq!(body["http_url"], "https://rpc-wsonly.example.com", "http_url unchanged");
+    assert_eq!(
+        body["http_url"], "https://rpc-wsonly.example.com",
+        "http_url unchanged"
+    );
     Ok(())
 }
 
@@ -360,7 +380,10 @@ async fn delete_rpc_happy() -> httpc_test::Result<()> {
 async fn delete_rpc_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 
-    let res = server().authed_client().do_delete("/admin/rpcs/9999").await?;
+    let res = server()
+        .authed_client()
+        .do_delete("/admin/rpcs/9999")
+        .await?;
     assert_eq!(res.status(), 404);
     Ok(())
 }

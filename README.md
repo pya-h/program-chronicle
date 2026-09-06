@@ -8,7 +8,7 @@ This README tracks the project's current state, layout, and the consumer-facing 
 
 For every registered program the indexer catches up from the program's `start_slot` to the current head, then stays live:
 
-- **Accounts** — a per-account cache of the latest state plus full per-slot history.
+- **Accounts** — a per-account record of the latest state.
 - **Transactions** — transactions touching a tracked program.
 - **Events** — program log events (`Program data:` lines), decoded position-agnostically.
 
@@ -20,14 +20,13 @@ All read endpoints are public (no `x-security` header). Byte payloads (`data`) a
 
 ### Accounts
 
-- `GET /accounts/{address}` — latest cached state of one account.
+- `GET /accounts/{address}` — latest state of one account.
 - `GET /accounts?addresses=a,b,c` — batch fetch; the result is **positional**, with `null` where an address is not indexed.
-- `GET /accounts/{address}/history` — per-slot state history, newest first.
 - `GET /accounts/{address}/transactions` — indexed transactions that referenced the address, newest first (the `getSignaturesForAddress` replacement).
 
 ### Programs
 
-- `GET /programs/{id}/accounts` — all cached accounts of a program.
+- `GET /programs/{id}/accounts` — all accounts of a program.
   - `memcmp=<offset>:<base58>` — match raw bytes at a byte offset (offset is 0-indexed).
   - `dataSize=<n>` — match accounts whose state is exactly `n` bytes.
 - `GET /programs/{id}/events` — program events, newest first.
@@ -35,8 +34,6 @@ All read endpoints are public (no `x-security` header). Byte payloads (`data`) a
   - `discriminator=<hex>` — match the event's leading 8 bytes (hex, optional `0x` prefix).
 - `GET /programs/{id}/transactions` — a program's transactions, newest first.
   - `success=true|false` — filter by outcome.
-- `GET /programs/{id}/changes` — account state changes for a program in slot order.
-  - `include_events=true` — also include the program's events in the same window.
 
 ### Transactions
 
@@ -72,12 +69,12 @@ The indexed history window starts at each program's `start_slot` — reads never
 Admin endpoints require the `x-security` header (constant-time comparison) and manage indexing configuration:
 
 - `GET /admin` — validate the admin passkey (used by the panel login gate).
-- `GET /admin/stats` — indexer stats: counts, per-program progress (`last_processed_slot`), and table size estimates.
+- `GET /admin/stats` — indexer stats: counts, per-program progress (`last_processed_slot`), table size estimates, and exact `settlement` counts of reorged slots and dropped transactions.
 - `POST|GET|PATCH|DELETE /admin/rpcs[/{id}]` — manage RPC endpoints.
 - `POST|GET|PATCH|DELETE /admin/programs[/{id}]` — manage indexed programs (register by `rpc_id` or inline `rpc_url`). An optional `account_filters` descriptor (`{ data_size, memcmp[], addresses[] }`) narrows ingestion to a subset of a program's accounts — only needed for chain-wide shared programs; omit it to track everything the program owns.
 - `POST /admin/programs/{id}/activate` and `.../deactivate` — resume or pause indexing a program without deleting it.
 
-A health check is served at `GET /` and an HTMX admin panel is served from `static/panel` at the root.
+A health check is served at `GET /`, and an HTMX admin panel from `static/panel` at `GET /panel` (which redirects to `/panel/`).
 
 ## Database schema
 
@@ -85,10 +82,9 @@ A health check is served at `GET /` and an HTMX admin panel is served from `stat
 |---|---|
 | `rpcs` | registered RPC endpoints (`http_url`, `ws_url`) |
 | `programs` | programs to index, tied to an RPC (`address`, `name`, `start_slot`, `last_processed_slot`, `active`, `account_filters`) |
-| `slots` | per-RPC slot dimension (`block_time`, filled once known) |
-| `program_accounts` | per-program account registry plus the cached latest state for fast current-state reads |
-| `account_states` | per-slot state history for each account |
-| `transactions` | transactions touching a tracked program |
+| `slots` | per-RPC slot dimension (`block_time`, filled once known; `status`, the reorg verdict) |
+| `program_accounts` | per-program account registry holding each account's latest state |
+| `transactions` | transactions touching a tracked program (`commitment` settles to `finalized` or `dropped`) |
 | `transaction_accounts` | per-transaction account references (with a `writable` flag) for address → transaction lookup |
 | `program_events` | decoded program log events |
 
@@ -109,13 +105,37 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_RESTART_COOLDOWN_CAP_SECS` | `43200` | ceiling (12h) for the doubling cooldown, so a persistently broken program keeps retrying but only rarely; clamped up to the base if set lower |
 | `INDEXER_RECONCILE_INTERVAL_SECS` | `300` | interval of the reconcile pass that respawns active programs whose task died out-of-band (e.g. a panic) |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
-| `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `account_states.tx_signature` backfill pass |
+| `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `program_accounts.latest_tx_signature` backfill pass |
+| `INDEXER_SETTLEMENT_WORKER_SECS` | `60` | quiet time between settlement passes. A pass that overruns it does not re-fire immediately |
+| `INDEXER_SETTLEMENT_BATCH` | `2560` | unsettled rows a pass asks about, per RPC. This is the drain rate: `batch × 3600 / interval` rows/hour must exceed the rate new transactions arrive, or the backlog grows without bound |
+| `INDEXER_SETTLEMENT_ESCALATIONS` | `64` | distinct slots a pass may download a block for. Slots over budget simply wait for the next pass. Raise this, not `INDEXER_SETTLEMENT_BATCH`, when a backlog of *old* rows is draining slowly — those escalate per slot |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
 | `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
 | `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |
 | `DB_IDLE_TIMEOUT_SECS` | `300` | release idle connections when load drops |
 
-Under `confirmed`, reorgs are rare and shallow: the latest cache self-heals on the next change, while a historical row for a reorged slot may linger. Writes are idempotent `DO NOTHING` — there is no overwrite machinery in the MVP.
+## Reorgs
+
+Under `confirmed` ingest a transaction is indexed before the chain has committed to it, so a fork can still take it away. A settlement worker resolves every such row to a terminal state — `finalized` or `dropped` — and nothing is left to age out.
+
+It asks the cheap question first. Each pass looks up the stored signatures against full ledger history, which settles the overwhelming majority in one call per 256 rows:
+
+- reported **finalized at the slot we stored** → promoted to `finalized`;
+- reported **finalized at a different slot** → a *survivor*: the transaction was re-included on the winning fork, so its row is moved to the new slot along with its events and account references, then finalized. Nothing is lost;
+- still **processed/confirmed** → left alone for the next pass;
+- **absent from the ledger entirely** → suspicious, but not yet evidence.
+
+Only the last group escalates, and only once per *slot* rather than per row: the pass downloads that slot's block and compares. If the block exists and holds the signature, the row is finalized after all. If the chain has no block there, the absent rows are marked `dropped`. A row the first question never reached is asked individually before it can be dropped — absence from a block is a slot-level fact, and a drop is not reversible. If the node has simply pruned the slot, nothing is dropped — a node losing a block is not the chain losing one — and the rows finalize by inference instead, on the grounds that they had already reached `confirmed`. A confirmed reorg also pushes the affected programs' cursors back below that slot, so the block that replaced ours is walked and its transactions are indexed.
+
+**What this means for a consumer:**
+
+- `dropped` transactions are hidden from the transaction **list** endpoints by default, and `?commitment=dropped` asks for them explicitly. They are never deleted — the row stays, so a dropped signature is distinguishable from one that was never indexed, and a direct `GET /transactions/{signature}` still returns it with `commitment: "dropped"` rather than a 404. **`GET /accounts/{address}/transactions` does not filter them yet.**
+- **A dropped transaction's `program_events` keep being served.** `program_events` has no commitment filter, so `GET /programs/{id}/events` can return log events from a block that is not on the chain. Cross-check against the transactions endpoint if that matters to you. Same for events already delivered over SSE — a live event may in effect be retracted later.
+- **A survivor's SSE event was already sent carrying its old slot.** Re-slotting corrects the stored row and the read APIs, but does not re-emit or amend the broadcast event.
+- `slots.status` records the verdict per slot (`unknown`, `canonical`, `reorged`, `pruned`), so `latest_slot` on an account can be checked against the slot it points at. Only slots the worker actually visits get a verdict; the rest stay `unknown`.
+- Account state left behind by a *dropped* transaction is not rewound. A hot account self-heals on its next change; a cold one may keep state that came from the losing fork.
+
+Under `finalized` ingest none of this applies to new rows — they are stored final. The worker still runs, so rows written earlier under `confirmed` are still settled rather than stranded by the switch.
 
 ## Layout
 
@@ -156,13 +176,13 @@ tests/integration_tests/  # httpc-test suite against a real server + test db
    cargo run
    ```
 
-The admin panel is then available at `http://localhost:3000/`.
+The admin panel is then available at `http://localhost:3000/panel`.
 
 ## Running tests
 
 The suite has two tiers:
 
-**Unit tests** (`tests/unit/`) cover the pure logic in isolation — the event log parser (CPI-stack attribution), URL validation, error→status mapping, pagination query coercion, and the `from_model` response conversions. They compile *into* the crate (a `#[cfg(test)]` `#[path]` module in `lib.rs`) so they can reach `pub(crate)`/internal items, and they touch **no database** (models are built in memory, nothing is mocked), so they need no `DATABASE_URL` and run instantly:
+**Unit tests** (`tests/unit/`) cover the pure logic in isolation — the event log parser (CPI-stack attribution), URL validation, error→status mapping, pagination query coercion, the settlement routing that decides a reorg verdict, and the `from_model` response conversions. They compile *into* the crate (a `#[cfg(test)]` `#[path]` module in `lib.rs`) so they can reach `pub(crate)`/internal items, and they touch **no database** (models are built in memory, nothing is mocked), so they need no `DATABASE_URL` and run instantly:
 
 ```bash
 cargo test --lib
@@ -185,3 +205,22 @@ Set `TEST_DATABASE_URL` to override the test database; otherwise `DATABASE_URL` 
 ## REST client
 
 `request.http` contains example calls for every endpoint and works with the VS Code REST Client extension.
+
+## Docker & CI locally
+
+**Build and run the image** (serves the panel and API on port 3000). Migrations are *not* run by the container, so point it at an already-migrated database:
+
+```bash
+docker build -t svm-indexer .
+docker run --rm -p 3000:3000 --env-file .env --network host svm-indexer
+```
+
+`--network host` lets the container reach a Postgres running on the host via a `localhost` `DATABASE_URL` (Linux). On macOS/Windows, drop `--network host` and use `host.docker.internal` as the DB host in `DATABASE_URL` instead.
+
+**Run the GitHub CI locally** with [`act`](https://github.com/nektos/act) (needs Docker). It executes `.github/workflows/ci.yml` the way GitHub does, Postgres service container included:
+
+```bash
+act pull_request --pull=false
+```
+
+The workflow triggers `on: pull_request`, so pass that event. `--pull=false` reuses local images instead of force-pulling the service image on every run (pull it once with `docker pull postgres:16`). The Postgres service is published on host port **5433** (not 5432), so it coexists with a local `psql`, and `DATABASE_URL` points at `localhost:5433` — this holds on both GitHub's runner and `act`. The integration tests run single-threaded exactly as in CI. The first run also downloads the `act` runner image.

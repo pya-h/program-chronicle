@@ -1,3 +1,4 @@
+use crate::indexer::rpc::AccountFilter;
 use crate::{
     core::{
         error::SvmIndexerError,
@@ -5,14 +6,16 @@ use crate::{
         state::{AppState, ProgramCommand},
     },
     db::entities::{
-        programs,
+        program_accounts, program_events, programs,
         rpcs::{self, Model as RpcModel},
+        transaction_accounts, transactions,
     },
     routes::{
         admin::rpcs::add_rpc,
         payloads::{
             admin::{
-                AddProgramPayload, AddRpcPayload, GetSingleProgramPayload, UpdateProgramPayload,
+                AddProgramPayload, AddRpcPayload, DeleteProgramQuery, GetSingleProgramPayload,
+                UpdateProgramPayload,
             },
             common::PaginationQuery,
         },
@@ -26,11 +29,12 @@ use axum::{
     response::NoContent,
     routing::{get, post},
 };
-use crate::indexer::rpc::AccountFilter;
 use sea_orm::{
     ActiveModelTrait, ActiveValue,
     ActiveValue::{NotSet, Set, Unchanged},
-    ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter, QueryOrder, SelectExt,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, ModelTrait,
+    QueryFilter, QueryOrder, QuerySelect, QueryTrait, SqlErr, TransactionTrait,
+    sea_query::Expr,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -51,9 +55,27 @@ fn account_filters_value(
     }
 }
 
+/// A `memcmp` never matches past the end of an account's data, so an offset beyond the largest
+/// account the runtime allows can only be a typo.
+const MAX_SCAN_PARTITION_OFFSET: i32 = 10 * 1024 * 1024;
+
+fn scan_partition_offset_value(
+    offset: Option<Option<i32>>,
+) -> Result<ActiveValue<Option<i32>>, SvmIndexerError> {
+    match offset {
+        Some(Some(offset)) if !(0..=MAX_SCAN_PARTITION_OFFSET).contains(&offset) => {
+            Err(SvmIndexerError::BadInput(format!(
+                "scan_partition_offset must be between 0 and {MAX_SCAN_PARTITION_OFFSET}!"
+            )))
+        }
+        Some(offset) => Ok(Set(offset)),
+        None => Ok(NotSet),
+    }
+}
+
 async fn get_or_add_rpc(
     state: &AppState,
-    rpc_id: &Option<u16>,
+    rpc_id: &Option<i32>,
     rpc_url: &Option<AddRpcPayload>,
 ) -> Result<Option<rpcs::Model>, SvmIndexerError> {
     if let Some(rpc_id) = *rpc_id {
@@ -74,10 +96,10 @@ async fn get_or_add_rpc(
         };
         Ok(Some(rpc))
     } else if let Some(rpc) = rpc_url {
-        let mut conditions = Condition::all().add(rpcs::Column::HttpUrl.ilike(&rpc.http_url));
+        let mut conditions = Condition::all().add(rpcs::Column::HttpUrl.eq(&rpc.http_url));
 
         if let Some(ws_url) = &rpc.ws_url {
-            conditions = conditions.add(rpcs::Column::WsUrl.ilike(ws_url));
+            conditions = conditions.add(rpcs::Column::WsUrl.eq(ws_url));
         }
         let maybe_found_rpc = rpcs::Entity::find()
             .filter(conditions)
@@ -90,7 +112,7 @@ async fn get_or_add_rpc(
 
         Ok(Some(match maybe_found_rpc {
             Some(found_rpc) => found_rpc,
-            _ => add_rpc(&state, rpc.http_url.clone(), rpc.ws_url.clone()).await?,
+            _ => add_rpc(state, rpc.http_url.clone(), rpc.ws_url.clone()).await?,
         }))
     } else {
         Ok(None)
@@ -117,6 +139,9 @@ async fn add_program_handler(
         start_slot: payload.start_slot.map_or(NotSet, |ss| Set(Some(ss as i64))),
         name: payload.name.map_or(NotSet, |name| Set(Some(name))),
         account_filters: account_filters_value(payload.account_filters)?,
+        scan_partition_offset: scan_partition_offset_value(
+            payload.scan_partition_offset.map(Some),
+        )?,
         ..Default::default()
     };
 
@@ -133,13 +158,16 @@ async fn add_program_handler(
         let _ = tx.send(ProgramCommand::Start(program.id)).await;
     }
 
-    Ok(ApiResponse::created(ProgramWithRpcResponse { program, rpc }))
+    Ok(ApiResponse::created(ProgramWithRpcResponse {
+        program,
+        rpc,
+    }))
 }
 
 /// Flips a program's `active` flag and tells the supervisor to start or stop its indexer task.
 async fn set_program_activation(
     state: &AppState,
-    program_id: u16,
+    program_id: i32,
     active: bool,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     let found = programs::Entity::find_by_id(program_id)
@@ -154,7 +182,9 @@ async fn set_program_activation(
             )
         })?;
     let Some((program, rpc)) = found else {
-        return Err(SvmIndexerError::ItemNotFound(String::from("No such program!")));
+        return Err(SvmIndexerError::ItemNotFound(String::from(
+            "No such program!",
+        )));
     };
 
     if program.active != active {
@@ -190,21 +220,21 @@ async fn set_program_activation(
 
 async fn activate_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     set_program_activation(&state, program_id, true).await
 }
 
 async fn deactivate_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     set_program_activation(&state, program_id, false).await
 }
 
 async fn get_single_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Query(GetSingleProgramPayload { ignore_unknown_rpc }): Query<GetSingleProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     let possible_program = programs::Entity::find_by_id(program_id)
@@ -257,9 +287,38 @@ async fn get_programs_handler(
     )))
 }
 
+/// On RPC change, if carried onto a shorter chain, the old rows would reject every
+/// write from the new one forever. The next run's scan rebuilds them.
+async fn drop_account_snapshots<C: ConnectionTrait>(
+    db: &C,
+    program_id: i32,
+) -> Result<(), SvmIndexerError> {
+    program_events::Entity::update_many()
+        .col_expr(
+            program_events::Column::ProgramAccountId,
+            Expr::value(Option::<i64>::None),
+        )
+        .filter(program_events::Column::ProgramId.eq(program_id))
+        .exec(db)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error(
+                "Failed detaching the program's events from its accounts!",
+                err,
+            )
+        })?;
+
+    program_accounts::Entity::delete_many()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .exec(db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed dropping the program's accounts!", err))?;
+    Ok(())
+}
+
 async fn update_program_handler(
     State(state): State<AppState>,
-    Path(program_id): Path<u16>,
+    Path(program_id): Path<i32>,
     Json(payload): Json<UpdateProgramPayload>,
 ) -> FinalResponse<ProgramWithRpcResponse> {
     if payload.is_empty() {
@@ -268,8 +327,8 @@ async fn update_program_handler(
         )));
     }
 
-    if !programs::Entity::find_by_id(program_id)
-        .exists(&state.db)
+    let found = programs::Entity::find_by_id(program_id)
+        .one(&state.db)
         .await
         .map_err(|err| {
             SvmIndexerError::db_error_with_id(
@@ -277,12 +336,12 @@ async fn update_program_handler(
                 err,
                 program_id as u64,
             )
-        })?
-    {
+        })?;
+    let Some(current) = found else {
         return Err(SvmIndexerError::ItemNotFound(
             "Program not found!".to_owned(),
         ));
-    }
+    };
     let address = if let Some(address) = payload.address {
         Set(address
             .parse::<Pubkey>()
@@ -297,8 +356,17 @@ async fn update_program_handler(
         NotSet
     };
     let changed_rpc = get_or_add_rpc(&state, &payload.rpc_id, &payload.rpc_url).await?;
+    // the slot fields are numbered in the old network's space; carried onto a shorter chain they
+    // leave the catch-up floor above every signature the program will ever see there
+    let repointed = changed_rpc
+        .as_ref()
+        .is_some_and(|rpc| rpc.id != current.rpc_id);
+    let txn =
+        state.db.begin().await.map_err(|err| {
+            SvmIndexerError::db_error("Failed opening the update transaction!", err)
+        })?;
     let program = programs::ActiveModel {
-        id: Unchanged(program_id as i32),
+        id: Unchanged(program_id),
         address,
         name: payload.name.map_or(NotSet, |name| {
             let new_name = name.trim().to_owned();
@@ -309,10 +377,17 @@ async fn update_program_handler(
             }
         }),
         rpc_id: changed_rpc.clone().map_or(NotSet, |nr| Set(nr.id)),
+        start_slot: if repointed { Set(None) } else { NotSet },
+        last_processed_slot: if repointed { Set(None) } else { NotSet },
+        last_processed_at: if repointed { Set(None) } else { NotSet },
+        // the frontier names a signature of the old chain; the new node cannot page on from it
+        backfill_slot: if repointed { Set(None) } else { NotSet },
+        backfill_cursor: if repointed { Set(None) } else { NotSet },
         account_filters: account_filters_value(payload.account_filters)?,
+        scan_partition_offset: scan_partition_offset_value(payload.scan_partition_offset)?,
         ..Default::default()
     }
-    .update(&state.db)
+    .update(&txn)
     .await
     .map_err(|err| {
         SvmIndexerError::db_error_with_id(
@@ -321,13 +396,25 @@ async fn update_program_handler(
             program_id as u64,
         )
     })?;
+    if repointed {
+        drop_account_snapshots(&txn, program_id).await?;
+    }
+    txn.commit()
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed committing the program update!", err))?;
+
+    // without this the old task keeps ticking on the old client and rewrites the cursor just cleared
+    if repointed && let Some(tx) = &state.supervisor_tx {
+        let _ = tx.send(ProgramCommand::Stop(program_id)).await;
+        let _ = tx.send(ProgramCommand::Start(program_id)).await;
+    }
 
     if let Some(rpc) = changed_rpc {
         return Ok(ApiResponse::ok(ProgramWithRpcResponse { program, rpc }));
     }
     let rpc_loaded = program.find_related(rpcs::Entity).one(&state.db).await;
     // Since the update action has already happened successfully, throwing error status doesnt seem rational
-    let final_rpc_id = (&program).rpc_id.clone(); // prevent move errors on error handling section below!
+    let final_rpc_id = program.rpc_id; // prevent move errors on error handling section below!
     Ok(ApiResponse::ok(ProgramWithRpcResponse {
         program,
         rpc: if let Ok(rpc_maybe) = &rpc_loaded
@@ -354,26 +441,99 @@ async fn update_program_handler(
     }))
 }
 
-async fn delete_program_handler(
-    State(state): State<AppState>,
-    Path(program_id): Path<u16>,
-) -> NoContentResponse {
-    if programs::Entity::delete_by_id(program_id)
-        .exec(&state.db)
+fn delete_program_error(err: DbErr, program_id: i32, forced: bool) -> SvmIndexerError {
+    match err.sql_err() {
+        // a purge only hits this by losing to its own still-running indexer, so "use force" would
+        // be advice the operator already took
+        Some(SqlErr::ForeignKeyConstraintViolation(_)) if forced => SvmIndexerError::Conflict(
+            "This program indexed new rows while it was being deleted! Deactivate it first, then \
+             delete it."
+                .to_owned(),
+        ),
+        Some(SqlErr::ForeignKeyConstraintViolation(_)) => SvmIndexerError::Conflict(
+            "This program has indexed data! Deactivate it instead, or delete it with force to drop \
+             its accounts, transactions and events along with it."
+                .to_owned(),
+        ),
+        _ => SvmIndexerError::db_error_with_id(
+            "Something went wrong while deleting this program.",
+            err,
+            program_id as u64,
+        ),
+    }
+}
+
+async fn purge_program(db: &DatabaseConnection, program_id: i32) -> Result<u64, SvmIndexerError> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed opening the purge transaction!", err))?;
+
+    program_events::Entity::delete_many()
+        .filter(program_events::Column::ProgramId.eq(program_id))
+        .exec(&txn)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed deleting the program's events!", err))?;
+
+    program_accounts::Entity::delete_many()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .exec(&txn)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed deleting the program's accounts!", err))?;
+
+    let signatures = transactions::Entity::find()
+        .select_only()
+        .column(transactions::Column::Signature)
+        .filter(transactions::Column::ProgramId.eq(program_id));
+    transaction_accounts::Entity::delete_many()
+        .filter(transaction_accounts::Column::TxSignature.in_subquery(signatures.into_query()))
+        .exec(&txn)
         .await
         .map_err(|err| {
-            SvmIndexerError::db_error_with_id(
-                "Something went wrong while deleting this program.",
-                err,
-                program_id as u64,
-            )
-        })?
-        .rows_affected
-        == 0
-    {
+            SvmIndexerError::db_error("Failed deleting the program's transaction accounts!", err)
+        })?;
+
+    transactions::Entity::delete_many()
+        .filter(transactions::Column::ProgramId.eq(program_id))
+        .exec(&txn)
+        .await
+        .map_err(|err| {
+            SvmIndexerError::db_error("Failed deleting the program's transactions!", err)
+        })?;
+
+    let deleted = programs::Entity::delete_by_id(program_id)
+        .exec(&txn)
+        .await
+        .map_err(|err| delete_program_error(err, program_id, true))?;
+
+    txn.commit()
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed committing the purge!", err))?;
+    Ok(deleted.rows_affected)
+}
+
+async fn delete_program_handler(
+    State(state): State<AppState>,
+    Path(program_id): Path<i32>,
+    Query(DeleteProgramQuery { force }): Query<DeleteProgramQuery>,
+) -> NoContentResponse {
+    let deleted = if force.unwrap_or(false) {
+        purge_program(&state.db, program_id).await?
+    } else {
+        programs::Entity::delete_by_id(program_id)
+            .exec(&state.db)
+            .await
+            .map_err(|err| delete_program_error(err, program_id, false))?
+            .rows_affected
+    };
+    if deleted == 0 {
         return Err(SvmIndexerError::ItemNotFound(
             "No such program found to delete".to_owned(),
         ));
+    }
+    // signalled after the row is gone, so a delete the foreign keys reject leaves its task running
+    if let Some(tx) = &state.supervisor_tx {
+        let _ = tx.send(ProgramCommand::Stop(program_id)).await;
     }
     Ok(NoContent)
 }

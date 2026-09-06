@@ -34,6 +34,7 @@ fn non_numeric_string_is_rejected() {
 
 #[test]
 fn out_of_range_value_is_rejected() {
-    let result = serde_json::from_value::<PaginationQuery>(serde_json::json!({"per_page": "70000"}));
+    let result =
+        serde_json::from_value::<PaginationQuery>(serde_json::json!({"per_page": "70000"}));
     assert!(result.is_err(), "70000 does not fit in a u16");
 }

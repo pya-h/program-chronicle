@@ -14,10 +14,9 @@ pub struct Model {
     #[sea_orm(unique_key = "slot")]
     pub slot: i64,
     pub block_time: Option<i64>,
+    pub status: String,
     pub created_at: DateTime,
     pub updated_at: DateTime,
-    #[sea_orm(has_many)]
-    pub account_states: HasMany<super::account_states::Entity>,
     #[sea_orm(has_many)]
     pub program_accounts: HasMany<super::program_accounts::Entity>,
     #[sea_orm(has_many)]

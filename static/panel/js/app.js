@@ -18,11 +18,13 @@ document.addEventListener('DOMContentLoaded', () => {
     let overlay = null;
     let isUnlocking = false;
 
-    // Persisted appearance preferences (theme / accent / animations), applied to
+    // Persisted preferences (theme / accent / animations / page size), applied to
     // the document root and reflected into the Settings controls when present.
     const Prefs = (() => {
-        const KEYS = { theme: 'umbra-theme', accent: 'umbra-accent', anim: 'umbra-anim' };
-        const DEFAULTS = { theme: 'dark', accent: 'blue', anim: 'on' };
+        const KEYS = { theme: 'umbra-theme', accent: 'umbra-accent', anim: 'umbra-anim', pageSize: 'umbra-page-size' };
+        const DEFAULTS = { theme: 'dark', accent: 'blue', anim: 'on', pageSize: '20' };
+        // the api clamps `per_page` to this range, so anything outside it is silently ignored
+        const PAGE_SIZE_MIN = 1, PAGE_SIZE_MAX = 100;
         const ACCENTS = {
             blue:    { rgb: '59, 130, 246',  c400: '#60a5fa', c500: '#3b82f6', c600: '#2563eb', c700: '#1d4ed8' },
             violet:  { rgb: '139, 92, 246',  c400: '#a78bfa', c500: '#8b5cf6', c600: '#7c3aed', c700: '#6d28d9' },
@@ -55,6 +57,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function applyAll() { applyTheme(); applyAccent(); applyAnim(); }
 
+        function clampPageSize(raw) {
+            const size = parseInt(raw, 10);
+            if (!Number.isFinite(size)) return parseInt(DEFAULTS.pageSize, 10);
+            return Math.min(PAGE_SIZE_MAX, Math.max(PAGE_SIZE_MIN, size));
+        }
+
+        function pageSize() { return clampPageSize(get('pageSize')); }
+
         function reflect() {
             const panel = document.getElementById('settings-panel');
             if (!panel) return;
@@ -68,17 +78,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 sw.classList.toggle('on', on);
                 sw.setAttribute('aria-checked', String(on));
             }
+            const size = panel.querySelector('[data-set-page-size]');
+            if (size) size.value = pageSize();
         }
 
         function setTheme(v) { localStorage.setItem(KEYS.theme, v); applyTheme(); reflect(); }
         function setAccent(v) { localStorage.setItem(KEYS.accent, v); applyAccent(); reflect(); }
         function setAnim(on) { localStorage.setItem(KEYS.anim, on ? 'on' : 'off'); applyAnim(); reflect(); }
+        function setPageSize(v) { localStorage.setItem(KEYS.pageSize, String(clampPageSize(v))); reflect(); }
         function toggleTheme() { setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
         function reset() { Object.values(KEYS).forEach(k => localStorage.removeItem(k)); applyAll(); reflect(); }
 
         media.addEventListener('change', () => { if (get('theme') === 'system') applyTheme(); });
 
-        return { setTheme, setAccent, setAnim, toggleTheme, reset, applyAll, reflect };
+        return { setTheme, setAccent, setAnim, setPageSize, pageSize, toggleTheme, reset, applyAll, reflect };
     })();
 
     Prefs.applyAll();
@@ -96,9 +109,50 @@ document.addEventListener('DOMContentLoaded', () => {
         const resetBtn = e.target.closest('[data-reset-prefs]');
         if (resetBtn) {
             Prefs.reset();
+            reloadPagedSections();
             showToast('Preferences reset to defaults.', 'info');
         }
     });
+
+    document.body.addEventListener('change', (e) => {
+        const sizeInput = e.target.closest('[data-set-page-size]');
+        if (!sizeInput) return;
+        Prefs.setPageSize(sizeInput.value);
+        reloadPagedSections();
+        showToast(`Showing ${Prefs.pageSize()} items per page.`, 'info');
+    });
+
+    // back to page 1 on every list: the old cursor can sit past the end at a larger size
+    function reloadPagedSections() {
+        [pdasList, txList, eventsList].forEach(list => list?.reload());
+    }
+
+    // Background refresh for the two sections that watch a moving target. Only one timer lives at
+    // a time: sections are swapped, not stacked, so the outgoing one's DOM is already gone.
+    const DASHBOARD_POLL_MS = 15000;
+    const MONITORING_POLL_MS = 8000;
+    let sectionPoll = null;
+    let sectionPollTick = null;
+
+    function stopSectionPoll() {
+        if (sectionPoll) clearInterval(sectionPoll);
+        sectionPoll = null;
+        sectionPollTick = null;
+    }
+
+    function startSectionPoll(tick, everyMs) {
+        stopSectionPoll();
+        sectionPollTick = tick;
+        // a hidden tab has nobody reading it, and browsers throttle its timers anyway
+        sectionPoll = setInterval(() => { if (!document.hidden) tick(); }, everyMs);
+    }
+
+    // coming back to the tab should not wait out the rest of the interval
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) sectionPollTick?.();
+    });
+
+    window.addEventListener('pagehide', stopSectionPoll);
 
     setTimeout(() => {
         appLoader.classList.add('hidden');
@@ -437,12 +491,26 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    // Naive-UTC timestamps arrive without a zone; pin them to UTC before diffing.
-    function formatRelativeTime(raw) {
-        if (!raw) return '—';
+    // Naive-UTC timestamps arrive without a zone; pin them to UTC before reading them back.
+    function parseUtc(raw) {
+        if (!raw) return null;
         const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}Z`;
-        const then = new Date(iso).getTime();
-        if (!Number.isFinite(then)) return raw;
+        const at = new Date(iso).getTime();
+        return Number.isFinite(at) ? at : null;
+    }
+
+    function formatTimestamp(raw) {
+        const at = parseUtc(raw);
+        return at == null ? (raw || '—') : new Date(at).toISOString();
+    }
+
+    function formatBlockTime(seconds) {
+        return seconds != null ? new Date(seconds * 1000).toISOString() : '—';
+    }
+
+    function formatRelativeTime(raw) {
+        const then = parseUtc(raw);
+        if (then == null) return raw || '—';
         const sec = Math.round((Date.now() - then) / 1000);
         if (sec < 60) return 'just now';
         const min = Math.round(sec / 60);
@@ -513,6 +581,47 @@ document.addEventListener('DOMContentLoaded', () => {
         return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     }
 
+    function base64ByteLength(b64) {
+        if (!b64) return 0;
+        const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+        return Math.floor(b64.length / 4) * 3 - padding;
+    }
+
+    // Loads a `detail-data` block with its base64 payload and resets the toggle/size that name it.
+    function setDataBlock(id, b64) {
+        const dataEl = document.getElementById(id);
+        if (!dataEl) return;
+        dataEl.dataset.b64 = b64 || '';
+        dataEl.dataset.mode = 'base64';
+        dataEl.textContent = b64 || '(empty)';
+        const toggle = document.querySelector(`[data-hex-toggle="${id}"]`);
+        if (toggle) toggle.textContent = 'Show hex';
+        const size = document.querySelector(`[data-size-for="${id}"]`);
+        if (size) {
+            const bytes = base64ByteLength(b64);
+            size.textContent = bytes ? `${formatCount(bytes)} byte${bytes === 1 ? '' : 's'}` : '';
+        }
+    }
+
+    // One handler for every data block: they all key off the id the button names.
+    document.body.addEventListener('click', (e) => {
+        const toggle = e.target.closest('[data-hex-toggle]');
+        if (!toggle) return;
+        const dataEl = document.getElementById(toggle.dataset.hexToggle);
+        if (!dataEl) return;
+        const b64 = dataEl.dataset.b64 || '';
+        if (dataEl.dataset.mode === 'base64') {
+            const bytes = b64 ? base64ToBytes(b64) : new Uint8Array();
+            dataEl.textContent = bytes.length ? bytesToHex(bytes) : '(empty)';
+            dataEl.dataset.mode = 'hex';
+            toggle.textContent = 'Show base64';
+        } else {
+            dataEl.textContent = b64 || '(empty)';
+            dataEl.dataset.mode = 'base64';
+            toggle.textContent = 'Show hex';
+        }
+    });
+
     function hexToBytes(hex) {
         const clean = hex.trim().replace(/^0x/i, '');
         if (clean.length === 0 || clean.length % 2 !== 0 || /[^0-9a-f]/i.test(clean)) return null;
@@ -531,7 +640,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Reusable list-section scaffold shared by every paginated panel section
-    // (pdas, history, transactions, events). It owns the page cursor, merges the
+    // (pdas, transactions, events). It owns the page cursor, merges the
     // caller's filters/slot bounds with the page params, fetches the standard
     // { data, total, pages } envelope, and drives skeleton / empty / error / pager
     // states against the section's own elements.
@@ -539,13 +648,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const {
             rootId, emptyId, countId, pagerId,
             endpoint,                 // string | () => string|null (path, no query)
-            perPage = 20,
             renderRows,               // (items) => html
             countText,                // (total) => string
             params = () => ({}),      // () => extra query params (filters + slot bounds)
         } = config;
 
         let page = 1;
+        // Bumped per load so a slow response from an abandoned filter cannot land on top of a newer one.
+        let latest = 0;
         const el = (id) => (id ? document.getElementById(id) : null);
         const resolveEndpoint = () => (typeof endpoint === 'function' ? endpoint() : endpoint);
 
@@ -580,8 +690,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (empty) empty.hidden = true;
             if (count) count.textContent = 'Loading…';
 
-            const query = buildQuery({ ...params(), page, per_page: perPage });
+            // read per load, so changing the setting takes effect without a reload
+            const query = buildQuery({ ...params(), page, per_page: Prefs.pageSize() });
+            const token = ++latest;
             const res = await apiCall('GET', `${path}${query}`);
+            if (token !== latest) return;
             if (!res.ok) {
                 root.innerHTML = '';
                 if (empty) empty.hidden = false;
@@ -597,6 +710,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (count) count.textContent = countText ? countText(total) : `${total} item${total === 1 ? '' : 's'}`;
 
             if (rows.length === 0) {
+                // the cursor outlives its data (a purge, a narrower filter), and clearing the pager
+                // on an out-of-range page would strand the section with no way back
+                if (page > 1) {
+                    page = 1;
+                    return load();
+                }
                 root.innerHTML = '';
                 if (empty) empty.hidden = false;
                 renderPager(0);
@@ -988,6 +1107,7 @@ document.addEventListener('DOMContentLoaded', () => {
         bindAddProgramForm();
         bindEditProgramForm();
         bindDeleteProgramConfirm();
+        bindRepointProgramConfirm();
         bindProgramRpcModeSwitch('program-add');
         bindProgramRpcModeSwitch('program-edit');
     }
@@ -1053,7 +1173,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                 </div>
                 <div class="program-status">
-                    <span class="status-badge ${active ? (slot ? 'indexed' : 'pending') : 'paused'}">${active ? (slot ? `Slot ${escapeHtml(slot)}` : 'Pending') : 'Paused'}</span>
+                    <span class="status-badge ${active ? (slot ? 'indexed' : 'pending') : 'paused'}">${active ? (slot ? `Slot ${escapeHtml(formatCount(slot))}` : 'Pending') : 'Paused'}</span>
                 </div>
                 <div class="program-actions">
                     <button type="button" class="program-action-btn ${active ? 'warn' : 'success'}" data-program-id="${escapeHtml(program.id)}" data-active="${active}" data-action="toggle-active" aria-label="${toggleLabel}" title="${toggleLabel}">
@@ -1147,6 +1267,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Reads a scan-partition-offset field. Empty → { value: null } (unset); otherwise a
+    // non-negative integer, or { error }.
+    function parseScanPartitionOffset(fieldId) {
+        const raw = (document.getElementById(fieldId)?.value || '').trim();
+        if (!raw) return { value: null };
+        const offset = parseInt(raw, 10);
+        if (!Number.isFinite(offset) || offset < 0) {
+            return { error: 'Scan partition offset must be a non-negative integer.' };
+        }
+        return { value: offset };
+    }
+
     function bindAddProgramForm() {
         const form = document.getElementById('program-add-form');
         if (!form) return;
@@ -1174,6 +1306,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return showFieldFeedback(feedback, 'Select an existing RPC or provide a new RPC URL.');
             }
 
+            const offset = parseScanPartitionOffset('program-add-scan-partition-offset');
+            if (offset.error) return showFieldFeedback(feedback, offset.error);
+
             const filters = parseAccountFilters('program-add-account-filters');
             if (filters.error) return showFieldFeedback(feedback, filters.error);
 
@@ -1181,6 +1316,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const payload = { address: address.value, ...rpcPayload };
             if (name) payload.name = name;
             if (startSlot !== null) payload.start_slot = startSlot;
+            if (offset.value !== null) payload.scan_partition_offset = offset.value;
             if (filters.value !== undefined) payload.account_filters = filters.value;
 
             setBtnLoading(btn, true);
@@ -1240,6 +1376,7 @@ document.addEventListener('DOMContentLoaded', () => {
             address,
             name: program.name || '',
             rpc_id: String(program.rpc_id || ''),
+            scan_partition_offset: program.scan_partition_offset ?? null,
             // compact form for change detection; the textarea shows a pretty-printed copy
             account_filters: program.account_filters ? JSON.stringify(program.account_filters) : ''
         };
@@ -1273,6 +1410,10 @@ document.addEventListener('DOMContentLoaded', () => {
         idEl.value = program.id;
         document.getElementById('program-edit-address').value = programEditOriginal.address;
         document.getElementById('program-edit-name').value = programEditOriginal.name;
+        const offsetField = document.getElementById('program-edit-scan-partition-offset');
+        if (offsetField) {
+            offsetField.value = programEditOriginal.scan_partition_offset ?? '';
+        }
         const filtersField = document.getElementById('program-edit-account-filters');
         if (filtersField) {
             filtersField.value = program.account_filters
@@ -1283,6 +1424,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (rpcSelect) rpcSelect.value = '';
 
         resetProgramRpcMode('program-edit');
+        pendingProgramEdit = null; // a repoint the operator backed out of must not follow the next edit
         showFieldFeedback(document.getElementById('program-edit-feedback'), '');
         openModal('program-edit-modal');
     }
@@ -1323,6 +1465,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 payload.rpc_url = rpcPayload.rpc_url;
             }
 
+            const offset = parseScanPartitionOffset('program-edit-scan-partition-offset');
+            if (offset.error) return showFieldFeedback(feedback, offset.error);
+            // an explicit null clears the column; absent leaves it alone
+            if (offset.value !== programEditOriginal.scan_partition_offset) {
+                payload.scan_partition_offset = offset.value;
+            }
+
             const filters = parseAccountFilters('program-edit-account-filters');
             if (filters.error) return showFieldFeedback(feedback, filters.error);
             if (filters.value !== undefined) {
@@ -1339,14 +1488,47 @@ document.addEventListener('DOMContentLoaded', () => {
                 return showFieldFeedback(feedback, 'Change at least one field to save.');
             }
 
-            setBtnLoading(btn, true);
-            const res = await apiCall('PATCH', `/admin/programs/${programEditTargetId}`, payload);
-            setBtnLoading(btn, false);
+            // a repoint clears the start slot and the cursor server-side, so confirm it first
+            if (payload.rpc_id || payload.rpc_url) {
+                pendingProgramEdit = payload;
+                showFieldFeedback(document.getElementById('program-repoint-feedback'), '');
+                return openModal('program-repoint-modal');
+            }
+            await saveProgramEdit(payload, feedback, btn, 'Program updated successfully.');
+        });
+    }
 
-            if (!res.ok) return showFieldFeedback(feedback, res.message);
-            closeModal('program-edit-modal');
-            showToast('Program updated successfully.', 'success');
-            loadProgramList();
+    let pendingProgramEdit = null;
+
+    async function saveProgramEdit(payload, feedback, btn, message) {
+        setBtnLoading(btn, true);
+        const res = await apiCall('PATCH', `/admin/programs/${programEditTargetId}`, payload);
+        setBtnLoading(btn, false);
+
+        if (!res.ok) {
+            showFieldFeedback(feedback, res.message);
+            return false;
+        }
+        closeModal('program-repoint-modal');
+        closeModal('program-edit-modal');
+        showToast(message, 'success');
+        loadProgramList();
+        return true;
+    }
+
+    function bindRepointProgramConfirm() {
+        const btn = document.getElementById('program-repoint-confirm');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            if (!pendingProgramEdit) return;
+            // held until it lands, so a failed save leaves the confirm button usable
+            const saved = await saveProgramEdit(
+                pendingProgramEdit,
+                document.getElementById('program-repoint-feedback'),
+                btn,
+                'Program moved to the new RPC; indexing restarts from its head.'
+            );
+            if (saved) pendingProgramEdit = null;
         });
     }
 
@@ -1363,6 +1545,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const address = row?.dataset?.programAddress || '';
             detail.textContent = `${name}${address ? ` • ${address}` : ''}`;
         }
+        const force = document.getElementById('program-delete-force');
+        if (force) force.checked = false; // never carry a previous confirmation onto another program
         showFieldFeedback(document.getElementById('program-delete-feedback'), '');
         openModal('program-delete-modal');
     });
@@ -1374,8 +1558,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!deleteProgramTargetId) return;
             const feedback = document.getElementById('program-delete-feedback');
             showFieldFeedback(feedback, '');
+            const force = document.getElementById('program-delete-force')?.checked;
             setBtnLoading(btn, true);
-            const res = await apiCall('DELETE', `/admin/programs/${deleteProgramTargetId}`);
+            const res = await apiCall(
+                'DELETE',
+                `/admin/programs/${deleteProgramTargetId}${force ? '?force=true' : ''}`
+            );
             setBtnLoading(btn, false);
             if (!res.ok) return showFieldFeedback(feedback, res.message);
             deleteProgramTargetId = null;
@@ -1434,12 +1622,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Dashboard section ---------------------------------------------------------
     function initDashboardSection() {
-        loadDashboardStats();
-        loadDashboardActivity();
-        document.getElementById('dashboard-refresh')?.addEventListener('click', () => {
-            loadDashboardStats();
-            loadDashboardActivity();
-        });
+        const refresh = (quiet) => { loadDashboardStats(quiet); loadDashboardActivity(quiet); };
+        refresh(false);
+        document.getElementById('dashboard-refresh')?.addEventListener('click', () => refresh(false));
+        startSectionPoll(() => refresh(true), DASHBOARD_POLL_MS);
     }
 
     function formatCount(value) {
@@ -1447,15 +1633,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return Number.isFinite(num) ? num.toLocaleString('en-US') : '—';
     }
 
-    async function loadDashboardStats() {
+    // `quiet` marks a background refresh: it must not wipe good numbers off the screen or raise a
+    // toast on every failed tick.
+    async function loadDashboardStats(quiet = false) {
         const setStat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        const statIds = ['stat-programs', 'stat-rpcs', 'stat-slots', 'stat-transactions', 'stat-events', 'stat-accounts'];
+        const statIds = ['stat-programs', 'stat-rpcs', 'stat-slots', 'stat-transactions', 'stat-events', 'stat-accounts', 'stat-reorged-slots', 'stat-dropped-transactions'];
         const root = document.getElementById('dash-progress-root');
         const count = document.getElementById('dash-progress-count');
         const empty = document.getElementById('dash-progress-empty');
 
         const res = await apiCall('GET', '/admin/stats');
         if (!res.ok) {
+            if (quiet) return;
             statIds.forEach(id => setStat(id, '—'));
             if (root) root.innerHTML = '';
             if (count) count.textContent = 'Failed to load';
@@ -1471,7 +1660,10 @@ document.addEventListener('DOMContentLoaded', () => {
         setStat('stat-slots', formatCount(est.slots));
         setStat('stat-transactions', formatCount(est.transactions));
         setStat('stat-events', formatCount(est.events));
-        setStat('stat-accounts', formatCount(est.cached_accounts));
+        setStat('stat-accounts', formatCount(est.accounts));
+        const settled = stats.settlement || {};
+        setStat('stat-reorged-slots', formatCount(settled.reorged_slots));
+        setStat('stat-dropped-transactions', formatCount(settled.dropped_transactions));
 
         const programs = stats.per_program || [];
         if (count) count.textContent = `${programs.length} program${programs.length === 1 ? '' : 's'}`;
@@ -1499,7 +1691,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    async function loadDashboardActivity() {
+    async function loadDashboardActivity(quiet = false) {
         const root = document.getElementById('dash-activity-root');
         const count = document.getElementById('dash-activity-count');
         const empty = document.getElementById('dash-activity-empty');
@@ -1507,6 +1699,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const res = await apiCall('GET', `/transactions${buildQuery({ page: 1, per_page: 8 })}`);
         if (!res.ok) {
+            if (quiet) return;
             root.innerHTML = '';
             if (count) count.textContent = 'Failed to load';
             if (empty) empty.hidden = false;
@@ -1541,7 +1734,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    // Shared program picker used by the read-API sections (pdas, history,
+    // Shared program picker used by the read-API sections (pdas,
     // transactions, events). Reuses the admin program list and caches it.
     async function populateProgramSelect(selectId, { includeAll = false } = {}) {
         const select = document.getElementById(selectId);
@@ -1571,8 +1764,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // PDAs section --------------------------------------------------------------
     let pdasList = null;
 
-    function initPdasSection() {
-        populateProgramSelect('pdas-program');
+    async function initPdasSection() {
+        // held rather than awaited here so the filter controls bind before the fetch resolves
+        const populated = populateProgramSelect('pdas-program');
         pdasList = createListSection({
             rootId: 'pdas-root', emptyId: 'pdas-empty', countId: 'pdas-count', pagerId: 'pdas-pager',
             endpoint: () => {
@@ -1598,6 +1792,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
 
+        await populated; // the select drives `endpoint()`; loading first would ask for nothing
         pdasList.load();
     }
 
@@ -1616,7 +1811,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function openAccountDetail(address) {
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
         ['pdas-detail-address', 'pdas-detail-owner', 'pdas-detail-lamports', 'pdas-detail-slot',
-         'pdas-detail-wv', 'pdas-detail-rent', 'pdas-detail-time'].forEach(id => set(id, '…'));
+         'pdas-detail-wv', 'pdas-detail-rent', 'pdas-detail-time', 'pdas-detail-created',
+         'pdas-detail-updated'].forEach(id => set(id, '…'));
         set('pdas-detail-data', 'Loading…');
         openModal('pdas-detail-modal');
 
@@ -1633,96 +1829,23 @@ document.addEventListener('DOMContentLoaded', () => {
         set('pdas-detail-slot', formatCount(acc.slot));
         set('pdas-detail-wv', formatCount(acc.write_version));
         set('pdas-detail-rent', acc.rent_epoch != null ? formatCount(acc.rent_epoch) : '—');
-        set('pdas-detail-time', acc.block_time != null ? new Date(acc.block_time * 1000).toISOString() : '—');
-
-        const dataEl = document.getElementById('pdas-detail-data');
-        if (dataEl) {
-            dataEl.dataset.b64 = acc.data || '';
-            dataEl.dataset.mode = 'base64';
-            dataEl.textContent = acc.data || '(empty)';
-        }
-        const toggle = document.getElementById('pdas-detail-data-toggle');
-        if (toggle) toggle.textContent = 'Show hex';
+        set('pdas-detail-time', formatBlockTime(acc.block_time));
+        set('pdas-detail-created', formatTimestamp(acc.created_at));
+        set('pdas-detail-updated', formatTimestamp(acc.updated_at));
+        setDataBlock('pdas-detail-data', acc.data);
     }
 
     // Delegated once at module scope so re-swapping the section never stacks them.
     document.body.addEventListener('click', (e) => {
         const row = e.target.closest('.dash-row.clickable[data-account]');
-        if (row) return openAccountDetail(row.dataset.account);
-
-        const toggle = e.target.closest('#pdas-detail-data-toggle');
-        if (toggle) {
-            const dataEl = document.getElementById('pdas-detail-data');
-            if (!dataEl) return;
-            const b64 = dataEl.dataset.b64 || '';
-            if (dataEl.dataset.mode === 'base64') {
-                const bytes = b64 ? base64ToBytes(b64) : new Uint8Array();
-                dataEl.textContent = bytes.length ? bytesToHex(bytes) : '(empty)';
-                dataEl.dataset.mode = 'hex';
-                toggle.textContent = 'Show base64';
-            } else {
-                dataEl.textContent = b64 || '(empty)';
-                dataEl.dataset.mode = 'base64';
-                toggle.textContent = 'Show hex';
-            }
-        }
+        if (row) openAccountDetail(row.dataset.account);
     });
-
-    // History section -----------------------------------------------------------
-    let historyList = null;
-
-    function initHistorySection() {
-        historyList = createListSection({
-            rootId: 'history-root', emptyId: 'history-empty', countId: 'history-count', pagerId: 'history-pager',
-            endpoint: () => {
-                const addr = document.getElementById('history-address')?.value.trim();
-                return addr ? `/accounts/${encodeURIComponent(addr)}/history` : null;
-            },
-            params: () => {
-                const from = document.getElementById('history-from')?.value.trim();
-                const to = document.getElementById('history-to')?.value.trim();
-                const p = {};
-                if (from) p.from_slot = from;
-                if (to) p.to_slot = to;
-                return p;
-            },
-            renderRows: (rows) => `<div class="history-list">${rows.map(renderHistoryRow).join('')}</div>`,
-            countText: (total) => `${formatCount(total)} state${total === 1 ? '' : 's'}`
-        });
-
-        const apply = () => historyList.reload();
-        document.getElementById('history-load')?.addEventListener('click', apply);
-        ['history-address', 'history-from', 'history-to'].forEach(id => {
-            document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
-        });
-        historyList.load();
-    }
-
-    function renderHistoryRow(s) {
-        const time = s.block_time != null ? new Date(s.block_time * 1000).toISOString() : '—';
-        const sig = s.tx_signature ? shortSig(s.tx_signature) : '—';
-        const preview = s.data ? `${s.data.slice(0, 48)}${s.data.length > 48 ? '…' : ''}` : '(empty)';
-        return `
-            <div class="history-row">
-                <span class="status-badge indexed history-slot">Slot ${escapeHtml(formatCount(s.slot))}</span>
-                <div class="history-body">
-                    <div class="history-meta">
-                        <span>wv ${escapeHtml(formatCount(s.write_version))}</span>
-                        <span>${escapeHtml(formatCount(s.lamports))} lamports</span>
-                        <span class="mono" title="${escapeHtml(s.tx_signature || '')}">${escapeHtml(sig)}</span>
-                        <span>${escapeHtml(time)}</span>
-                    </div>
-                    <div class="history-data mono" title="base64 data">${escapeHtml(preview)}</div>
-                </div>
-            </div>
-        `;
-    }
 
     // Transactions section ------------------------------------------------------
     let txList = null;
 
-    function initTxSection() {
-        populateProgramSelect('tx-program');
+    async function initTxSection() {
+        const populated = populateProgramSelect('tx-program');
         txList = createListSection({
             rootId: 'tx-root', emptyId: 'tx-empty', countId: 'tx-count', pagerId: 'tx-pager',
             endpoint: () => {
@@ -1767,6 +1890,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ['tx-from', 'tx-to'].forEach(id => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
+        await populated;
         txList.load();
     }
 
@@ -1792,7 +1916,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function openTxDetail(signature) {
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
         ['tx-detail-signature', 'tx-detail-payer', 'tx-detail-status', 'tx-detail-program',
-         'tx-detail-slot', 'tx-detail-fee', 'tx-detail-time'].forEach(id => set(id, '…'));
+         'tx-detail-slot', 'tx-detail-fee', 'tx-detail-time', 'tx-detail-created'].forEach(id => set(id, '…'));
         set('tx-detail-programs', '…');
         set('tx-detail-raw', 'Loading…');
         const errBlock = document.getElementById('tx-detail-error-block');
@@ -1819,7 +1943,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         set('tx-detail-slot', formatCount(tx.slot));
         set('tx-detail-fee', tx.fee != null ? `${formatCount(tx.fee)} lamports` : '—');
-        set('tx-detail-time', tx.block_time != null ? new Date(tx.block_time * 1000).toISOString() : '—');
+        set('tx-detail-time', formatBlockTime(tx.block_time));
+        set('tx-detail-created', formatTimestamp(tx.created_at));
         set('tx-detail-raw', tx.raw != null ? JSON.stringify(tx.raw, null, 2) : '(empty)');
         if (errBlock) {
             errBlock.hidden = tx.err == null;
@@ -1844,8 +1969,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return bytesToHex(bytes.subarray(0, 8));
     }
 
-    function initEventsSection() {
-        populateProgramSelect('ev-program');
+    async function initEventsSection() {
+        const populated = populateProgramSelect('ev-program');
         eventsList = createListSection({
             rootId: 'ev-root', emptyId: 'ev-empty', countId: 'ev-count', pagerId: 'ev-pager',
             endpoint: () => {
@@ -1877,6 +2002,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ['ev-discriminator', 'ev-signature', 'ev-from', 'ev-to'].forEach(id => {
             document.getElementById(id)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         });
+        await populated;
         eventsList.load();
     }
 
@@ -1899,42 +2025,17 @@ document.addEventListener('DOMContentLoaded', () => {
         set('ev-detail-discriminator', discriminatorHex(ev.data) || '—');
         set('ev-detail-logindex', ev.log_index);
         set('ev-detail-slot', formatCount(ev.slot));
-        set('ev-detail-time', ev.block_time != null ? new Date(ev.block_time * 1000).toISOString() : '—');
-
-        const dataEl = document.getElementById('ev-detail-data');
-        if (dataEl) {
-            dataEl.dataset.b64 = ev.data || '';
-            dataEl.dataset.mode = 'base64';
-            dataEl.textContent = ev.data || '(empty)';
-        }
-        const toggle = document.getElementById('ev-detail-data-toggle');
-        if (toggle) toggle.textContent = 'Show hex';
+        set('ev-detail-time', formatBlockTime(ev.block_time));
+        set('ev-detail-created', formatTimestamp(ev.created_at));
+        setDataBlock('ev-detail-data', ev.data);
         openModal('ev-detail-modal');
     }
 
     document.body.addEventListener('click', (e) => {
         const row = e.target.closest('.dash-row.clickable[data-event-idx]');
-        if (row) {
-            const ev = eventsCache[Number(row.dataset.eventIdx)];
-            if (ev) openEventDetail(ev);
-            return;
-        }
-        const toggle = e.target.closest('#ev-detail-data-toggle');
-        if (toggle) {
-            const dataEl = document.getElementById('ev-detail-data');
-            if (!dataEl) return;
-            const b64 = dataEl.dataset.b64 || '';
-            if (dataEl.dataset.mode === 'base64') {
-                const bytes = b64 ? base64ToBytes(b64) : new Uint8Array();
-                dataEl.textContent = bytes.length ? bytesToHex(bytes) : '(empty)';
-                dataEl.dataset.mode = 'hex';
-                toggle.textContent = 'Show base64';
-            } else {
-                dataEl.textContent = b64 || '(empty)';
-                dataEl.dataset.mode = 'base64';
-                toggle.textContent = 'Show hex';
-            }
-        }
+        if (!row) return;
+        const ev = eventsCache[Number(row.dataset.eventIdx)];
+        if (ev) openEventDetail(ev);
     });
 
     // Monitoring section --------------------------------------------------------
@@ -1942,29 +2043,41 @@ document.addEventListener('DOMContentLoaded', () => {
     let monEventSource = null;
     let monStreamType = 'accounts';
     let monStreamProgram = null;
+    // What each rendered row was built from, so a click can open it without refetching. Dropped
+    // with the row itself: the payload lives exactly as long as the line in the log.
+    const streamCache = new Map();
+    let streamSeq = 0;
 
     function initMonitoringSection() {
         populateProgramSelect('mon-stream-program');
         loadMonitoringStats();
-        document.getElementById('monitoring-refresh')?.addEventListener('click', loadMonitoringStats);
+        document.getElementById('monitoring-refresh')?.addEventListener('click', () => loadMonitoringStats());
         document.getElementById('mon-stream-toggle')?.addEventListener('click', toggleStream);
         document.getElementById('mon-stream-clear')?.addEventListener('click', clearStreamLog);
+        // the pickers otherwise keep naming a target the open stream is not on
+        ['mon-stream-program', 'mon-stream-type'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', () => { if (monEventSource) connectStream(); });
+        });
         // A section re-swap discards the old log DOM, so drop any live stream too.
         disconnectStream();
+        startSectionPoll(() => loadMonitoringStats(true), MONITORING_POLL_MS);
     }
 
-    async function loadMonitoringStats() {
+    async function loadMonitoringStats(quiet = false) {
         const root = document.getElementById('mon-progress-root');
         const count = document.getElementById('mon-progress-count');
         const empty = document.getElementById('mon-progress-empty');
         if (!root) return;
 
-        root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
-        if (empty) empty.hidden = true;
-        if (count) count.textContent = 'Loading…';
+        if (!quiet) {
+            root.innerHTML = `<div class="skeleton-table" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div></div>`;
+            if (empty) empty.hidden = true;
+            if (count) count.textContent = 'Loading…';
+        }
 
         const res = await apiCall('GET', '/admin/stats');
         if (!res.ok) {
+            if (quiet) return;
             root.innerHTML = '';
             if (count) count.textContent = 'Failed to load';
             if (empty) empty.hidden = false;
@@ -1980,25 +2093,41 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (empty) empty.hidden = true;
-        // Bars are scaled against the furthest program: without a chain tip there
-        // is no absolute target, so this shows relative fleet progress honestly.
-        const maxSlot = programs.reduce((m, p) => Math.max(m, p.last_processed_slot || 0), 0);
-        root.innerHTML = `<div class="progress-list">${programs.map(p => renderProgressBar(p, maxSlot)).join('')}</div>`;
+        root.innerHTML = `<div class="progress-list">${programs.map(renderProgressBar).join('')}</div>`;
     }
 
-    function renderProgressBar(p, maxSlot) {
+    const PHASES = {
+        backfilling: { label: 'Backfilling', badge: 'pending' },
+        syncing: { label: 'Syncing', badge: 'pending' },
+        live: { label: 'Live', badge: 'indexed' },
+        restarting: { label: 'Restarting', badge: 'failed' },
+    };
+
+    // How much of the program's own [start_slot, chain tip] range it has covered. Each bar is
+    // scaled to its own chain: two programs on different networks have unrelated slot numbers.
+    function progressPercent(p) {
+        const start = p.start_slot ?? 0;
+        const last = p.last_processed_slot;
+        const head = p.head_slot;
+        if (last == null || head == null || head <= start) return 0;
+        return Math.max(0, Math.min(100, Math.round(((last - start) / (head - start)) * 100)));
+    }
+
+    function renderProgressBar(p) {
         const name = p.name || `Program ${p.id}`;
         const last = p.last_processed_slot || 0;
-        const pct = maxSlot > 0 ? Math.round((last / maxSlot) * 100) : 0;
+        const pct = progressPercent(p);
         const started = p.start_slot != null ? `from ${formatCount(p.start_slot)}` : 'not started';
         const when = p.last_processed_at || 'never';
+        const phase = PHASES[p.phase] || { label: 'Stopped', badge: 'paused' };
         return `
             <div class="progress-item">
                 <div class="progress-head">
                     <span class="progress-name">${escapeHtml(name)}</span>
+                    <span class="status-badge ${phase.badge}">${escapeHtml(phase.label)}</span>
                     <span class="progress-slot mono">${last ? `Slot ${escapeHtml(formatCount(last))}` : 'Pending'}</span>
                 </div>
-                <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+                <div class="progress-track" title="${escapeHtml(p.head_slot != null ? `${pct}% · chain tip ${formatCount(p.head_slot)}` : 'Not indexing')}"><div class="progress-fill" style="width:${pct}%"></div></div>
                 <div class="progress-meta">
                     <span class="mono" title="${escapeHtml(p.address)}">${escapeHtml(p.address)}</span>
                     <span>${escapeHtml(started)} · ${escapeHtml(when)}</span>
@@ -2018,9 +2147,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!id) return showToast('Pick a program to stream.', 'info');
 
         disconnectStream();
+        // rows from two different programs in one log cannot be told apart
+        if (monStreamProgram !== id || monStreamType !== type) clearStreamLog();
         monStreamProgram = id;
         monStreamType = type;
-        document.getElementById('mon-stream-empty')?.setAttribute('hidden', '');
         setStreamStatus('pending', 'Connecting…');
 
         const es = new EventSource(`/sse/programs/${id}/${type}`);
@@ -2030,14 +2160,34 @@ document.addEventListener('DOMContentLoaded', () => {
         es.onerror = () => setStreamStatus('failed', 'Reconnecting…');
         es.addEventListener('account', (e) => pushStreamRow('account', safeJson(e.data)));
         es.addEventListener('event', (e) => pushStreamRow('event', safeJson(e.data)));
+        es.addEventListener('transaction', (e) => pushStreamRow('transaction', safeJson(e.data)));
         es.addEventListener('resync', (e) => handleResync(safeJson(e.data)));
         updateStreamButton();
+        updateStreamEmpty();
     }
 
     function disconnectStream() {
         if (monEventSource) { monEventSource.close(); monEventSource = null; }
         setStreamStatus('pending', 'Idle');
         updateStreamButton();
+        updateStreamEmpty();
+    }
+
+    // the log starts empty, so hiding this on connect leaves the card blank until the first change
+    // arrives — which on a quiet program is minutes
+    function updateStreamEmpty() {
+        const empty = document.getElementById('mon-stream-empty');
+        if (!empty) return;
+        const streaming = monEventSource != null;
+        empty.hidden = (document.getElementById('mon-stream-log')?.children.length || 0) > 0;
+        const title = document.getElementById('mon-stream-empty-title');
+        const text = document.getElementById('mon-stream-empty-text');
+        if (title) title.textContent = streaming ? 'Waiting for changes' : 'Not streaming';
+        if (text) {
+            text.textContent = streaming
+                ? 'Connected. Nothing has changed on this program yet.'
+                : 'Pick a program and stream type, then Connect to watch live changes.';
+        }
     }
 
     function updateStreamButton() {
@@ -2059,16 +2209,20 @@ document.addEventListener('DOMContentLoaded', () => {
     function clearStreamLog() {
         const log = document.getElementById('mon-stream-log');
         if (log) log.innerHTML = '';
-        const empty = document.getElementById('mon-stream-empty');
-        if (empty && !monEventSource) empty.hidden = false;
+        streamCache.clear();
+        updateStreamEmpty();
     }
 
     function appendStreamHtml(html) {
         const log = document.getElementById('mon-stream-log');
         if (!log) return;
-        document.getElementById('mon-stream-empty')?.setAttribute('hidden', '');
         log.insertAdjacentHTML('afterbegin', html);
-        while (log.children.length > STREAM_LOG_CAP) log.lastElementChild.remove();
+        while (log.children.length > STREAM_LOG_CAP) {
+            const dropped = log.lastElementChild;
+            streamCache.delete(dropped.dataset.streamIdx);
+            dropped.remove();
+        }
+        updateStreamEmpty();
     }
 
     function pushStreamRow(kind, payload, backfill = false) {
@@ -2077,14 +2231,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (kind === 'account') {
             title = escapeHtml(payload.address || '—');
             sub = `wv ${escapeHtml(formatCount(payload.write_version))}`;
+        } else if (kind === 'transaction') {
+            title = escapeHtml(shortSig(payload.signature));
+            const status = payload.success ? 'success' : 'failed';
+            sub = payload.fee != null ? `${status} · fee ${escapeHtml(formatCount(payload.fee))}` : status;
         } else {
             const disc = discriminatorHex(payload.data);
             title = disc ? escapeHtml(disc) : '(no data)';
             sub = escapeHtml(shortSig(payload.signature || payload.tx_signature));
         }
         const tag = backfill ? `${kind} · backfill` : kind;
+        const idx = String(++streamSeq);
+        streamCache.set(idx, { kind, payload, backfill });
         appendStreamHtml(`
-            <div class="stream-row">
+            <div class="stream-row clickable" data-stream-idx="${idx}" title="Show details">
                 <span class="stream-kind ${kind}${backfill ? ' backfill' : ''}">${escapeHtml(tag)}</span>
                 <div class="dash-row-main">
                     <span class="dash-row-title mono">${title}</span>
@@ -2095,8 +2255,79 @@ document.addEventListener('DOMContentLoaded', () => {
         `);
     }
 
-    // A lagged stream sends a `resync` frame with the last slot it delivered; we
-    // re-pull the missed window from the read API so nothing is silently dropped.
+    const STREAM_DETAIL_TITLES = {
+        account: 'Account change',
+        event: 'Program event',
+        transaction: 'Transaction',
+    };
+
+    function streamDetailBlock(label, value, { wide = false, mono = true } = {}) {
+        return `
+            <div class="rpc-detail-block${wide ? ' detail-span' : ''}">
+                <span class="rpc-detail-label">${escapeHtml(label)}</span>
+                <span class="rpc-detail-value${mono ? ' mono' : ''}">${escapeHtml(value)}</span>
+            </div>
+        `;
+    }
+
+    // Renders the streamed payload as-is — the account state is the value at that write version, not
+    // whatever the row holds now.
+    function openStreamDetail(entry) {
+        const { kind, payload, backfill } = entry;
+        const fields = document.getElementById('mon-stream-detail-fields');
+        if (!fields) return;
+
+        const heading = document.getElementById('mon-stream-detail-title');
+        if (heading) {
+            heading.textContent = `${STREAM_DETAIL_TITLES[kind] || 'Streamed change'}${backfill ? ' · backfill' : ''}`;
+        }
+
+        const blocks = [];
+        let data = null;
+        if (kind === 'account') {
+            blocks.push(streamDetailBlock('Address', payload.address || '—', { wide: true }));
+            blocks.push(streamDetailBlock('Slot', formatCount(payload.slot)));
+            blocks.push(streamDetailBlock('Write Version', formatCount(payload.write_version)));
+            data = payload.data ?? '';
+        } else if (kind === 'event') {
+            blocks.push(streamDetailBlock('Tx Signature', payload.signature || payload.tx_signature || '—', { wide: true }));
+            blocks.push(streamDetailBlock('Discriminator', discriminatorHex(payload.data) || '—'));
+            blocks.push(streamDetailBlock('Log Index', payload.log_index ?? '—'));
+            blocks.push(streamDetailBlock('Slot', formatCount(payload.slot)));
+            data = payload.data ?? '';
+        } else {
+            blocks.push(streamDetailBlock('Signature', payload.signature || '—', { wide: true }));
+            blocks.push(streamDetailBlock('Status', payload.success ? 'Success' : 'Failed', { mono: false }));
+            blocks.push(streamDetailBlock('Slot', formatCount(payload.slot)));
+            blocks.push(streamDetailBlock('Fee', payload.fee != null ? `${formatCount(payload.fee)} lamports` : '—'));
+            blocks.push(streamDetailBlock('Fee Payer', payload.fee_payer || '—', { wide: true }));
+            if (payload.err != null) {
+                blocks.push(streamDetailBlock('Error', JSON.stringify(payload.err), { wide: true }));
+            }
+        }
+        // only the rows re-pulled after a resync come from the read API, so these are usually absent
+        if (payload.block_time != null) blocks.push(streamDetailBlock('Block Time', formatBlockTime(payload.block_time)));
+        if (payload.created_at) blocks.push(streamDetailBlock('Indexed At', formatTimestamp(payload.created_at)));
+
+        fields.innerHTML = blocks.join('');
+        const dataBlock = document.getElementById('mon-stream-detail-data-block');
+        if (dataBlock) {
+            dataBlock.hidden = data == null;
+            if (data != null) setDataBlock('mon-stream-detail-data', data);
+        }
+        openModal('mon-stream-detail-modal');
+    }
+
+    document.body.addEventListener('click', (e) => {
+        const row = e.target.closest('.stream-row[data-stream-idx]');
+        if (!row) return;
+        const entry = streamCache.get(row.dataset.streamIdx);
+        if (entry) openStreamDetail(entry);
+    });
+
+    // A lagged stream sends a `resync` frame with the last slot it delivered; for
+    // events/transactions we re-pull the missed window from the read API so nothing is
+    // silently dropped — the account stream has no history to replay and just resumes live.
     async function handleResync(payload) {
         appendStreamHtml(`<div class="stream-row resync"><span class="stream-kind resync">resync</span><div class="dash-row-main"><span class="dash-row-title">Missed ${escapeHtml(formatCount(payload.missed))} change${payload.missed === 1 ? '' : 's'}</span><span class="dash-row-sub">re-pulling since slot ${escapeHtml(formatCount(payload.since_slot))}</span></div></div>`);
         if (payload.since_slot == null || !monStreamProgram) return;
@@ -2105,9 +2336,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (monStreamType === 'events') {
             const res = await apiCall('GET', `/programs/${id}/events${buildQuery({ since_slot: payload.since_slot, per_page: 50 })}`);
             if (res.ok) (res.data?.data || []).slice().reverse().forEach(ev => pushStreamRow('event', ev, true));
-        } else {
-            const res = await apiCall('GET', `/programs/${id}/changes${buildQuery({ from_slot: payload.since_slot, per_page: 50 })}`);
-            if (res.ok) (res.data?.account_states || []).slice().reverse().forEach(a => pushStreamRow('account', a, true));
+        } else if (monStreamType === 'transactions') {
+            const res = await apiCall('GET', `/programs/${id}/transactions${buildQuery({ since_slot: payload.since_slot, per_page: 50 })}`);
+            if (res.ok) (res.data?.data || []).slice().reverse().forEach(t => pushStreamRow('transaction', t, true));
         }
     }
 
@@ -2115,6 +2346,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const trigger = evt.detail.requestConfig?.trigger;
         if (trigger?.classList.contains('nav-item')) setActiveNav(trigger);
         Prefs.reflect();
+        // the outgoing section's elements are gone; whichever section lands re-arms its own poll
+        stopSectionPoll();
+        // a modal torn down with its fragment never ran closeModal, and its scroll lock outlives it
+        if (!activeModal()) document.body.style.overflow = '';
         const swapped = evt.detail.target;
         if (swapped?.matches?.('[data-section="rpcs"]') || swapped?.querySelector?.('[data-section="rpcs"]')) {
             initRpcSection();
@@ -2127,9 +2362,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (swapped?.matches?.('[data-section="pdas"]') || swapped?.querySelector?.('[data-section="pdas"]')) {
             initPdasSection();
-        }
-        if (swapped?.matches?.('[data-section="history"]') || swapped?.querySelector?.('[data-section="history"]')) {
-            initHistorySection();
         }
         if (swapped?.matches?.('[data-section="transactions"]') || swapped?.querySelector?.('[data-section="transactions"]')) {
             initTxSection();

@@ -1,45 +1,149 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use solana_account_decoder::UiAccountEncoding;
+use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_client::rpc_filter::RpcFilterType;
 use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{
-    RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
-    RpcTransactionLogsFilter,
+    RpcAccountInfoConfig, RpcBlockConfig, RpcProgramAccountsConfig, RpcTransactionConfig,
+    RpcTransactionLogsConfig, RpcTransactionLogsFilter,
 };
+use solana_rpc_client_api::request::{RpcError, RpcRequest};
+use solana_rpc_client_api::response::{OptionalContext, RpcKeyedAccount};
 use solana_sdk::{
     account::Account, commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature,
 };
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiLoadedAddresses, UiMessage,
-    UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, TransactionDetails,
+    UiLoadedAddresses, UiMessage, UiTransactionEncoding,
 };
 use tokio::sync::mpsc;
 
 use crate::core::commitment::TransactionCommitment;
 use crate::core::error::SvmIndexerError;
 use crate::indexer::rpc::{
-    AccountFilter, AccountSnapshot, LogsNotification, RawTransaction, RpcResult, SignatureInfo,
-    SubStream, SvmRpc, TxAccount,
+    AccountFilter, AccountSnapshot, BlockSignatures, LogsNotification, RawTransaction, RpcResult,
+    SignatureInfo, SignatureStatus, SlotBlock, SubReady, SubStream, SvmRpc, TxAccount,
 };
 
 const MAX_MULTIPLE_ACCOUNTS: usize = 100;
 
 pub struct JsonRpc {
     client: RpcClient,
+    http: reqwest::Client,
+    http_url: String,
     ws_url: String,
     commitment: CommitmentConfig,
+    batching: AtomicBool,
 }
 
 impl JsonRpc {
     pub fn new(http_url: String, ws_url: String, commitment: CommitmentConfig) -> Self {
         Self {
-            client: RpcClient::new_with_commitment(http_url, commitment),
+            client: RpcClient::new_with_commitment(http_url.clone(), commitment),
+            http: reqwest::Client::new(),
+            http_url,
             ws_url,
             commitment,
+            batching: AtomicBool::new(true),
         }
+    }
+
+    fn transaction_config(&self) -> RpcTransactionConfig {
+        RpcTransactionConfig {
+            encoding: Some(UiTransactionEncoding::Json),
+            commitment: Some(self.commitment),
+            max_supported_transaction_version: Some(0),
+        }
+    }
+
+    async fn get_transactions_batched(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Option<Vec<Option<RawTransaction>>>> {
+        let config = self.transaction_config();
+        let body: Vec<serde_json::Value> = signatures
+            .iter()
+            .enumerate()
+            .map(|(id, signature)| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "getTransaction",
+                    "params": [signature.to_string(), config],
+                })
+            })
+            .collect();
+
+        let response = self
+            .http
+            .post(&self.http_url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            // being throttled is back-pressure, not a verdict on batching — giving up on batches
+            // there would multiply the request count that caused it
+            return if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                Ok(None)
+            } else {
+                Err(SvmIndexerError::RpcRequestFailed(format!(
+                    "batched getTransaction failed with {status}"
+                )))
+            };
+        }
+
+        let payload: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+        let Some(entries) = payload.as_array() else {
+            return Ok(None);
+        };
+        if entries.len() != signatures.len() {
+            return Err(SvmIndexerError::RpcRequestFailed(format!(
+                "batched getTransaction answered {} of {} requests",
+                entries.len(),
+                signatures.len()
+            )));
+        }
+
+        // responses may come back in any order, so each is placed by its own id
+        let mut transactions: Vec<Option<RawTransaction>> = vec![None; signatures.len()];
+        for entry in entries {
+            let id = entry.get("id").and_then(serde_json::Value::as_u64);
+            let Some(index) = id.map(|id| id as usize).filter(|id| *id < signatures.len()) else {
+                return Err(SvmIndexerError::RpcRequestFailed(
+                    "batched getTransaction answered with an unknown id".to_owned(),
+                ));
+            };
+            if let Some(error) = entry.get("error").filter(|error| !error.is_null()) {
+                return Err(SvmIndexerError::RpcRequestFailed(format!(
+                    "getTransaction {}: {error}",
+                    signatures[index]
+                )));
+            }
+            match entry.get("result") {
+                None | Some(serde_json::Value::Null) => continue, // node has no record of it
+                Some(result) => {
+                    let tx: EncodedConfirmedTransactionWithStatusMeta =
+                        serde_json::from_value(result.clone()).map_err(|err| {
+                            SvmIndexerError::RpcRequestFailed(format!(
+                                "undecodable transaction {}: {err}",
+                                signatures[index]
+                            ))
+                        })?;
+                    transactions[index] = Some(raw_transaction(signatures[index], tx)?);
+                }
+            }
+        }
+        Ok(Some(transactions))
     }
 
     async fn connect(&self) -> RpcResult<PubsubClient> {
@@ -50,6 +154,15 @@ impl JsonRpc {
 }
 
 const SUB_CHANNEL_CAPACITY: usize = 1024;
+
+fn rpc_error(err: ClientError) -> SvmIndexerError {
+    match err.kind() {
+        ClientErrorKind::RpcError(RpcError::RpcResponseError { code, .. }) => {
+            SvmIndexerError::RpcResponseError(*code, err.to_string())
+        }
+        _ => SvmIndexerError::RpcRequestFailed(err.to_string()),
+    }
+}
 
 /// Wraps a channel receiver as an owned `'static` stream — nothing borrowed, so the caller can hold
 /// it without pinning the pubsub client alive.
@@ -62,10 +175,7 @@ fn receiver_stream<T: Send + 'static>(rx: mpsc::Receiver<RpcResult<T>>) -> SubSt
 #[async_trait]
 impl SvmRpc for JsonRpc {
     async fn get_slot(&self) -> RpcResult<u64> {
-        self.client
-            .get_slot()
-            .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))
+        self.client.get_slot().await.map_err(rpc_error)
     }
 
     async fn get_block_time(&self, slot: u64) -> RpcResult<Option<i64>> {
@@ -73,49 +183,114 @@ impl SvmRpc for JsonRpc {
         Ok(self.client.get_block_time(slot).await.ok())
     }
 
+    async fn get_block_signatures(&self, slot: u64) -> RpcResult<SlotBlock> {
+        let config = RpcBlockConfig {
+            encoding: None,
+            transaction_details: Some(TransactionDetails::Signatures),
+            rewards: Some(false),
+            // pinned, not `self.commitment`: membership of a finalized block is what makes an absent
+            // signature evidence rather than a guess
+            commitment: Some(CommitmentConfig::finalized()),
+            // omitting it makes the call fail outright on any block holding a versioned transaction
+            max_supported_transaction_version: Some(0),
+        };
+        let block = match self.client.get_block_with_config(slot, config).await {
+            Ok(block) => block,
+            Err(err) => {
+                let err = rpc_error(err);
+                // an allowlist, never "anything that is not pruned": a timeout, a rate limit or a
+                // proxy that flattens codes says the node could not answer, not that the slot is gone
+                return if err.is_slot_skipped() {
+                    Ok(SlotBlock::Reorged)
+                } else if err.is_block_pruned() {
+                    Ok(SlotBlock::Pruned)
+                } else if err.is_block_not_yet_available() {
+                    Ok(SlotBlock::NotYetFinal)
+                } else {
+                    Err(err)
+                };
+            }
+        };
+
+        let signatures = block
+            .signatures
+            .unwrap_or_default()
+            .into_iter()
+            .map(|signature| {
+                signature.parse().map_err(|_| {
+                    SvmIndexerError::RpcRequestFailed(format!(
+                        "block {slot} listed an unparseable signature {signature}"
+                    ))
+                })
+            })
+            .collect::<RpcResult<Vec<_>>>()?;
+
+        Ok(SlotBlock::Found(BlockSignatures {
+            blockhash: block.blockhash,
+            block_time: block.block_time,
+            signatures,
+        }))
+    }
+
     async fn get_program_accounts(
         &self,
         program: &Pubkey,
         filter: Option<&AccountFilter>,
     ) -> RpcResult<Vec<AccountSnapshot>> {
-        let slot = self
-            .client
-            .get_slot()
-            .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
         let config = RpcProgramAccountsConfig {
             filters: rpc_filters(filter),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64Zstd),
+                commitment: Some(self.commitment),
                 ..Default::default()
             },
+            with_context: Some(true),
             ..Default::default()
         };
-        let accounts = self
+        let response: OptionalContext<Vec<RpcKeyedAccount>> = self
             .client
-            .get_program_accounts_with_config(program, config)
+            .send(
+                RpcRequest::GetProgramAccounts,
+                serde_json::json!([program.to_string(), config]),
+            )
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            .map_err(rpc_error)?;
+        let (slot, accounts) = match response {
+            OptionalContext::Context(response) => (response.context.slot, response.value),
+            // a node that ignores `withContext` still answers, just without a slot to attribute it to
+            OptionalContext::NoContext(accounts) => (self.get_slot().await?, accounts),
+        };
 
-        Ok(accounts
+        accounts
             .into_iter()
-            .map(|(address, acct)| AccountSnapshot {
-                address,
-                owner: acct.owner,
-                lamports: acct.lamports,
-                data: acct.data,
-                rent_epoch: acct.rent_epoch,
-                executable: acct.executable,
-                slot,
-                write_version: None,
+            .map(|keyed| {
+                let address = keyed.pubkey.parse().map_err(|_| {
+                    SvmIndexerError::RpcRequestFailed(format!(
+                        "invalid account key {}",
+                        keyed.pubkey
+                    ))
+                })?;
+                let account = keyed.account.decode::<Account>().ok_or_else(|| {
+                    SvmIndexerError::RpcRequestFailed(format!(
+                        "undecodable account {}",
+                        keyed.pubkey
+                    ))
+                })?;
+                Ok(AccountSnapshot {
+                    address,
+                    owner: account.owner,
+                    lamports: account.lamports,
+                    data: account.data,
+                    rent_epoch: account.rent_epoch,
+                    executable: account.executable,
+                    slot,
+                    write_version: None,
+                })
             })
-            .collect())
+            .collect()
     }
 
-    async fn get_multiple_accounts(
-        &self,
-        addresses: &[Pubkey],
-    ) -> RpcResult<Vec<AccountSnapshot>> {
+    async fn get_multiple_accounts(&self, addresses: &[Pubkey]) -> RpcResult<Vec<AccountSnapshot>> {
         let config = RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64Zstd),
             ..Default::default()
@@ -127,21 +302,26 @@ impl SvmRpc for JsonRpc {
                 .client
                 .get_multiple_accounts_with_config(chunk, config.clone())
                 .await
-                .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+                .map_err(rpc_error)?;
             let slot = response.context.slot;
-            snapshots.extend(chunk.iter().zip(response.value).filter_map(|(address, acct)| {
-                let acct = acct?; // an unindexed / closed account is simply absent
-                Some(AccountSnapshot {
-                    address: *address,
-                    owner: acct.owner,
-                    lamports: acct.lamports,
-                    data: acct.data,
-                    rent_epoch: acct.rent_epoch,
-                    executable: acct.executable,
-                    slot,
-                    write_version: None,
-                })
-            }));
+            snapshots.extend(
+                chunk
+                    .iter()
+                    .zip(response.value)
+                    .filter_map(|(address, acct)| {
+                        let acct = acct?; // an unindexed / closed account is simply absent
+                        Some(AccountSnapshot {
+                            address: *address,
+                            owner: acct.owner,
+                            lamports: acct.lamports,
+                            data: acct.data,
+                            rent_epoch: acct.rent_epoch,
+                            executable: acct.executable,
+                            slot,
+                            write_version: None,
+                        })
+                    }),
+            );
         }
         Ok(snapshots)
     }
@@ -156,13 +336,13 @@ impl SvmRpc for JsonRpc {
             before,
             until: None,
             limit: Some(limit),
-            commitment: None,
+            commitment: Some(self.commitment),
         };
         let signatures = self
             .client
             .get_signatures_for_address_with_config(address, config)
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            .map_err(rpc_error)?;
 
         signatures
             .into_iter()
@@ -181,37 +361,35 @@ impl SvmRpc for JsonRpc {
     }
 
     async fn get_transaction(&self, signature: &Signature) -> RpcResult<RawTransaction> {
-        let config = RpcTransactionConfig {
-            encoding: Some(UiTransactionEncoding::Json),
-            commitment: None,
-            max_supported_transaction_version: Some(0),
-        };
         let tx = self
             .client
-            .get_transaction_with_config(signature, config)
+            .get_transaction_with_config(signature, self.transaction_config())
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?;
+            .map_err(rpc_error)?;
+        raw_transaction(*signature, tx)
+    }
 
-        let meta = tx.transaction.meta.as_ref();
-        let logs = meta
-            .and_then(|m| Option::<Vec<String>>::from(m.log_messages.clone()))
-            .unwrap_or_default();
-
-        Ok(RawTransaction {
-            signature: *signature,
-            slot: tx.slot,
-            block_time: tx.block_time,
-            success: meta.map(|m| m.err.is_none()).unwrap_or(false),
-            err: meta
-                .and_then(|m| m.err.as_ref())
-                .map(|e| serde_json::to_value(e).unwrap_or_default()),
-            fee: meta.map(|m| m.fee),
-            fee_payer: fee_payer(&tx),
-            logs,
-            accounts: account_keys(&tx),
-            raw: serde_json::to_value(&tx)
-                .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?,
-        })
+    async fn get_transactions(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<RawTransaction>>> {
+        if signatures.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.batching.load(Ordering::Relaxed) {
+            if let Some(transactions) = self.get_transactions_batched(signatures).await? {
+                return Ok(transactions);
+            }
+            self.batching.store(false, Ordering::Relaxed);
+            tracing::warn!(
+                "Node refused a batched getTransaction; falling back to one request per transaction."
+            );
+        }
+        let mut transactions = Vec::with_capacity(signatures.len());
+        for signature in signatures {
+            transactions.push(Some(self.get_transaction(signature).await?));
+        }
+        Ok(transactions)
     }
 
     async fn get_signature_statuses(
@@ -222,7 +400,7 @@ impl SvmRpc for JsonRpc {
             .client
             .get_signature_statuses(signatures)
             .await
-            .map_err(|err| SvmIndexerError::RpcRequestFailed(err.to_string()))?
+            .map_err(rpc_error)?
             .value;
         Ok(statuses
             .into_iter()
@@ -238,10 +416,36 @@ impl SvmRpc for JsonRpc {
             .collect())
     }
 
+    async fn get_signature_statuses_with_history(
+        &self,
+        signatures: &[Signature],
+    ) -> RpcResult<Vec<Option<SignatureStatus>>> {
+        let statuses = self
+            .client
+            .get_signature_statuses_with_history(signatures)
+            .await
+            .map_err(rpc_error)?
+            .value;
+        Ok(statuses
+            .into_iter()
+            .map(|status| {
+                status.map(|status| SignatureStatus {
+                    commitment: status
+                        .confirmation_status
+                        .as_ref()
+                        .map(TransactionCommitment::from)
+                        .unwrap_or(TransactionCommitment::Processed),
+                    slot: status.slot,
+                })
+            })
+            .collect())
+    }
+
     async fn subscribe_program(
         &self,
         program: &Pubkey,
         filter: Option<&AccountFilter>,
+        ready: SubReady,
     ) -> RpcResult<SubStream<AccountSnapshot>> {
         let client = self.connect().await?;
         let config = RpcProgramAccountsConfig {
@@ -256,13 +460,17 @@ impl SvmRpc for JsonRpc {
         let program = *program;
         let (tx, rx) = mpsc::channel(SUB_CHANNEL_CAPACITY);
         tokio::spawn(async move {
-            let (mut stream, _unsub) = match client.program_subscribe(&program, Some(config)).await {
+            let (mut stream, _unsub) = match client.program_subscribe(&program, Some(config)).await
+            {
                 Ok(pair) => pair,
                 Err(err) => {
-                    let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                    let _ = tx
+                        .send(Err(SvmIndexerError::SubscriptionFailed(err.to_string())))
+                        .await;
                     return;
                 }
             };
+            let _ = ready.send(());
             loop {
                 let response = tokio::select! {
                     _ = tx.closed() => break, // consumer gone; drop the subscription and close the socket
@@ -306,6 +514,7 @@ impl SvmRpc for JsonRpc {
     async fn subscribe_accounts(
         &self,
         addresses: &[Pubkey],
+        ready: SubReady,
     ) -> RpcResult<SubStream<AccountSnapshot>> {
         let client = self.connect().await?;
         let config = RpcAccountInfoConfig {
@@ -319,16 +528,23 @@ impl SvmRpc for JsonRpc {
             let mut streams = Vec::with_capacity(addresses.len());
             for address in addresses {
                 // accountSubscribe notifications carry no pubkey, so tag each stream with its known key
-                let (stream, _unsub) = match client.account_subscribe(&address, Some(config.clone())).await {
+                let (stream, _unsub) = match client
+                    .account_subscribe(&address, Some(config.clone()))
+                    .await
+                {
                     Ok(pair) => pair,
                     Err(err) => {
-                        let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                        let _ = tx
+                            .send(Err(SvmIndexerError::SubscriptionFailed(err.to_string())))
+                            .await;
                         return;
                     }
                 };
                 streams.push(stream.map(move |response| {
                     let account = response.value.decode::<Account>().ok_or_else(|| {
-                        SvmIndexerError::SubscriptionFailed(format!("undecodable account {address}"))
+                        SvmIndexerError::SubscriptionFailed(format!(
+                            "undecodable account {address}"
+                        ))
                     })?;
                     Ok(AccountSnapshot {
                         address,
@@ -343,6 +559,7 @@ impl SvmRpc for JsonRpc {
                 }));
             }
             let mut merged = futures::stream::select_all(streams);
+            let _ = ready.send(()); // only once every key is subscribed
             loop {
                 let item = tokio::select! {
                     _ = tx.closed() => break,
@@ -359,7 +576,11 @@ impl SvmRpc for JsonRpc {
         Ok(receiver_stream(rx))
     }
 
-    async fn subscribe_logs(&self, program: &Pubkey) -> RpcResult<SubStream<LogsNotification>> {
+    async fn subscribe_logs(
+        &self,
+        program: &Pubkey,
+        ready: SubReady,
+    ) -> RpcResult<SubStream<LogsNotification>> {
         let client = self.connect().await?;
         let config = RpcTransactionLogsConfig {
             commitment: Some(self.commitment),
@@ -370,10 +591,13 @@ impl SvmRpc for JsonRpc {
             let (mut stream, _unsub) = match client.logs_subscribe(filter, config).await {
                 Ok(pair) => pair,
                 Err(err) => {
-                    let _ = tx.send(Err(SvmIndexerError::SubscriptionFailed(err.to_string()))).await;
+                    let _ = tx
+                        .send(Err(SvmIndexerError::SubscriptionFailed(err.to_string())))
+                        .await;
                     return;
                 }
             };
+            let _ = ready.send(());
             loop {
                 let response = tokio::select! {
                     _ = tx.closed() => break,
@@ -391,7 +615,9 @@ impl SvmRpc for JsonRpc {
                     .map(|signature| LogsNotification {
                         signature,
                         slot,
-                        err: value.err.map(|e| serde_json::to_value(e).unwrap_or_default()),
+                        err: value
+                            .err
+                            .map(|e| serde_json::to_value(e).unwrap_or_default()),
                         logs: value.logs,
                     });
                 if tx.send(item).await.is_err() {
@@ -408,6 +634,32 @@ impl SvmRpc for JsonRpc {
 fn rpc_filters(filter: Option<&AccountFilter>) -> Option<Vec<RpcFilterType>> {
     let filters = filter?.rpc_filters();
     (!filters.is_empty()).then_some(filters)
+}
+
+pub(crate) fn raw_transaction(
+    signature: Signature,
+    tx: EncodedConfirmedTransactionWithStatusMeta,
+) -> RpcResult<RawTransaction> {
+    let meta = tx.transaction.meta.as_ref();
+    let logs = meta
+        .and_then(|m| Option::<Vec<String>>::from(m.log_messages.clone()))
+        .unwrap_or_default();
+
+    Ok(RawTransaction {
+        signature,
+        slot: tx.slot,
+        block_time: tx.block_time,
+        success: meta.map(|m| m.err.is_none()).unwrap_or(false),
+        err: meta
+            .and_then(|m| m.err.as_ref())
+            .map(|e| serde_json::to_value(e).unwrap_or_default()),
+        fee: meta.map(|m| m.fee),
+        fee_payer: fee_payer(&tx),
+        logs,
+        accounts: account_keys(&tx),
+        raw: serde_json::to_value(&tx)
+            .map_err(|err| SvmIndexerError::SerializationError(err.to_string()))?,
+    })
 }
 
 /// fee payer is always the first account key
@@ -462,14 +714,18 @@ pub(crate) fn account_keys(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Ve
         .as_ref()
         .and_then(|meta| Option::<UiLoadedAddresses>::from(meta.loaded_addresses.clone()));
     if let Some(loaded) = loaded {
-        let writable = loaded
-            .writable
-            .iter()
-            .filter_map(|key| Some(TxAccount { address: key.parse().ok()?, writable: true }));
-        let readonly = loaded
-            .readonly
-            .iter()
-            .filter_map(|key| Some(TxAccount { address: key.parse().ok()?, writable: false }));
+        let writable = loaded.writable.iter().filter_map(|key| {
+            Some(TxAccount {
+                address: key.parse().ok()?,
+                writable: true,
+            })
+        });
+        let readonly = loaded.readonly.iter().filter_map(|key| {
+            Some(TxAccount {
+                address: key.parse().ok()?,
+                writable: false,
+            })
+        });
         accounts.extend(writable.chain(readonly));
     }
     accounts

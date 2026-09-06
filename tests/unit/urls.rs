@@ -25,7 +25,10 @@ fn http_url_gets_https_prefix_when_missing() {
 fn http_url_rejects_non_http_scheme() {
     for input in ["ws://rpc.example.com", "ftp://rpc.example.com"] {
         let err = validate_http_url(input.to_string()).unwrap_err();
-        assert!(matches!(err, SvmIndexerError::InvalidURL(_)), "{input} must be rejected");
+        assert!(
+            matches!(err, SvmIndexerError::InvalidURL(_)),
+            "{input} must be rejected"
+        );
     }
 }
 

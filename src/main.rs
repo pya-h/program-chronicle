@@ -33,10 +33,7 @@ async fn main() {
     let database_connection = match Database::connect(db_options).await {
         Ok(conn) => conn,
         Err(err) => {
-            panic!(
-                "Database connection failed: {}",
-                err.sql_err().expect("Unknown error happened!")
-            );
+            panic!("Database connection failed: {err}");
         }
     };
 
@@ -61,6 +58,7 @@ async fn main() {
         env_u64("INDEXER_MAX_RETRIES", 5) as u32, // RetryPolicy clamps to at least one attempt
         Duration::from_secs(restart_cooldown_secs),
         Duration::from_secs(restart_cooldown_cap_secs),
+        Duration::from_secs(env_u64("INDEXER_CURSOR_INTERVAL_SECS", 60).max(1)),
     ));
 
     let backfill_interval =
@@ -76,9 +74,12 @@ async fn main() {
     let reconcile_interval =
         Duration::from_secs(env_u64("INDEXER_RECONCILE_INTERVAL_SECS", 300).max(1));
     tokio::spawn(indexer.clone().run_reconciler(reconcile_interval));
-    let commitment_worker_interval =
-        Duration::from_secs(env_u64("INDEXER_COMMITMENT_WORKER_SECS", 60).max(1));
-    tokio::spawn(indexer.clone().run_commitment_worker(commitment_worker_interval));
+    tokio::spawn(indexer.clone().run_settlement_worker(
+        Duration::from_secs(env_u64("INDEXER_SETTLEMENT_WORKER_SECS", 60).max(1)),
+        env_u64("INDEXER_SETTLEMENT_BATCH", 2_560),
+        env_u64("INDEXER_SETTLEMENT_ESCALATIONS", 64) as usize,
+    ));
+    let runtimes = indexer.runtimes();
     tokio::spawn(async move {
         if let Err(err) = indexer.start(supervisor_rx).await {
             tracing::error!(error = %err, "Indexer supervisor failed to start!");
@@ -86,11 +87,16 @@ async fn main() {
     });
 
     let admin_passkey = env::var("ADMIN_PASSKEY").expect("ADMIN_PASSKEY not set!");
+    assert!(
+        !admin_passkey.trim().is_empty(),
+        "ADMIN_PASSKEY must not be empty!"
+    );
     let router = svm_indexer::app(
         database_connection,
         admin_passkey,
         Some(supervisor_tx),
         sse_tx,
+        Some(runtimes),
     );
 
     let app_port = {

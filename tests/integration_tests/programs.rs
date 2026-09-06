@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use crate::common::{assert_datetimes_equal, parse_datetime, reset_db, server};
+use crate::common::{
+    assert_datetimes_equal, parse_datetime, pubkey, reset_db, seed_account, seed_event,
+    seed_program, seed_rpc, seed_transaction, seed_transaction_account, server, signature, test_db,
+};
 
 fn address(idx: usize) -> &'static str {
     const ADDRESSES: &[&str] = &[
@@ -142,12 +145,18 @@ async fn add_program_duplicate_address_on_same_rpc_fails() -> httpc_test::Result
 
     server()
         .authed_client()
-        .do_post("/admin/programs", json!({"rpc_id": rpc_id, "address": address(0)}))
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
         .await?;
 
     let res = server()
         .authed_client()
-        .do_post("/admin/programs", json!({"rpc_id": rpc_id, "address": address(0)}))
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0)}),
+        )
         .await?;
     assert_eq!(res.status(), 500);
     Ok(())
@@ -356,7 +365,10 @@ async fn add_program_defaults_to_active() -> httpc_test::Result<()> {
         )
         .await?;
     let body = res.json_body_as::<serde_json::Value>()?;
-    assert_eq!(body["active"], true, "a new program is indexed unless paused");
+    assert_eq!(
+        body["active"], true,
+        "a new program is indexed unless paused"
+    );
     Ok(())
 }
 
@@ -431,7 +443,9 @@ async fn add_program_with_account_filters_persists() -> httpc_test::Result<()> {
         )
         .await?;
     assert_eq!(res.status(), 201);
-    let id = res.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = res.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     // durable — a fresh read returns the stored descriptor
     let res = server()
@@ -480,12 +494,17 @@ async fn update_program_clears_account_filters() -> httpc_test::Result<()> {
             }),
         )
         .await?;
-    let id = created.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     // an empty descriptor resets the program back to track-all
     let res = server()
         .authed_client()
-        .do_patch(&format!("/admin/programs/{}", id), json!({"account_filters": {}}))
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"account_filters": {}}),
+        )
         .await?;
     assert_eq!(res.status(), 200);
     assert!(res.json_body_as::<serde_json::Value>()?["account_filters"].is_null());
@@ -499,6 +518,179 @@ async fn update_program_clears_account_filters() -> httpc_test::Result<()> {
 }
 
 #[tokio::test]
+async fn update_program_rpc_resets_the_cursor_but_keeps_it_on_other_edits() -> httpc_test::Result<()>
+{
+    let _guard = reset_db().await;
+
+    let rpc_id = create_rpc("https://program-repoint-from.example.com").await;
+    let other_rpc_id = create_rpc("https://program-repoint-to.example.com").await;
+    let created = server()
+        .authed_client()
+        .do_post(
+            "/admin/programs",
+            json!({"rpc_id": rpc_id, "address": address(0), "start_slot": 900}),
+        )
+        .await?;
+    let id = created.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
+
+    // naming the same rpc is not a repoint
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"rpc_id": rpc_id, "name": "same-network"}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.json_body_as::<serde_json::Value>()?["start_slot"], 900);
+
+    // slots are not comparable across networks, so the cursor cannot follow the program
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", id),
+            json!({"rpc_id": other_rpc_id}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+    let body = res.json_body_as::<serde_json::Value>()?;
+    assert_eq!(body["rpc_id"], other_rpc_id);
+    assert!(body["start_slot"].is_null());
+    assert!(body["last_processed_slot"].is_null());
+    assert!(body["last_processed_at"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_rpc_drops_account_state_but_keeps_history() -> httpc_test::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, sea_query::Expr};
+    use svm_indexer::db::entities::{program_accounts, program_events, transactions};
+
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://program-accounts-repoint-from.example.com").await;
+    let other_rpc_id = seed_rpc(&db, "https://program-accounts-repoint-to.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(60)).await;
+    let sig = signature(80);
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &pubkey(61),
+        &pubkey(60),
+        &[7],
+        1_000,
+        900,
+        0,
+        None,
+    )
+    .await;
+    seed_transaction(&db, Some(program_id), rpc_id, &sig, 900, true, None).await;
+    seed_event(&db, program_id, rpc_id, &sig, 0, 900, &[9], None).await;
+
+    // only a linked event exercises the RESTRICT that guards program_accounts
+    let account_id = program_accounts::Entity::find()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    program_events::Entity::update_many()
+        .col_expr(
+            program_events::Column::ProgramAccountId,
+            Expr::value(Some(account_id)),
+        )
+        .filter(program_events::Column::ProgramId.eq(program_id))
+        .exec(&db)
+        .await
+        .unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", program_id),
+            json!({"rpc_id": other_rpc_id}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    assert_eq!(
+        program_accounts::Entity::find()
+            .filter(program_accounts::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0,
+        "a snapshot at the old chain's slot would reject every write from the new one"
+    );
+    assert_eq!(
+        program_events::Entity::find()
+            .filter(program_events::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        1,
+        "events are history and stay"
+    );
+    assert_eq!(
+        transactions::Entity::find()
+            .filter(transactions::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_program_rpc_clears_the_backfill_frontier() -> httpc_test::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
+    use svm_indexer::db::entities::programs;
+
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://backfill-frontier-from.example.com").await;
+    let other_rpc_id = seed_rpc(&db, "https://backfill-frontier-to.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(62)).await;
+
+    programs::Entity::update_many()
+        .col_expr(programs::Column::BackfillSlot, Expr::value(900_i64))
+        .col_expr(
+            programs::Column::BackfillCursor,
+            Expr::value(signature(81).as_ref().to_vec()),
+        )
+        .filter(programs::Column::Id.eq(program_id))
+        .exec(&db)
+        .await
+        .unwrap();
+
+    let res = server()
+        .authed_client()
+        .do_patch(
+            &format!("/admin/programs/{}", program_id),
+            json!({"rpc_id": other_rpc_id}),
+        )
+        .await?;
+    assert_eq!(res.status(), 200);
+
+    let program = programs::Entity::find_by_id(program_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        program.backfill_slot, None,
+        "the frontier is a position on the old chain"
+    );
+    assert_eq!(program.backfill_cursor, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_program_not_found() -> httpc_test::Result<()> {
     let _guard = reset_db().await;
 
@@ -507,6 +699,110 @@ async fn delete_program_not_found() -> httpc_test::Result<()> {
         .do_delete("/admin/programs/9999")
         .await?;
     assert_eq!(res.status(), 404);
+    Ok(())
+}
+
+/// A program holding one row in every table that references it.
+async fn seed_indexed_program(db: &sea_orm::DatabaseConnection, http_url: &str) -> i32 {
+    let rpc_id = seed_rpc(db, http_url).await;
+    let program_id = seed_program(db, rpc_id, &pubkey(50)).await;
+    let sig = signature(70);
+    seed_account(
+        db,
+        program_id,
+        rpc_id,
+        &pubkey(51),
+        &pubkey(50),
+        &[1, 2, 3],
+        1_000,
+        700,
+        0,
+        None,
+    )
+    .await;
+    seed_transaction(db, Some(program_id), rpc_id, &sig, 700, true, None).await;
+    seed_transaction_account(db, &sig, &pubkey(52), 700, true).await;
+    seed_event(db, program_id, rpc_id, &sig, 0, 700, &[9], None).await;
+    program_id
+}
+
+#[tokio::test]
+async fn delete_program_with_indexed_data_is_a_conflict() -> httpc_test::Result<()> {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let program_id = seed_indexed_program(&db, "https://program-delete-blocked.example.com").await;
+
+    let res = server()
+        .authed_client()
+        .do_delete(&format!("/admin/programs/{}", program_id))
+        .await?;
+    assert_eq!(res.status(), 409);
+
+    // the restriction held, so the program and its data are still there
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", program_id))
+        .await?;
+    assert_eq!(res.status(), 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_program_with_force_purges_its_data() -> httpc_test::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+    use svm_indexer::db::entities::{
+        program_accounts, program_events, transaction_accounts, transactions,
+    };
+
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let program_id = seed_indexed_program(&db, "https://program-delete-force.example.com").await;
+
+    let res = server()
+        .authed_client()
+        .do_delete(&format!("/admin/programs/{}?force=true", program_id))
+        .await?;
+    assert_eq!(res.status(), 204);
+
+    let res = server()
+        .authed_client()
+        .do_get(&format!("/admin/programs/{}", program_id))
+        .await?;
+    assert_eq!(res.status(), 404);
+
+    assert_eq!(
+        program_accounts::Entity::find()
+            .filter(program_accounts::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        program_events::Entity::find()
+            .filter(program_events::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        transactions::Entity::find()
+            .filter(transactions::Column::ProgramId.eq(program_id))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    // no foreign key covers these, so the purge has to reach them by signature
+    assert_eq!(
+        transaction_accounts::Entity::find()
+            .filter(transaction_accounts::Column::TxSignature.eq(signature(70).as_ref().to_vec()))
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
     Ok(())
 }
 
@@ -527,7 +823,9 @@ async fn add_program_with_addresses_allowlist_persists() -> httpc_test::Result<(
         )
         .await?;
     assert_eq!(res.status(), 201);
-    let id = res.json_body_as::<serde_json::Value>()?["id"].as_u64().unwrap();
+    let id = res.json_body_as::<serde_json::Value>()?["id"]
+        .as_u64()
+        .unwrap();
 
     let body = server()
         .authed_client()

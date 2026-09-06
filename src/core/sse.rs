@@ -19,6 +19,15 @@ pub enum SseEvent {
         slot: i64,
         data: Vec<u8>,
     },
+    TransactionIndexed {
+        program_id: i32,
+        signature: Vec<u8>,
+        slot: i64,
+        success: bool,
+        err: Option<serde_json::Value>,
+        fee: Option<i64>,
+        fee_payer: Option<Vec<u8>>,
+    },
 }
 
 impl SseEvent {
@@ -51,6 +60,26 @@ impl SseEvent {
             log_index,
             slot,
             data,
+        }
+    }
+
+    pub fn transaction_indexed(
+        program_id: i32,
+        signature: Vec<u8>,
+        slot: i64,
+        success: bool,
+        err: Option<serde_json::Value>,
+        fee: Option<i64>,
+        fee_payer: Option<Vec<u8>>,
+    ) -> Self {
+        Self::TransactionIndexed {
+            program_id,
+            signature,
+            slot,
+            success,
+            err,
+            fee,
+            fee_payer,
         }
     }
 }

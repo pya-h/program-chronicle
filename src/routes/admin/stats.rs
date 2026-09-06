@@ -2,17 +2,22 @@ use std::collections::HashMap;
 
 use axum::{Router, extract::State, routing::get};
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, EntityTrait, PaginatorTrait, QueryOrder, Statement,
+    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Statement,
 };
 
 use crate::{
     core::{
+        commitment::TransactionCommitment,
         error::SvmIndexerError,
         response::{ApiResponse, FinalResponse},
+        slot_status::SlotStatus,
         state::AppState,
     },
-    db::entities::{programs, rpcs},
-    routes::responses::stats::{IndexerStatsResponse, ProgramProgressResponse, TableEstimates},
+    db::entities::{programs, rpcs, slots, transactions},
+    routes::responses::stats::{
+        IndexerStatsResponse, ProgramProgressResponse, SettlementCounts, TableEstimates,
+    },
 };
 
 async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<IndexerStatsResponse> {
@@ -25,13 +30,15 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed counting rpcs!", err))?;
 
-    // large tables use the planner estimate (near-instant) instead of an exact COUNT(*)
+    // large tables are estimated (near-instant) instead of an exact COUNT(*). `n_live_tup` rather
+    // than `pg_class.reltuples`: the latter only moves when autovacuum analyses the table, so a
+    // freshly filled one reads 0 while its rows are already listable.
     let rows = state
         .db
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
-            "SELECT relname, GREATEST(reltuples, 0)::bigint AS estimate FROM pg_class \
-             WHERE relname IN ('slots', 'transactions', 'program_events', 'account_states', 'program_accounts')",
+            "SELECT relname, GREATEST(n_live_tup, 0) AS estimate FROM pg_stat_user_tables \
+             WHERE relname IN ('slots', 'transactions', 'program_events', 'program_accounts')",
         ))
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed reading table estimates!", err))?;
@@ -48,13 +55,31 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
     }
     let estimate_of = |table: &str| estimates.get(table).copied().unwrap_or(0);
 
+    let reorged_slots = slots::Entity::find()
+        .filter(slots::Column::Status.eq(SlotStatus::Reorged.as_str()))
+        .count(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed counting reorged slots!", err))?;
+    let dropped_transactions = transactions::Entity::find()
+        .filter(transactions::Column::Commitment.eq(TransactionCommitment::Dropped.as_str()))
+        .count(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed counting dropped transactions!", err))?;
+
+    let runtimes = match &state.runtimes {
+        Some(runtimes) => runtimes.lock().await.clone(),
+        None => HashMap::new(),
+    };
     let per_program = programs::Entity::find()
         .order_by_asc(programs::Column::Id)
         .all(&state.db)
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed fetching program progress!", err))?
         .into_iter()
-        .map(ProgramProgressResponse::from_model)
+        .map(|program| {
+            let runtime = runtimes.get(&program.id).copied();
+            ProgramProgressResponse::from_model(program, runtime)
+        })
         .collect();
 
     Ok(ApiResponse::ok(IndexerStatsResponse {
@@ -64,8 +89,11 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
             slots: estimate_of("slots"),
             transactions: estimate_of("transactions"),
             events: estimate_of("program_events"),
-            account_states: estimate_of("account_states"),
-            cached_accounts: estimate_of("program_accounts"),
+            accounts: estimate_of("program_accounts"),
+        },
+        settlement: SettlementCounts {
+            reorged_slots,
+            dropped_transactions,
         },
         per_program,
     }))

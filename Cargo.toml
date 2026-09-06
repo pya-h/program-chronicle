@@ -33,6 +33,8 @@ async-trait = "0.1"
 base64 = "0.22"
 bs58 = "0.5"
 hex = "0.4"
+# batched json-rpc: `solana-client` sends one request per call, and a backfill is thousands of them
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 httpc-test = "0.1.10"

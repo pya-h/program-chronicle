@@ -21,7 +21,10 @@ fn attributes_top_level_event_to_the_target_program() {
     let events = RawLogParser.parse(&program, &logs);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].data, vec![1, 2, 3, 4]);
-    assert_eq!(events[0].log_index, 2, "log_index is the absolute log-line index");
+    assert_eq!(
+        events[0].log_index, 2,
+        "log_index is the absolute log-line index"
+    );
 }
 
 #[test]
@@ -37,7 +40,10 @@ fn ignores_events_emitted_by_other_programs() {
     ];
 
     let events = RawLogParser.parse(&target, &logs);
-    assert!(events.is_empty(), "only the target program's own events are indexed");
+    assert!(
+        events.is_empty(),
+        "only the target program's own events are indexed"
+    );
 }
 
 #[test]

@@ -27,8 +27,6 @@ pub struct Model {
     pub latest_tx_signature: Option<Vec<u8>>,
     pub latest_write_version: i64,
     #[sea_orm(has_many)]
-    pub account_states: HasMany<super::account_states::Entity>,
-    #[sea_orm(has_many)]
     pub program_events: HasMany<super::program_events::Entity>,
     #[sea_orm(
         belongs_to,

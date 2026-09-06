@@ -1,17 +1,17 @@
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
-use svm_indexer::db::entities::{account_states, program_accounts, slots};
-use svm_indexer::indexer::backfill::{
-    backfill_latest_tx_signatures_once, backfill_tx_signatures_once,
-};
+use svm_indexer::db::entities::{program_accounts, slots};
+use svm_indexer::indexer::backfill::backfill_latest_tx_signatures_once;
 use svm_indexer::indexer::persist::ensure_slot;
+use svm_indexer::indexer::rpc::SignatureInfo;
+use svm_indexer::indexer::transactions::stored_signatures;
 
 use crate::common::{
     pubkey, reset_db, seed_account, seed_program, seed_rpc, seed_transaction,
     seed_transaction_account, signature, test_db,
 };
 
-async fn cached_account(
+async fn latest_account(
     db: &sea_orm::DatabaseConnection,
     program_id: i32,
     address: &solana_sdk::pubkey::Pubkey,
@@ -22,18 +22,7 @@ async fn cached_account(
         .one(db)
         .await
         .unwrap()
-        .expect("cached account should exist")
-}
-
-async fn history_rows(
-    db: &sea_orm::DatabaseConnection,
-    program_account_id: i64,
-) -> Vec<account_states::Model> {
-    account_states::Entity::find()
-        .filter(account_states::Column::ProgramAccountId.eq(program_account_id))
-        .all(db)
-        .await
-        .unwrap()
+        .expect("account should exist")
 }
 
 #[tokio::test]
@@ -47,18 +36,30 @@ async fn ensure_slot_fills_block_time_once_and_is_idempotent() {
     let id2 = ensure_slot(&db, rpc_id, 500, Some(1000)).await.unwrap();
     assert_eq!(id1, id2, "same (rpc, slot) must return the same row id");
 
-    let row = slots::Entity::find_by_id(id1).one(&db).await.unwrap().unwrap();
-    assert_eq!(row.block_time, Some(1000), "block_time should fill once known");
+    let row = slots::Entity::find_by_id(id1)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.block_time,
+        Some(1000),
+        "block_time should fill once known"
+    );
 
     // a later, different block_time must not overwrite the first known value
     let id3 = ensure_slot(&db, rpc_id, 500, Some(2000)).await.unwrap();
     assert_eq!(id3, id1);
-    let row = slots::Entity::find_by_id(id1).one(&db).await.unwrap().unwrap();
+    let row = slots::Entity::find_by_id(id1)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.block_time, Some(1000), "block_time is write-once");
 }
 
 #[tokio::test]
-async fn double_apply_identical_snapshot_appends_no_extra_history() {
+async fn double_apply_identical_snapshot_is_idempotent() {
     let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://double-apply.example.com").await;
@@ -67,16 +68,53 @@ async fn double_apply_identical_snapshot_appends_no_extra_history() {
     let address = pubkey(10);
     let owner = pubkey(20);
     // apply the very same snapshot twice, as a reboot's catch-up would
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1, 2, 3], 100, 500, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1, 2, 3], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1, 2, 3],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1, 2, 3],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
 
-    let account = cached_account(&db, program_id, &address).await;
-    let history = history_rows(&db, account.id).await;
-    assert_eq!(history.len(), 1, "an unchanged re-apply must not append history");
+    let account = latest_account(&db, program_id, &address).await;
+    assert_eq!(account.latest_slot, 500);
+    assert_eq!(account.latest_write_version, 0);
+    assert_eq!(account.lamports, 100);
+    assert_eq!(account.owner, owner.to_bytes().to_vec());
+    assert_eq!(account.state, vec![1, 2, 3]);
+    // the identical re-apply must dedupe by value, not insert a second row
+    let count = program_accounts::Entity::find()
+        .filter(program_accounts::Column::ProgramId.eq(program_id))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "an identical snapshot must not create a duplicate row"
+    );
 }
 
 #[tokio::test]
-async fn newer_slot_advances_cache_and_appends_history() {
+async fn newer_slot_advances_latest_state() {
     let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://newer-slot.example.com").await;
@@ -84,17 +122,51 @@ async fn newer_slot_advances_cache_and_appends_history() {
 
     let address = pubkey(10);
     let owner = pubkey(20);
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 500, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 600, 0, Some(1001)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
+    let before = latest_account(&db, program_id, &address).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        600,
+        2,
+        Some(1001),
+    )
+    .await;
 
-    let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_slot, 600, "cache must advance to the newer slot");
+    let account = latest_account(&db, program_id, &address).await;
+    assert_eq!(account.latest_slot, 600, "must advance to the newer slot");
+    assert_ne!(
+        account.latest_slot_id, before.latest_slot_id,
+        "latest_slot_id must advance with the slot"
+    );
+    assert_eq!(
+        account.latest_write_version, 2,
+        "latest_write_version must advance on a newer slot"
+    );
+    assert_eq!(account.lamports, 100);
+    assert_eq!(account.owner, owner.to_bytes().to_vec());
     assert_eq!(account.state, vec![2]);
-    assert_eq!(history_rows(&db, account.id).await.len(), 2);
 }
 
 #[tokio::test]
-async fn older_slot_does_not_regress_cache_but_records_history() {
+async fn older_slot_does_not_regress_latest_state() {
     let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://older-slot.example.com").await;
@@ -102,64 +174,50 @@ async fn older_slot_does_not_regress_cache_but_records_history() {
 
     let address = pubkey(10);
     let owner = pubkey(20);
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 600, 0, Some(1001)).await;
-    // an out-of-order older slot arrives after the newer one
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        600,
+        2,
+        Some(1001),
+    )
+    .await;
+    let before = latest_account(&db, program_id, &address).await;
+    // an out-of-order older slot arrives after the newer one — even with a higher write_version
+    // it must lose, since the guard orders by slot first
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        500,
+        5,
+        Some(1000),
+    )
+    .await;
 
-    let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_slot, 600, "an older slot must not regress the cache");
+    let account = latest_account(&db, program_id, &address).await;
+    assert_eq!(
+        account.latest_slot, 600,
+        "an older slot must not regress the latest state"
+    );
+    assert_eq!(
+        account.latest_slot_id, before.latest_slot_id,
+        "latest_slot_id must not regress"
+    );
+    assert_eq!(
+        account.latest_write_version, 2,
+        "a higher write_version at an older slot must not regress the latest state"
+    );
     assert_eq!(account.state, vec![2]);
-    // but the older state is still recorded for history reads
-    assert_eq!(history_rows(&db, account.id).await.len(), 2);
-}
-
-#[tokio::test]
-async fn tx_signature_backfill_attributes_unambiguous_write() {
-    let _guard = reset_db().await;
-    let db = test_db().await;
-    let rpc_id = seed_rpc(&db, "https://txsig-backfill.example.com").await;
-    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
-
-    let address = pubkey(10);
-    // json-rpc ingest leaves account_states.tx_signature NULL
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
-    // a single writable transaction touched the account at that slot
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
-    seed_transaction_account(&db, &signature(40), &address, 500, true).await;
-    // a second transaction only read the account at the same slot — a readonly mention must not count
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
-    seed_transaction_account(&db, &signature(41), &address, 500, false).await;
-
-    let filled = backfill_tx_signatures_once(&db).await.unwrap();
-    assert_eq!(filled, 1);
-
-    let account = cached_account(&db, program_id, &address).await;
-    let states = history_rows(&db, account.id).await;
-    assert_eq!(states.len(), 1);
-    assert_eq!(states[0].tx_signature, Some(signature(40).as_ref().to_vec()));
-}
-
-#[tokio::test]
-async fn tx_signature_backfill_leaves_ambiguous_slot_null() {
-    let _guard = reset_db().await;
-    let db = test_db().await;
-    let rpc_id = seed_rpc(&db, "https://txsig-ambiguous.example.com").await;
-    let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
-
-    let address = pubkey(10);
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
-    // two distinct writable transactions wrote the same account at the same slot → ambiguous
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
-    seed_transaction_account(&db, &signature(40), &address, 500, true).await;
-    seed_transaction_account(&db, &signature(41), &address, 500, true).await;
-
-    let filled = backfill_tx_signatures_once(&db).await.unwrap();
-    assert_eq!(filled, 0);
-
-    let account = cached_account(&db, program_id, &address).await;
-    let states = history_rows(&db, account.id).await;
-    assert_eq!(states[0].tx_signature, None, "an ambiguous slot stays unattributed");
 }
 
 #[tokio::test]
@@ -170,20 +228,53 @@ async fn latest_tx_signature_backfill_attributes_unambiguous_write() {
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
 
     let address = pubkey(10);
-    // json-rpc ingest leaves latest_tx_signature NULL at the cache's latest_slot
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    // json-rpc ingest leaves latest_tx_signature NULL at the account's latest_slot
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &pubkey(20),
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
     // a single writable transaction touched the account at latest_slot
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(40),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(40), &address, 500, true).await;
     // a readonly mention at the same slot must not count
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(41),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(41), &address, 500, false).await;
 
     let filled = backfill_latest_tx_signatures_once(&db).await.unwrap();
     assert_eq!(filled, 1);
 
-    let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_tx_signature, Some(signature(40).as_ref().to_vec()));
+    let account = latest_account(&db, program_id, &address).await;
+    assert_eq!(
+        account.latest_tx_signature,
+        Some(signature(40).as_ref().to_vec())
+    );
 }
 
 #[tokio::test]
@@ -194,22 +285,55 @@ async fn latest_tx_signature_backfill_leaves_ambiguous_slot_null() {
     let program_id = seed_program(&db, rpc_id, &pubkey(1)).await;
 
     let address = pubkey(10);
-    seed_account(&db, program_id, rpc_id, &address, &pubkey(20), &[1], 100, 500, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &pubkey(20),
+        &[1],
+        100,
+        500,
+        0,
+        Some(1000),
+    )
+    .await;
     // two distinct writable transactions wrote the account at latest_slot → ambiguous
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(40), 500, true, Some(1000)).await;
-    seed_transaction(&db, Some(program_id), rpc_id, &signature(41), 500, true, Some(1000)).await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(40),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
+    seed_transaction(
+        &db,
+        Some(program_id),
+        rpc_id,
+        &signature(41),
+        500,
+        true,
+        Some(1000),
+    )
+    .await;
     seed_transaction_account(&db, &signature(40), &address, 500, true).await;
     seed_transaction_account(&db, &signature(41), &address, 500, true).await;
 
     let filled = backfill_latest_tx_signatures_once(&db).await.unwrap();
     assert_eq!(filled, 0);
 
-    let account = cached_account(&db, program_id, &address).await;
-    assert_eq!(account.latest_tx_signature, None, "an ambiguous latest_slot stays unattributed");
+    let account = latest_account(&db, program_id, &address).await;
+    assert_eq!(
+        account.latest_tx_signature, None,
+        "an ambiguous latest_slot stays unattributed"
+    );
 }
 
 #[tokio::test]
-async fn higher_write_version_advances_cache_within_same_slot() {
+async fn higher_write_version_advances_latest_state_within_same_slot() {
     let _guard = reset_db().await;
     let db = test_db().await;
     let rpc_id = seed_rpc(&db, "https://write-version.example.com").await;
@@ -217,14 +341,45 @@ async fn higher_write_version_advances_cache_within_same_slot() {
 
     let address = pubkey(10);
     let owner = pubkey(20);
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 700, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 700, 1, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        700,
+        0,
+        Some(1000),
+    )
+    .await;
+    let before = latest_account(&db, program_id, &address).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        700,
+        1,
+        Some(1000),
+    )
+    .await;
 
-    let account = cached_account(&db, program_id, &address).await;
+    let account = latest_account(&db, program_id, &address).await;
     assert_eq!(account.latest_slot, 700);
-    assert_eq!(account.latest_write_version, 1, "higher write_version wins within a slot");
+    assert_eq!(
+        account.latest_slot_id, before.latest_slot_id,
+        "a same-slot advance keeps the same slot row"
+    );
+    assert_eq!(
+        account.latest_write_version, 1,
+        "higher write_version wins within a slot"
+    );
     assert_eq!(account.state, vec![2]);
-    assert_eq!(history_rows(&db, account.id).await.len(), 2);
 }
 
 #[tokio::test]
@@ -238,15 +393,96 @@ async fn same_slot_json_rpc_rewrite_wins_last() {
     let owner = pubkey(20);
     // json-rpc has no write_version, so both writes collapse to 0 at the same slot: two txs in one
     // block each touch the account. the later value is the block's final state and must win.
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[1], 100, 700, 0, Some(1000)).await;
-    seed_account(&db, program_id, rpc_id, &address, &owner, &[2], 100, 700, 0, Some(1000)).await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[1],
+        100,
+        700,
+        0,
+        Some(1000),
+    )
+    .await;
+    seed_account(
+        &db,
+        program_id,
+        rpc_id,
+        &address,
+        &owner,
+        &[2],
+        100,
+        700,
+        0,
+        Some(1000),
+    )
+    .await;
 
-    let account = cached_account(&db, program_id, &address).await;
+    let account = latest_account(&db, program_id, &address).await;
     assert_eq!(account.latest_slot, 700);
-    assert_eq!(account.state, vec![2], "the later same-slot write must win the cache");
-    // the (slot, write_version) key collapses to a single row; it reflects the final value, so the
-    // cache and history agree instead of the cache silently keeping the stale first value
-    let history = history_rows(&db, account.id).await;
-    assert_eq!(history.len(), 1, "one row per (slot, write_version)");
-    assert_eq!(history[0].data, vec![2], "the surviving history row is the final value");
+    assert_eq!(
+        account.latest_write_version, 0,
+        "json-rpc rewrites both collapse to write_version 0"
+    );
+    assert_eq!(account.state, vec![2], "the later same-slot write must win");
+}
+
+fn sig_info(sig: &solana_sdk::signature::Signature, slot: u64) -> SignatureInfo {
+    SignatureInfo {
+        signature: *sig,
+        slot,
+        err: None,
+        block_time: None,
+    }
+}
+
+#[tokio::test]
+async fn stored_signatures_skips_only_this_programs_own_rows() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://stored-signatures.example.com").await;
+    let mine = seed_program(&db, rpc_id, &pubkey(40)).await;
+    let other = seed_program(&db, rpc_id, &pubkey(41)).await;
+
+    let ours = signature(60);
+    let theirs = signature(61);
+    let unseen = signature(62);
+    seed_transaction(&db, Some(mine), rpc_id, &ours, 900, true, None).await;
+    seed_transaction(&db, Some(other), rpc_id, &theirs, 900, true, None).await;
+
+    let page = vec![
+        sig_info(&ours, 900),
+        sig_info(&theirs, 900),
+        sig_info(&unseen, 900),
+    ];
+    let stored = stored_signatures(&db, mine, &page, 0).await.unwrap();
+
+    assert!(
+        stored.contains(ours.as_ref()),
+        "our own row must be skipped"
+    );
+    assert!(
+        !stored.contains(theirs.as_ref()),
+        "a row another program ingested first still owes us its program_events"
+    );
+    assert!(!stored.contains(unseen.as_ref()));
+}
+
+#[tokio::test]
+async fn stored_signatures_ignores_signatures_below_the_floor() {
+    let _guard = reset_db().await;
+    let db = test_db().await;
+    let rpc_id = seed_rpc(&db, "https://stored-signatures-floor.example.com").await;
+    let program_id = seed_program(&db, rpc_id, &pubkey(42)).await;
+
+    let below = signature(63);
+    seed_transaction(&db, Some(program_id), rpc_id, &below, 100, true, None).await;
+
+    let page = vec![sig_info(&below, 100)];
+    let stored = stored_signatures(&db, program_id, &page, 500)
+        .await
+        .unwrap();
+    assert!(stored.is_empty(), "the walk stops at the floor anyway");
 }

@@ -3,15 +3,17 @@ use serde::{Deserialize, Deserializer, de};
 
 use crate::core::error::SvmIndexerError;
 
-// serde_urlencoded delivers `#[serde(flatten)]` fields as strings, so a bare `Option<u16>` fails to coerce (`invalid type: string`). 
+// serde_urlencoded delivers `#[serde(flatten)]` fields as strings, so a bare `Option<u16>` fails to coerce (`invalid type: string`).
 fn de_opt_u16<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
 where
     D: Deserializer<'de>,
 {
     match Option::<String>::deserialize(deserializer)? {
-        Some(raw) if !raw.trim().is_empty() => {
-            raw.trim().parse::<u16>().map(Some).map_err(de::Error::custom)
-        }
+        Some(raw) if !raw.trim().is_empty() => raw
+            .trim()
+            .parse::<u16>()
+            .map(Some)
+            .map_err(de::Error::custom),
         _ => Ok(None),
     }
 }
@@ -21,11 +23,21 @@ where
     D: Deserializer<'de>,
 {
     match Option::<String>::deserialize(deserializer)? {
-        Some(raw) if !raw.trim().is_empty() => {
-            raw.trim().parse::<bool>().map(Some).map_err(de::Error::custom)
-        }
+        Some(raw) if !raw.trim().is_empty() => raw
+            .trim()
+            .parse::<bool>()
+            .map(Some)
+            .map_err(de::Error::custom),
         _ => Ok(None),
     }
+}
+
+pub(crate) fn de_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]

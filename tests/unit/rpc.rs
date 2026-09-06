@@ -1,9 +1,10 @@
 use serde_json::json;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 
-use crate::indexer::rpc::json_rpc::{account_keys, fee_payer};
+use crate::indexer::rpc::json_rpc::{JsonRpc, account_keys, fee_payer, raw_transaction};
 
-use super::support::pubkey;
+use super::support::{pubkey, signature};
 
 /// A `json`-encoded (Raw message) transaction fixture with the given header counts and account keys,
 /// no meta — the shape `getTransaction` returns and `account_keys`/`fee_payer` read.
@@ -89,4 +90,60 @@ fn fee_payer_is_the_first_account_key() {
     let keys: Vec<String> = (10..13).map(|seed| pubkey(seed).to_string()).collect();
     let tx = raw_tx(1, 0, 0, &keys);
     assert_eq!(fee_payer(&tx), Some(pubkey(10)));
+}
+
+/// The decode both the single and the batched fetch share; a batch entry carries no signature of its
+/// own, so the one that was asked for has to be threaded back in.
+#[test]
+fn raw_transaction_carries_the_requested_signature_and_meta() {
+    let keys: Vec<String> = (20..22).map(|seed| pubkey(seed).to_string()).collect();
+    let mut tx = raw_tx(1, 0, 0, &keys);
+    tx.transaction.meta = serde_json::from_value(json!({
+        "err": null,
+        "status": {"Ok": null},
+        "fee": 5000,
+        "preBalances": [],
+        "postBalances": [],
+        "logMessages": ["Program log: hello"],
+    }))
+    .expect("meta fixture should deserialize");
+
+    let decoded = raw_transaction(signature(9), tx).expect("fixture should decode");
+    assert_eq!(decoded.signature, signature(9));
+    assert_eq!(decoded.slot, 100);
+    assert_eq!(decoded.block_time, Some(1000));
+    assert!(decoded.success);
+    assert_eq!(decoded.fee, Some(5000));
+    assert_eq!(decoded.fee_payer, Some(pubkey(20)));
+    assert_eq!(decoded.logs, vec!["Program log: hello".to_owned()]);
+}
+
+#[test]
+fn a_failed_transaction_decodes_as_unsuccessful() {
+    let keys: Vec<String> = (30..31).map(|seed| pubkey(seed).to_string()).collect();
+    let mut tx = raw_tx(1, 0, 0, &keys);
+    tx.transaction.meta = serde_json::from_value(json!({
+        "err": {"InstructionError": [0, "InvalidAccountData"]},
+        "status": {"Err": {"InstructionError": [0, "InvalidAccountData"]}},
+        "fee": 5000,
+        "preBalances": [],
+        "postBalances": [],
+    }))
+    .expect("meta fixture should deserialize");
+
+    let decoded = raw_transaction(signature(10), tx).expect("fixture should decode");
+    assert!(!decoded.success);
+    assert!(decoded.err.is_some());
+    assert!(decoded.logs.is_empty(), "no logMessages means no logs");
+}
+
+/// Building the client sets up an http stack of its own for batched calls; a missing tls backend
+/// would only surface at runtime.
+#[test]
+fn json_rpc_client_builds() {
+    let _ = JsonRpc::new(
+        "https://rpc.example.com".to_owned(),
+        "wss://rpc.example.com".to_owned(),
+        CommitmentConfig::confirmed(),
+    );
 }

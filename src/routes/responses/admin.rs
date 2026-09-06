@@ -13,7 +13,11 @@ pub struct GetIndexerErrorsResponse {
 
 impl GetIndexerErrorsResponse {
     pub fn new(errors: Vec<IndexerErrorModel>, total: u64, pages: u64) -> Self {
-        Self { data: errors, total, pages }
+        Self {
+            data: errors,
+            total,
+            pages,
+        }
     }
 }
 

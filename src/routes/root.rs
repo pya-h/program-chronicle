@@ -13,9 +13,10 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/", get(get_root_handler))
 }
 
+/// Json fallback for everything outside `/panel`, which serves its own 404 page
 pub async fn not_found_handler() -> FinalResponse<Value> {
     Ok(ApiResponse::new(
         StatusCode::NOT_FOUND,
-        json!({"status": "ok", "message": "Route not found!"}),
+        json!({"message": "Route not found!"}),
     ))
 }

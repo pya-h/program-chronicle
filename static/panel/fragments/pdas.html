@@ -2,7 +2,7 @@
     <header class="section-header">
         <div class="section-title-block">
             <h1 class="section-title">PDAs</h1>
-            <p class="section-description">Browse the cached accounts of an indexed program.</p>
+            <p class="section-description">Browse the accounts of an indexed program.</p>
         </div>
     </header>
 
@@ -51,7 +51,7 @@
     </article>
 
     <div class="modal-overlay" id="pdas-detail-modal" aria-hidden="true">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pdas-detail-title">
+        <div class="modal-card modal-card-lg" role="dialog" aria-modal="true" aria-labelledby="pdas-detail-title">
             <div class="modal-header">
                 <h2 class="modal-title" id="pdas-detail-title">Account</h2>
                 <button type="button" class="modal-close" data-close-modal aria-label="Close">
@@ -88,11 +88,20 @@
                         <span class="rpc-detail-label">Block Time</span>
                         <span class="rpc-detail-value" id="pdas-detail-time">—</span>
                     </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">First Indexed</span>
+                        <span class="rpc-detail-value" id="pdas-detail-created">—</span>
+                    </div>
+                    <div class="rpc-detail-block">
+                        <span class="rpc-detail-label">Last Indexed</span>
+                        <span class="rpc-detail-value" id="pdas-detail-updated">—</span>
+                    </div>
                 </div>
                 <div class="rpc-detail-block">
                     <div class="detail-data-head">
                         <span class="rpc-detail-label">Data</span>
-                        <button type="button" class="pager-btn" id="pdas-detail-data-toggle">Show hex</button>
+                        <span class="detail-data-size" data-size-for="pdas-detail-data"></span>
+                        <button type="button" class="pager-btn" data-hex-toggle="pdas-detail-data">Show hex</button>
                     </div>
                     <div class="detail-data" id="pdas-detail-data">—</div>
                 </div>

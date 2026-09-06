@@ -1,5 +1,4 @@
 use sea_orm::{
-    ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
     TransactionTrait,
@@ -9,7 +8,7 @@ use tokio::sync::broadcast;
 
 use crate::core::error::SvmIndexerError;
 use crate::core::sse::SseEvent;
-use crate::db::entities::{account_states, program_accounts, slots};
+use crate::db::entities::{program_accounts, slots};
 use crate::indexer::rpc::AccountSnapshot;
 
 pub async fn ensure_slot<C: ConnectionTrait>(
@@ -78,10 +77,10 @@ pub async fn upsert_account_snapshot(
         .filter(program_accounts::Column::Address.eq(address.clone()))
         .one(&txn)
         .await
-        .map_err(|err| SvmIndexerError::db_error("Failed loading cached account!", err))?;
+        .map_err(|err| SvmIndexerError::db_error("Failed loading account!", err))?;
 
     // value-dedupe: the unique key can't catch a reboot's catch-up (its slot differs), so compare
-    // by value to avoid appending a redundant history row per unchanged account on every restart
+    // by value to skip a redundant rewrite of an unchanged account on every restart
     if let Some(row) = &existing
         && row.state == snapshot.data
         && row.lamports == lamports
@@ -96,7 +95,7 @@ pub async fn upsert_account_snapshot(
     let program_account_id = match existing {
         Some(row) => row.id,
         None => {
-            program_accounts::ActiveModel {
+            program_accounts::Entity::insert(program_accounts::ActiveModel {
                 program_id: Set(program_id),
                 address: Set(address),
                 state: Set(snapshot.data.clone()),
@@ -110,49 +109,28 @@ pub async fn upsert_account_snapshot(
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
-            }
-            .insert(&txn)
+            })
+            .on_conflict(
+                // the snapshot and the live stream can first-see an account at the same moment; a
+                // no-op update keeps RETURNING yielding the row the loser needs to carry on with
+                OnConflict::columns([
+                    program_accounts::Column::Address,
+                    program_accounts::Column::ProgramId,
+                ])
+                .value(
+                    program_accounts::Column::UpdatedAt,
+                    Expr::cust(r#""program_accounts"."updated_at""#),
+                )
+                .to_owned(),
+            )
+            .exec_with_returning(&txn)
             .await
-            .map_err(|err| SvmIndexerError::db_error("Failed creating cached account!", err))?
+            .map_err(|err| SvmIndexerError::db_error("Failed creating account!", err))?
             .id
         }
     };
 
-    account_states::Entity::insert(account_states::ActiveModel {
-        program_account_id: Set(program_account_id),
-        data: Set(snapshot.data.clone()),
-        lamports: Set(lamports),
-        owner: Set(owner.clone()),
-        slot: Set(slot),
-        slot_id: Set(slot_id),
-        write_version: Set(write_version),
-        tx_signature: Set(tx_sig.clone()),
-        created_at: Set(now),
-        updated_at: Set(now),
-        ..Default::default()
-    })
-    .on_conflict(
-        OnConflict::columns([
-            account_states::Column::ProgramAccountId,
-            account_states::Column::Slot,
-            account_states::Column::WriteVersion,
-        ])
-        // json-rpc has no write_version, so it collapses to 0: two distinct values in one slot
-        // collide on the key. the later arrival is the slot's newer state, so let it win here too
-        .update_columns([
-            account_states::Column::Data,
-            account_states::Column::Lamports,
-            account_states::Column::Owner,
-            account_states::Column::TxSignature,
-            account_states::Column::UpdatedAt,
-        ])
-        .to_owned(),
-    )
-    .exec_without_returning(&txn)
-    .await
-    .map_err(|err| SvmIndexerError::db_error("Failed appending account state!", err))?;
-
-    program_accounts::Entity::update_many()
+    let advanced = program_accounts::Entity::update_many()
         .col_expr(
             program_accounts::Column::State,
             Expr::value(snapshot.data.clone()),
@@ -178,24 +156,27 @@ pub async fn upsert_account_snapshot(
                     Condition::all()
                         .add(program_accounts::Column::LatestSlot.eq(slot))
                         // `lte`, not `lt`: a same-slot json-rpc rewrite (write_version 0 == 0) must
-                        // still advance the cache to the newer value, matching the history row above
+                        // still advance to the newer value
                         .add(program_accounts::Column::LatestWriteVersion.lte(write_version)),
                 ),
         )
         .exec(&txn)
         .await
-        .map_err(|err| SvmIndexerError::db_error("Failed advancing account cache!", err))?;
+        .map_err(|err| SvmIndexerError::db_error("Failed advancing account!", err))?;
 
     txn.commit()
         .await
         .map_err(|err| SvmIndexerError::db_error("Failed committing snapshot!", err))?;
 
-    let _ = sse_tx.send(SseEvent::account_changed(
-        program_id,
-        snapshot.address,
-        slot,
-        write_version,
-        snapshot.data.clone(),
-    ));
+    // a rejected out-of-order write advances no row; don't broadcast its stale state
+    if advanced.rows_affected > 0 {
+        let _ = sse_tx.send(SseEvent::account_changed(
+            program_id,
+            snapshot.address,
+            slot,
+            write_version,
+            snapshot.data.clone(),
+        ));
+    }
     Ok(())
 }

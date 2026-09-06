@@ -57,13 +57,29 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .not_null(),
                     )
-                    .col(ColumnDef::new(ProgramEvents::ProgramId).integer().not_null())
-                    .col(ColumnDef::new(ProgramEvents::ProgramAccountId).big_integer().null())
-                    .col(ColumnDef::new(ProgramEvents::TxSignature).binary().not_null())
+                    .col(
+                        ColumnDef::new(ProgramEvents::ProgramId)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ProgramEvents::ProgramAccountId)
+                            .big_integer()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(ProgramEvents::TxSignature)
+                            .binary()
+                            .not_null(),
+                    )
                     .check(Expr::cust(r#"OCTET_LENGTH("tx_signature") = 64"#))
                     .col(ColumnDef::new(ProgramEvents::Slot).big_integer().not_null())
                     .check(Expr::col(ProgramEvents::Slot).gte(0))
-                    .col(ColumnDef::new(ProgramEvents::SlotId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(ProgramEvents::SlotId)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(ProgramEvents::LogIndex).integer().not_null())
                     .check(Expr::col(ProgramEvents::LogIndex).gte(0))
                     .col(ColumnDef::new(ProgramEvents::Data).binary().not_null())
@@ -135,7 +151,12 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(ProgramEvents::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(ProgramEvents::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await
     }
 }

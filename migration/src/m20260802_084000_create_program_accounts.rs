@@ -18,7 +18,6 @@ enum ProgramAccounts {
     CreatedAt,
     UpdatedAt,
 
-    // Next ones are mostly for caching, to return the account state fast instead of querying thousands of account states.
     Lamports,
     Owner,
     State,
@@ -111,6 +110,18 @@ impl MigrationTrait for Migration {
                     .col(ProgramAccounts::Address)
                     .col(ProgramAccounts::ProgramId)
                     .unique()
+                    .to_owned(),
+            )
+            .await?;
+        // program-scoped reads filter on program_id alone; the address-leading unique index can't
+        // serve that, so add a program_id-leading one for `/programs/{id}/accounts` and correlation
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-accounts-program-id-address")
+                    .table(ProgramAccounts::Table)
+                    .col(ProgramAccounts::ProgramId)
+                    .col(ProgramAccounts::Address)
                     .to_owned(),
             )
             .await?;

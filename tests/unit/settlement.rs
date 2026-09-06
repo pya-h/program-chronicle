@@ -1,0 +1,194 @@
+use std::collections::HashSet;
+
+use solana_sdk::signature::Signature;
+
+use crate::core::commitment::TransactionCommitment;
+use crate::core::slot_status::SlotStatus;
+use crate::indexer::rpc::{BlockSignatures, SignatureStatus, SlotBlock};
+use crate::indexer::settlement::{
+    SettlementRoute, fills_block_time, lowest, route_status, split_by_block,
+};
+
+const STORED_SLOT: i64 = 500;
+
+fn answered(commitment: TransactionCommitment, slot: u64) -> Option<SignatureStatus> {
+    Some(SignatureStatus { commitment, slot })
+}
+
+/// Distinct, stable signature bytes; the values themselves carry no meaning.
+fn signature(seed: u8) -> Vec<u8> {
+    vec![seed; 64]
+}
+
+fn block_holding(seeds: &[u8]) -> SlotBlock {
+    SlotBlock::Found(BlockSignatures {
+        blockhash: "whatever".to_owned(),
+        block_time: None,
+        signatures: seeds
+            .iter()
+            .map(|seed| Signature::from([*seed; 64]))
+            .collect(),
+    })
+}
+
+fn block_timed(block_time: Option<i64>) -> SlotBlock {
+    SlotBlock::Found(BlockSignatures {
+        blockhash: "whatever".to_owned(),
+        block_time,
+        signatures: Vec::new(),
+    })
+}
+
+#[test]
+fn a_finalized_answer_at_our_own_slot_promotes() {
+    assert_eq!(
+        route_status(
+            STORED_SLOT,
+            answered(TransactionCommitment::Finalized, STORED_SLOT as u64)
+        ),
+        SettlementRoute::Finalized
+    );
+}
+
+#[test]
+fn a_finalized_answer_elsewhere_is_a_survivor_not_a_promotion() {
+    assert_eq!(
+        route_status(STORED_SLOT, answered(TransactionCommitment::Finalized, 507)),
+        SettlementRoute::Survivor(507)
+    );
+}
+
+#[test]
+fn an_unsettled_answer_waits_for_the_next_tick() {
+    for commitment in [
+        TransactionCommitment::Processed,
+        TransactionCommitment::Confirmed,
+    ] {
+        assert_eq!(
+            route_status(STORED_SLOT, answered(commitment, STORED_SLOT as u64)),
+            SettlementRoute::Pending
+        );
+        // even reported elsewhere: nothing is final yet, so there is no settled slot to move it to
+        assert_eq!(
+            route_status(STORED_SLOT, answered(commitment, 507)),
+            SettlementRoute::Pending
+        );
+    }
+}
+
+#[test]
+fn only_a_ledger_wide_miss_can_ever_reach_a_drop() {
+    assert_eq!(route_status(STORED_SLOT, None), SettlementRoute::Absent);
+}
+
+#[test]
+fn a_reorg_whose_rows_all_survived_elsewhere_still_confirms_it() {
+    // driving the rewind off drops alone would miss this one entirely: every row re-included on the
+    // winning fork means no drop is ever issued, and the replacement block at S is never walked
+    assert!(
+        route_status(STORED_SLOT, answered(TransactionCommitment::Finalized, 507)).confirms_reorg()
+    );
+    for route in [
+        route_status(
+            STORED_SLOT,
+            answered(TransactionCommitment::Finalized, STORED_SLOT as u64),
+        ),
+        route_status(STORED_SLOT, answered(TransactionCommitment::Confirmed, 507)),
+        // still ambiguous here — pass 2 is what turns it into evidence of anything
+        route_status(STORED_SLOT, None),
+    ] {
+        assert!(!route.confirms_reorg(), "{route:?} proves nothing about S");
+    }
+}
+
+#[test]
+fn a_tick_rewinds_to_the_lowest_reorg_it_confirmed() {
+    // the re-walk runs newest→oldest to a floor, so the deepest one covers the rest on the way up
+    assert_eq!(lowest(Some(600), Some(500)), Some(500));
+    assert_eq!(lowest(Some(500), Some(600)), Some(500));
+    assert_eq!(lowest(None, Some(500)), Some(500));
+    assert_eq!(lowest(Some(500), None), Some(500));
+    assert_eq!(lowest(None, None), None);
+}
+
+#[test]
+fn a_read_block_fills_a_missing_block_time_and_never_rewrites_one() {
+    assert_eq!(
+        fills_block_time(None, &block_timed(Some(1_700_000_000))),
+        Some(1_700_000_000)
+    );
+    // write-once: the backfill worker may have got there first, and a slot's time cannot change
+    assert_eq!(fills_block_time(Some(1), &block_timed(Some(2))), None);
+    assert_eq!(fills_block_time(None, &block_timed(None)), None);
+    // no block, no time — and `Pruned` is exactly the case the backfill worker still exists for
+    for block in [
+        SlotBlock::Reorged,
+        SlotBlock::Pruned,
+        SlotBlock::NotYetFinal,
+    ] {
+        assert_eq!(fills_block_time(None, &block), None);
+    }
+}
+
+#[test]
+fn a_read_block_promotes_what_it_holds_and_drops_what_pass_one_missed() {
+    let verdict = split_by_block(
+        &block_holding(&[1]),
+        vec![signature(1), signature(2)],
+        &HashSet::from([signature(2)]),
+    );
+    assert_eq!(verdict.promote, vec![signature(1)]);
+    assert_eq!(verdict.drop, vec![signature(2)]);
+    assert_eq!(verdict.status, Some(SlotStatus::Canonical));
+}
+
+#[test]
+fn a_row_pass_one_never_answered_for_is_never_dropped_on_the_slots_evidence() {
+    // the §8 hazard: absent from the block at S is also what a survivor at S′ looks like, and a drop
+    // is terminal, so an unevidenced row goes back through the per-signature question
+    for block in [block_holding(&[]), SlotBlock::Reorged] {
+        let verdict = split_by_block(&block, vec![signature(3)], &HashSet::new());
+        assert!(verdict.drop.is_empty());
+        assert_eq!(verdict.leftovers, vec![signature(3)]);
+    }
+}
+
+#[test]
+fn no_block_on_the_canonical_chain_drops_only_the_evidenced_rows() {
+    let verdict = split_by_block(
+        &SlotBlock::Reorged,
+        vec![signature(1), signature(2)],
+        &HashSet::from([signature(1)]),
+    );
+    assert_eq!(verdict.drop, vec![signature(1)]);
+    assert_eq!(verdict.leftovers, vec![signature(2)]);
+    assert!(verdict.promote.is_empty());
+    assert_eq!(verdict.status, Some(SlotStatus::Reorged));
+}
+
+#[test]
+fn a_pruned_slot_finalizes_every_row_and_drops_none() {
+    // the one verdict that takes the whole slot: the inference rests on having reached `confirmed`,
+    // which holds whether or not pass 1 asked about the row
+    let verdict = split_by_block(
+        &SlotBlock::Pruned,
+        vec![signature(1), signature(2)],
+        &HashSet::from([signature(1)]),
+    );
+    assert_eq!(verdict.promote, vec![signature(1), signature(2)]);
+    assert!(verdict.drop.is_empty());
+    assert!(verdict.leftovers.is_empty());
+    assert_eq!(verdict.status, Some(SlotStatus::Pruned));
+}
+
+#[test]
+fn a_slot_that_has_not_finalized_yet_touches_nothing() {
+    let verdict = split_by_block(
+        &SlotBlock::NotYetFinal,
+        vec![signature(1)],
+        &HashSet::from([signature(1)]),
+    );
+    assert_eq!(verdict, Default::default());
+    // stays `unknown`, which is what makes the next tick ask again
+    assert_eq!(verdict.status, None);
+}

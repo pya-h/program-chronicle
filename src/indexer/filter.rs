@@ -66,13 +66,19 @@ impl AccountFilter {
         }
         for memcmp in &self.memcmp {
             if let Some(bytes) = memcmp.raw_bytes() {
-                filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(memcmp.offset, bytes)));
+                filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+                    memcmp.offset,
+                    bytes,
+                )));
             }
         }
         filters
     }
     pub fn matches(&self, account: &AccountSnapshot) -> bool {
-        if self.data_size.is_some_and(|size| account.data.len() as u64 != size) {
+        if self
+            .data_size
+            .is_some_and(|size| account.data.len() as u64 != size)
+        {
             return false;
         }
         for memcmp in &self.memcmp {
@@ -87,7 +93,10 @@ impl AccountFilter {
             }
         }
         if !self.addresses.is_empty()
-            && !self.addresses.iter().any(|a| *a == account.address.to_string())
+            && !self
+                .addresses
+                .iter()
+                .any(|a| *a == account.address.to_string())
         {
             return false;
         }

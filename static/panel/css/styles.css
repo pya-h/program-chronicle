@@ -81,6 +81,13 @@
     box-sizing: border-box;
 }
 
+/* The user-agent rule loses to any author `display`, so every element the JS hides with the
+   attribute needs this to actually disappear. `!important` because those rules match with the same
+   specificity and would otherwise win on source order alone. */
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     height: 100%;
 }
@@ -1567,6 +1574,11 @@ html.no-anim *::after {
     flex-shrink: 0;
 }
 
+.setting-input {
+    width: 6rem;
+    text-align: center;
+}
+
 /* Segmented control */
 .segmented {
     display: inline-flex;
@@ -2019,8 +2031,13 @@ html.no-anim *::after {
 
 .detail-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
     gap: 0.75rem;
+}
+
+/* a full row of the grid, for values too long to share one (signatures, addresses) */
+.detail-grid .detail-span {
+    grid-column: 1 / -1;
 }
 
 .tx-programs {
@@ -2050,20 +2067,30 @@ html.no-anim *::after {
 .detail-data-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 0.75rem;
     margin-bottom: 0.4rem;
+}
+
+.detail-data-head .pager-btn {
+    margin-left: auto;
+}
+
+.detail-data-size {
+    font-size: 0.7rem;
+    color: var(--text-muted);
 }
 
 .detail-data {
     font-family: var(--font-mono);
     font-size: 0.8rem;
+    line-height: 1.5;
     word-break: break-all;
-    background: var(--bg-surface-elevated);
+    /* the block it sits in is already `elevated`; without a distinct ground the payload has no edge */
+    background: var(--bg-input);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: 0.75rem;
-    max-height: 12rem;
+    max-height: 16rem;
     overflow: auto;
 }
 
@@ -2088,6 +2115,11 @@ html.no-anim *::after {
     align-items: baseline;
     justify-content: space-between;
     gap: 0.75rem;
+}
+
+.progress-head .status-badge {
+    margin-right: auto;
+    align-self: center;
 }
 
 .progress-name {
@@ -2145,6 +2177,21 @@ html.no-anim *::after {
     border-color: var(--warning-500);
 }
 
+.stream-row.clickable {
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.stream-row.clickable:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-surface-hover);
+}
+
+/* the row has no `space-between`, so the middle has to claim the slack itself */
+.stream-row .dash-row-main {
+    flex: 1;
+}
+
 .stream-kind {
     flex: 0 0 auto;
     font-size: 0.68rem;
@@ -2159,6 +2206,7 @@ html.no-anim *::after {
 
 .stream-kind.account { color: var(--success-500); }
 .stream-kind.event { color: var(--accent-500); }
+.stream-kind.transaction { color: var(--text-primary); }
 .stream-kind.resync { color: var(--warning-500); }
 .stream-kind.backfill { color: var(--text-muted); }
 
@@ -2167,53 +2215,6 @@ html.no-anim *::after {
     font-size: 0.78rem;
     color: var(--text-secondary);
     white-space: nowrap;
-}
-
-.history-address-group {
-    flex: 2 1 20rem;
-}
-
-.history-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.history-row {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-}
-
-.history-slot {
-    align-self: flex-start;
-    flex: 0 0 auto;
-    white-space: nowrap;
-}
-
-.history-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    min-width: 0;
-    flex: 1 1 auto;
-}
-
-.history-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 1rem;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-}
-
-.history-data {
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-    word-break: break-all;
 }
 
 .rpc-list {
@@ -2430,6 +2431,11 @@ html.no-anim *::after {
     max-width: 24rem;
 }
 
+/* read-only detail modals: addresses, signatures and raw payloads all want the width */
+.modal-card-lg {
+    max-width: 46rem;
+}
+
 .modal-header {
     display: flex;
     align-items: center;
@@ -2476,6 +2482,9 @@ html.no-anim *::after {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    /* the card is height-capped: without this the body spills past it and buries the actions */
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .modal-body-scroll {
@@ -2508,6 +2517,32 @@ html.no-anim *::after {
     border: 1px solid rgba(239, 68, 68, 0.15);
     margin: 0.25rem 0 0;
     line-height: 1.5;
+}
+
+.modal-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    line-height: 1.5;
+    cursor: pointer;
+    margin: 0.25rem 0 0;
+}
+
+.modal-check input[type="checkbox"] {
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    margin: 0.125rem 0 0;
+    accent-color: var(--danger-400);
+    cursor: pointer;
+}
+
+.modal-check .check-hint {
+    display: block;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
 }
 
 .modal-actions {
