@@ -160,6 +160,11 @@ impl Indexer {
         escalations: usize,
     ) {
         let mut ticker = tokio::time::interval(interval);
+        // a full batch is dozens of status calls and up to `escalations` block downloads, so a pass
+        // can outrun its own interval — under the default `Burst` the missed ticks then fire
+        // back-to-back and the worker hammers the node the ingest path shares. `Delay` makes the
+        // interval mean quiet time between passes, which is what setting it implies.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
             if let Err(err) = self.settle_once(batch, escalations).await {
@@ -188,8 +193,10 @@ impl Indexer {
             }
 
             let client = self.client_for(&rpc).await;
+            // a zero batch would select nothing and settle nothing, forever and silently; the guard
+            // sits here rather than at the wiring so no future caller can leave it off
             let (absent, mut reorged) = self
-                .settle_from_statuses(rpc.id, &program_ids, client.as_ref(), batch)
+                .settle_from_statuses(rpc.id, &program_ids, client.as_ref(), batch.max(1))
                 .await?;
             if !absent.is_empty() {
                 let escalated = self

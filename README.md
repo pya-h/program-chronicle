@@ -74,7 +74,7 @@ Admin endpoints require the `x-security` header (constant-time comparison) and m
 - `POST|GET|PATCH|DELETE /admin/programs[/{id}]` — manage indexed programs (register by `rpc_id` or inline `rpc_url`). An optional `account_filters` descriptor (`{ data_size, memcmp[], addresses[] }`) narrows ingestion to a subset of a program's accounts — only needed for chain-wide shared programs; omit it to track everything the program owns.
 - `POST /admin/programs/{id}/activate` and `.../deactivate` — resume or pause indexing a program without deleting it.
 
-A health check is served at `GET /` and an HTMX admin panel is served from `static/panel` at the root.
+A health check is served at `GET /`, and an HTMX admin panel from `static/panel` at `GET /panel` (which redirects to `/panel/`).
 
 ## Database schema
 
@@ -82,9 +82,9 @@ A health check is served at `GET /` and an HTMX admin panel is served from `stat
 |---|---|
 | `rpcs` | registered RPC endpoints (`http_url`, `ws_url`) |
 | `programs` | programs to index, tied to an RPC (`address`, `name`, `start_slot`, `last_processed_slot`, `active`, `account_filters`) |
-| `slots` | per-RPC slot dimension (`block_time`, filled once known) |
+| `slots` | per-RPC slot dimension (`block_time`, filled once known; `status`, the reorg verdict) |
 | `program_accounts` | per-program account registry holding each account's latest state |
-| `transactions` | transactions touching a tracked program |
+| `transactions` | transactions touching a tracked program (`commitment` settles to `finalized` or `dropped`) |
 | `transaction_accounts` | per-transaction account references (with a `writable` flag) for address → transaction lookup |
 | `program_events` | decoded program log events |
 
@@ -106,12 +106,38 @@ Read from the environment (see `.env.example`); parsed at startup.
 | `INDEXER_RECONCILE_INTERVAL_SECS` | `300` | interval of the reconcile pass that respawns active programs whose task died out-of-band (e.g. a panic) |
 | `INDEXER_BLOCKTIME_BACKFILL_SECS` | `60` | interval of the `block_time` backfill pass |
 | `INDEXER_TX_SIGNATURE_BACKFILL_SECS` | `120` | interval of the `program_accounts.latest_tx_signature` backfill pass |
+| `INDEXER_SETTLEMENT_WORKER` | `true` | run the settlement worker. `false` falls back to the superseded recent-window sweep — an escape hatch, not a second mode: exactly one of the two ever runs |
+| `INDEXER_SETTLEMENT_WORKER_SECS` | `60` | quiet time between settlement passes. A pass that overruns it does not re-fire immediately |
+| `INDEXER_SETTLEMENT_BATCH` | `10240` | unsettled rows a pass asks about, per RPC. This is the drain rate: `batch × 3600 / interval` rows/hour must exceed the rate new transactions arrive, or the backlog grows without bound |
+| `INDEXER_SETTLEMENT_ESCALATIONS` | `64` | distinct slots a pass may download a block for. Slots over budget simply wait for the next pass |
+| `INDEXER_COMMITMENT_WORKER_SECS` | `60` | interval of the superseded sweep; read only when `INDEXER_SETTLEMENT_WORKER=false` |
 | `DB_MAX_CONNECTIONS` | `40` | pool ceiling |
 | `DB_MIN_CONNECTIONS` | `5` | pool warm floor |
 | `DB_ACQUIRE_TIMEOUT_SECS` | `8` | fail fast instead of hanging when the pool is exhausted |
 | `DB_IDLE_TIMEOUT_SECS` | `300` | release idle connections when load drops |
 
-Under `confirmed`, reorgs are rare and shallow: the latest state self-heals on the next change, while a row for a reorged slot may linger. Writes are idempotent `DO NOTHING` — there is no overwrite machinery in the MVP.
+## Reorgs
+
+Under `confirmed` ingest a transaction is indexed before the chain has committed to it, so a fork can still take it away. A settlement worker resolves every such row to a terminal state — `finalized` or `dropped` — and nothing is left to age out.
+
+It asks the cheap question first. Each pass looks up the stored signatures against full ledger history, which settles the overwhelming majority in one call per 256 rows:
+
+- reported **finalized at the slot we stored** → promoted to `finalized`;
+- reported **finalized at a different slot** → a *survivor*: the transaction was re-included on the winning fork, so its row is moved to the new slot along with its events and account references, then finalized. Nothing is lost;
+- still **processed/confirmed** → left alone for the next pass;
+- **absent from the ledger entirely** → suspicious, but not yet evidence.
+
+Only the last group escalates, and only once per *slot* rather than per row: the pass downloads that slot's block and compares. If the block exists and holds the signature, the row is finalized after all. If the chain has no block there, the absent rows are marked `dropped`. A row the first question never reached is asked individually before it can be dropped — absence from a block is a slot-level fact, and a drop is not reversible. If the node has simply pruned the slot, nothing is dropped: a node losing a block is not the chain losing one. A confirmed reorg also pushes the affected programs' cursors back below that slot, so the block that replaced ours is walked and its transactions are indexed.
+
+**What this means for a consumer:**
+
+- `dropped` transactions are excluded from all reads. They are not deleted — the row stays, so a dropped signature is distinguishable from one that was never indexed.
+- **A dropped transaction's `program_events` keep being served.** `program_events` has no commitment filter, so `GET /programs/{id}/events` can return log events from a block that is not on the chain. Cross-check against the transactions endpoint if that matters to you. Same for events already delivered over SSE — a live event may in effect be retracted later.
+- **A survivor's SSE event was already sent carrying its old slot.** Re-slotting corrects the stored row and the read APIs, but does not re-emit or amend the broadcast event.
+- `slots.status` records the verdict per slot (`unknown`, `canonical`, `reorged`, `pruned`), so `latest_slot` on an account can be checked against the slot it points at. Only slots the worker actually visits get a verdict; the rest stay `unknown`.
+- Account state left behind by a *dropped* transaction is not rewound. A hot account self-heals on its next change; a cold one may keep state that came from the losing fork.
+
+Under `finalized` ingest none of this applies to new rows — they are stored final. The worker still runs, so rows written earlier under `confirmed` are still settled rather than stranded by the switch.
 
 ## Layout
 
@@ -152,13 +178,13 @@ tests/integration_tests/  # httpc-test suite against a real server + test db
    cargo run
    ```
 
-The admin panel is then available at `http://localhost:3000/`.
+The admin panel is then available at `http://localhost:3000/panel`.
 
 ## Running tests
 
 The suite has two tiers:
 
-**Unit tests** (`tests/unit/`) cover the pure logic in isolation — the event log parser (CPI-stack attribution), URL validation, error→status mapping, pagination query coercion, and the `from_model` response conversions. They compile *into* the crate (a `#[cfg(test)]` `#[path]` module in `lib.rs`) so they can reach `pub(crate)`/internal items, and they touch **no database** (models are built in memory, nothing is mocked), so they need no `DATABASE_URL` and run instantly:
+**Unit tests** (`tests/unit/`) cover the pure logic in isolation — the event log parser (CPI-stack attribution), URL validation, error→status mapping, pagination query coercion, the settlement routing that decides a reorg verdict, and the `from_model` response conversions. They compile *into* the crate (a `#[cfg(test)]` `#[path]` module in `lib.rs`) so they can reach `pub(crate)`/internal items, and they touch **no database** (models are built in memory, nothing is mocked), so they need no `DATABASE_URL` and run instantly:
 
 ```bash
 cargo test --lib
