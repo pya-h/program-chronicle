@@ -52,9 +52,16 @@ pub struct TableEstimates {
 }
 
 #[derive(Serialize)]
+pub struct SettlementCounts {
+    pub reorged_slots: u64,
+    pub dropped_transactions: u64,
+}
+
+#[derive(Serialize)]
 pub struct IndexerStatsResponse {
     pub programs: u64,
     pub rpcs: u64,
     pub estimates: TableEstimates,
+    pub settlement: SettlementCounts,
     pub per_program: Vec<ProgramProgressResponse>,
 }

@@ -19,6 +19,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260818_120000_add_programs_scan_partition_offset::Migration),
             Box::new(m20260818_140000_add_programs_backfill_frontier::Migration),
             Box::new(m20260901_120000_add_slots_status::Migration),
+            Box::new(m20260906_120000_index_slots_settled_status::Migration),
         ]
     }
 }
@@ -35,3 +36,4 @@ mod m20260810_120000_create_indexer_errors;
 mod m20260818_120000_add_programs_scan_partition_offset;
 mod m20260818_140000_add_programs_backfill_frontier;
 mod m20260901_120000_add_slots_status;
+mod m20260906_120000_index_slots_settled_status;

@@ -2,17 +2,22 @@ use std::collections::HashMap;
 
 use axum::{Router, extract::State, routing::get};
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, EntityTrait, PaginatorTrait, QueryOrder, Statement,
+    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Statement,
 };
 
 use crate::{
     core::{
+        commitment::TransactionCommitment,
         error::SvmIndexerError,
         response::{ApiResponse, FinalResponse},
+        slot_status::SlotStatus,
         state::AppState,
     },
-    db::entities::{programs, rpcs},
-    routes::responses::stats::{IndexerStatsResponse, ProgramProgressResponse, TableEstimates},
+    db::entities::{programs, rpcs, slots, transactions},
+    routes::responses::stats::{
+        IndexerStatsResponse, ProgramProgressResponse, SettlementCounts, TableEstimates,
+    },
 };
 
 async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<IndexerStatsResponse> {
@@ -50,6 +55,17 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
     }
     let estimate_of = |table: &str| estimates.get(table).copied().unwrap_or(0);
 
+    let reorged_slots = slots::Entity::find()
+        .filter(slots::Column::Status.eq(SlotStatus::Reorged.as_str()))
+        .count(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed counting reorged slots!", err))?;
+    let dropped_transactions = transactions::Entity::find()
+        .filter(transactions::Column::Commitment.eq(TransactionCommitment::Dropped.as_str()))
+        .count(&state.db)
+        .await
+        .map_err(|err| SvmIndexerError::db_error("Failed counting dropped transactions!", err))?;
+
     let runtimes = match &state.runtimes {
         Some(runtimes) => runtimes.lock().await.clone(),
         None => HashMap::new(),
@@ -74,6 +90,10 @@ async fn get_stats_handler(State(state): State<AppState>) -> FinalResponse<Index
             transactions: estimate_of("transactions"),
             events: estimate_of("program_events"),
             accounts: estimate_of("program_accounts"),
+        },
+        settlement: SettlementCounts {
+            reorged_slots,
+            dropped_transactions,
         },
         per_program,
     }))

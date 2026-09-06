@@ -73,6 +73,9 @@ async fn stats_reports_counts_and_per_program_progress() -> httpc_test::Result<(
             "estimate `{key}` should be non-negative"
         );
     }
+
+    assert_eq!(body["settlement"]["reorged_slots"], 0);
+    assert_eq!(body["settlement"]["dropped_transactions"], 0);
     Ok(())
 }
 

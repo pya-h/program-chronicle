@@ -69,7 +69,7 @@ The indexed history window starts at each program's `start_slot` — reads never
 Admin endpoints require the `x-security` header (constant-time comparison) and manage indexing configuration:
 
 - `GET /admin` — validate the admin passkey (used by the panel login gate).
-- `GET /admin/stats` — indexer stats: counts, per-program progress (`last_processed_slot`), and table size estimates.
+- `GET /admin/stats` — indexer stats: counts, per-program progress (`last_processed_slot`), table size estimates, and exact `settlement` counts of reorged slots and dropped transactions.
 - `POST|GET|PATCH|DELETE /admin/rpcs[/{id}]` — manage RPC endpoints.
 - `POST|GET|PATCH|DELETE /admin/programs[/{id}]` — manage indexed programs (register by `rpc_id` or inline `rpc_url`). An optional `account_filters` descriptor (`{ data_size, memcmp[], addresses[] }`) narrows ingestion to a subset of a program's accounts — only needed for chain-wide shared programs; omit it to track everything the program owns.
 - `POST /admin/programs/{id}/activate` and `.../deactivate` — resume or pause indexing a program without deleting it.

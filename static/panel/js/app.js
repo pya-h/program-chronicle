@@ -1637,7 +1637,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // toast on every failed tick.
     async function loadDashboardStats(quiet = false) {
         const setStat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        const statIds = ['stat-programs', 'stat-rpcs', 'stat-slots', 'stat-transactions', 'stat-events', 'stat-accounts'];
+        const statIds = ['stat-programs', 'stat-rpcs', 'stat-slots', 'stat-transactions', 'stat-events', 'stat-accounts', 'stat-reorged-slots', 'stat-dropped-transactions'];
         const root = document.getElementById('dash-progress-root');
         const count = document.getElementById('dash-progress-count');
         const empty = document.getElementById('dash-progress-empty');
@@ -1661,6 +1661,9 @@ document.addEventListener('DOMContentLoaded', () => {
         setStat('stat-transactions', formatCount(est.transactions));
         setStat('stat-events', formatCount(est.events));
         setStat('stat-accounts', formatCount(est.accounts));
+        const settled = stats.settlement || {};
+        setStat('stat-reorged-slots', formatCount(settled.reorged_slots));
+        setStat('stat-dropped-transactions', formatCount(settled.dropped_transactions));
 
         const programs = stats.per_program || [];
         if (count) count.textContent = `${programs.length} program${programs.length === 1 ? '' : 's'}`;
